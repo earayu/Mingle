@@ -2,6 +2,7 @@
   "name": "mingle-app",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Bring your agent companion into the chat apps you already use. Runs on your machine, no server.",
   "type": "module",
   "engines": {
@@ -12,7 +13,7 @@
     "mingle": "./dist/cli/main.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs && chmod +x dist/cli/main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "biome check .",
@@ -24,5 +25,10 @@
     "@types/node": "^24.19.2",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
+  },
+  "dependencies": {
+    "@botiverse/oar": "0.97.0",
+    "@hono/node-server": "^2.1.6",
+    "hono": "^4.13.17"
   }
 }

@@ -4,7 +4,7 @@
 
 ## 项目
 
-Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claude Code、Codex 等 harness 驱动，以机器人身份加入飞书、钉钉、企业微信、Slack、Discord、Telegram。本地运行，没有服务端。不预设公司或工作场景。
+Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claude Code、Codex 等 harness 驱动，以机器人身份加入微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram。本地运行，没有服务端。不预设公司或工作场景。
 
 注意区分两个"agent"：读本文件的你是开发 Mingle 的 coding agent；文档里的 Agent 指 Mingle 的产品对象。
 
@@ -12,14 +12,18 @@ Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claud
 
 ## 当前状态
 
-设计已完成，工程骨架已建好，业务代码尚未开始。已有的设计产物：
+M1 进行中，进度见 `docs/spec.md` 11.1。已实现：存储、Agent 运行时、本地 API、`mingle` CLI、Telegram 适配器。未开始：控制台（`web/`）、飞书适配器。
 
-- `src/cli/manual.md`：Agent 的操作指南，也是注入给 harness 的提示词
-- `src/channels/channel.ts`：IM 适配器接口
-- `src/store/migrations/001_init.sql`：初始表结构
+代码地图：
+
+- `src/core/mingle.ts`：整个进程的装配，收消息（inbox）、连接管理、提醒触发
+- `src/core/runtime.ts`：每个 Agent 的会话与消息投递，`docs/spec.md` 4.1–4.3 的实现
+- `src/core/outbox.ts`：所有对外发送
+- `src/api/server.ts`：本地 HTTP API，`/v1/agent/*` 给 CLI，`/v1/admin/*` 给 owner
+- `src/cli/main.ts`：`mingle` 命令；`src/cli/manual.md` 是注入给 harness 的指南
+- `src/harness/harness.ts`：唯一引用 OAR 的地方
+- `src/channels/`：`channel.ts` 是适配器接口，每个平台一个目录
 - `spikes/`：技术验证脚本，不属于产品代码
-
-下一步是 `docs/spec.md` 第 11 节的 M1。
 
 ## 不可违背的产品约束
 
@@ -93,6 +97,18 @@ pnpm lint
 pnpm format       # 自动修复格式
 pnpm test
 pnpm build
+MINGLE_E2E=claude pnpm vitest run test/e2e.test.ts   # 用本机真实的 Claude Code 跑端到端，会消耗额度
 ```
+
+本地手动运行：
+
+```sh
+pnpm build
+MINGLE_HOME=/tmp/mingle-dev node dist/cli/main.js start      # 另开终端执行下面的命令
+MINGLE_HOME=/tmp/mingle-dev node dist/cli/main.js agent create --name Alex --harness claude
+echo "$BOT_TOKEN" | MINGLE_HOME=/tmp/mingle-dev node dist/cli/main.js connect alex telegram
+```
+
+TypeScript 只用可擦除语法（不用参数属性、enum、namespace）：Node 直接运行 `src/` 下的 `.ts`，测试里的 CLI 子进程也是这样跑的。
 
 需要 Node.js 24 和 pnpm。TypeScript 源码里的相对导入写 `.ts` 后缀。

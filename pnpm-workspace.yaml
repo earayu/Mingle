@@ -1,0 +1,7 @@
+# OAR moves fast and is pinned to an exact version; allow it inside pnpm's release-age window.
+minimumReleaseAgeExclude:
+  - "@botiverse/oar@0.97.0"
+# Install scripts of transitive dependencies are not needed.
+allowBuilds:
+  "@google/genai": false
+  protobufjs: false
