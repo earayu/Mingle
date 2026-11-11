@@ -8,11 +8,18 @@ Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claud
 
 注意区分两个"agent"：读本文件的你是开发 Mingle 的 coding agent；文档里的 Agent 指 Mingle 的产品对象。
 
-**开始任何工作前先读 [`docs/design.md`](docs/design.md)。** 它是产品范围、领域模型、架构和技术选型的唯一依据。
+**开始任何工作前先读 [`docs/spec.md`](docs/spec.md)。** 它是产品范围、领域模型、架构和技术选型的唯一依据。做界面前再读 [`DESIGN.md`](DESIGN.md)，它是视觉和交互的唯一依据。
 
 ## 当前状态
 
-仓库目前只有文档，还没有代码。下一步是 `docs/design.md` 第 11 节的 M0 技术验证。本文件中关于命令和目录的内容是约定，随代码落地时更新。
+设计已完成，工程骨架已建好，业务代码尚未开始。已有的设计产物：
+
+- `src/cli/manual.md`：Agent 的操作指南，也是注入给 harness 的提示词
+- `src/channels/channel.ts`：IM 适配器接口
+- `src/store/migrations/001_init.sql`：初始表结构
+- `spikes/`：技术验证脚本，不属于产品代码
+
+下一步是 `docs/spec.md` 第 11 节的 M1。
 
 ## 不可违背的产品约束
 
@@ -31,6 +38,7 @@ Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claud
 - 存储：`node:sqlite` 和本地文件
 - 本地 API：Hono；控制台：React + Vite + Tailwind
 - 测试：Vitest；检查：Biome
+- 界面文案走消息目录，首批 `en` 和 `zh-CN`
 
 ## 目录约定
 
@@ -43,6 +51,8 @@ src/platform/   Keychain、自启等系统相关能力
 src/api/        本地 HTTP API
 src/cli/        mingle 命令和操作指南
 web/            控制台
+test/           测试
+spikes/         技术验证脚本
 docs/           文档
 ```
 
@@ -51,7 +61,7 @@ docs/           文档
 - **OAR 只在 `src/harness/` 内被引用。** 其他模块依赖我们自己的接口。OAR 更新很快，这一层用来隔离变化。
 - **平台 SDK 只在对应的 `src/channels/<平台>/` 内被引用。** 核心层只认 `Channel` 接口和语义类型，不出现平台名称的分支判断。
 - **Agent 对 IM 的一切输出都经过 `mingle` CLI 和本地 API。** 不要在别处直接调用适配器发消息，权限检查集中在 API 层。
-- **`mingle` CLI 保持小而稳定。** 新增命令先在 `docs/design.md` 第 5 节定义。操作指南和注入给 harness 的提示词必须由同一份源生成。
+- **`mingle` CLI 保持小而稳定。** 新增命令先在 `docs/spec.md` 第 5 节定义。操作指南和注入给 harness 的提示词必须由同一份源生成。
 - **Agent 主目录只约定 `ROLE.md`、`MEMORY.md`、`notes/`。** 不要让 Mingle 往里写别的文件。
 - **系统相关代码只在 `src/platform/`。** 核心保持可在 Linux 上无界面运行。
 - **渠道能力按机器人实例判断。** 新增呈现能力时同时写明不支持时的降级行为。
@@ -59,8 +69,8 @@ docs/           文档
 
 ## 工作方式
 
-- 改动产品范围、领域模型、架构或技术选型时，先更新 `docs/design.md`，与代码在同一次提交里。
-- `docs/design.md` 第 12 节的待验证项有了实测结论后，把结论写回文档并移出该节。
+- 改动产品范围、领域模型、架构或技术选型时，先更新 `docs/spec.md`，与代码在同一次提交里。
+- `docs/spec.md` 第 12 节的待验证项有了实测结论后，把结论写回文档并移出该节。
 - 不凭记忆断言第三方 SDK 或平台的行为。查当前文档或源码，或实测；未实测的写明"待验证"。
 - 新增依赖要有理由，优先用 Node 内置能力。
 - 行为变更附带测试。Agent 运行时的测试用 OAR 的 `testing` 脚本化运行时，不依赖真实 harness 登录。
@@ -68,11 +78,21 @@ docs/           文档
 
 ## 提交
 
-- 目前直接提交到 `main`。
+- 目前直接提交到 `main`。提交前 `pnpm check` 必须通过。
 - 提交信息用英文，祈使句，说明做了什么和原因。
-- 文档用中文；代码、标识符、注释、提交信息用英文。
+- 设计文档用中文；代码、标识符、注释、提交信息、CLI 输出、`src/cli/manual.md`、`README.md` 用英文。
 - 提交前确认不包含任何凭据、token 或个人数据。
 
 ## 命令
 
-代码落地后在这里补充安装、开发、测试、检查的命令。
+```sh
+pnpm install
+pnpm check        # typecheck + lint + test，提交前必须通过
+pnpm typecheck
+pnpm lint
+pnpm format       # 自动修复格式
+pnpm test
+pnpm build
+```
+
+需要 Node.js 24 和 pnpm。TypeScript 源码里的相对导入写 `.ts` 后缀。

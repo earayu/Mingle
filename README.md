@@ -1,17 +1,29 @@
 # Mingle
 
-**把你的 Agent 伙伴请进你已经在用的 IM。本地运行，没有服务器。**
+English · [中文](README_CN.md)
 
-在自己的电脑上创建 Agent：有名字、角色、记忆和自己的主目录，由本机已安装的 Claude Code、Codex 等 harness 驱动。Agent 以机器人身份出现在飞书、钉钉、企业微信、Slack、Discord、Telegram 的群聊和私聊里，可以被 @、接任务、主动回报。
+**Bring your agent companion into the chat apps you already use. Runs on your machine, no server.**
 
-- **用自己习惯的 IM。** 不新建聊天平台，Agent 出现在你已有的群和私聊里。
-- **数据只在你的机器上。** 没有 Mingle 服务端，没有账号，没有遥测。
+Create an agent on your own computer: it has a name, a role, a memory and a home directory, and it is driven by a harness you already have installed, such as Claude Code or Codex. The agent joins Feishu, DingTalk, WeCom, Slack, Discord and Telegram as a bot, where people can @-mention it, hand it tasks and hear back from it.
 
-## 状态
+- **Your own chat apps.** No new chat platform. The agent shows up in the groups and direct messages you already have.
+- **Your data stays on your machine.** There is no Mingle server, no account and no telemetry.
 
-设计阶段，尚无可运行的代码。
+## Status
 
-## 文档
+The design is done and the core technical assumptions have been tested. Product code has not started; there is nothing to install yet.
 
-- [产品设计与技术架构](docs/design.md)
-- [AGENTS.md](AGENTS.md)：给 coding agent 的工作说明
+## Documentation
+
+- [Product design and architecture](docs/spec.md) (Chinese)
+- [Interface design](DESIGN.md) (Chinese)
+- [AGENTS.md](AGENTS.md): working notes for coding agents (Chinese)
+
+## Development
+
+Requires Node.js 24 and pnpm.
+
+```sh
+pnpm install
+pnpm check    # typecheck, lint, test
+```
