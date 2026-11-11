@@ -508,7 +508,7 @@ docs/             文档
 | 任务、提醒 | 完成（原计划 M2，顺带做了） |
 | Telegram 适配器 | 完成，单元测试覆盖；未接真实 bot |
 | Claude Code | 端到端实测通过 |
-| Codex | 未验证，见 12.2 |
+| Codex | 端到端实测通过（Codex 0.167.1） |
 | 控制台 | 完成：首次空状态、创建 Agent、Agent 页面（状态、角色编辑、聊天软件、最近活动、任务、提醒、打开文件夹、叫停、删除）、Telegram 接入、中英文、明暗外观。由 `mingle start` 自动打开，`mingle open` 重新打开 |
 | 飞书适配器 | 未开始 |
 
@@ -529,13 +529,13 @@ docs/             文档
 | OAR 驱动 Codex 0.166.0 | 部分通过。开启会话、`deliver` 返回 `steered`、`resume` 打开原会话都正常；但本机 Codex 配置的模型服务连不上，直接运行 `codex exec` 同样失败，所以模型层面的行为没有验证到 |
 | `node:sqlite` 的 FTS5 | 通过。SQLite 3.51.3，`trigram` 分词下中文和英文检索都命中 |
 | 飞书 SDK 扫码建应用 | 接口存在（`@larksuiteoapi/node-sdk` 1.76.0 的 `registerApp`）。未真机扫码 |
+| Mingle 端到端，Codex 0.167.1 | 通过。第二个人的问题在 Codex 执行命令期间插入，Codex 先回答了插入的问题，再回"On it."，最后给出第一个任务的结果；三条消息全部标为已回复 |
 | Mingle 端到端，Claude Code | 通过（`test/e2e.test.ts`）。Agent 读了注入的指南，用 `mingle message reply` 引用回复；第二个人在它执行 15 秒命令期间发问，两件事分别回复，四条消息全部标为已回复 |
 
 ### 12.2 仍待验证
 
 | 项 | 要确认的事 | 需要 |
 |---|---|---|
-| Codex 模型层行为 | 插话后模型是否读到、恢复后是否记得 | 本机 Codex 能正常访问模型。magpie 已断开，`~/.codex/config.toml` 里 magpie 写入的几行已删除（备份在同目录的 `config.toml.mingle-backup-20261111`）。现在 Codex 直连 OpenAI，但本机唯一的凭据是原 magpie 的 key，OpenAI 判为无效，需要维护者执行一次 `codex login` |
 | 长期单会话 | 持续数周的会话在压缩后的表现，`MEMORY.md` 恢复是否足够 | 实际使用一段时间 |
 | 飞书扫码创建 | 哪些权限触发管理员审核；审核通过如何感知 | 一个飞书租户和真人扫码 |
 | 钉钉、企业微信扫码创建 | 接入流程和审核 | 对应租户和真人扫码 |
