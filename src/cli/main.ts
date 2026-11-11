@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFile } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,6 +45,7 @@ const OPTIONS = {
   role: { type: "string" },
   "role-file": { type: "string" },
   "remove-home": { type: "boolean" },
+  "no-open": { type: "boolean" },
   port: { type: "string" },
 } as const;
 
@@ -414,6 +416,17 @@ async function adminCommand(group: string, action: string | undefined, args: str
     case "start":
       await start(flags);
       return true;
+    case "open": {
+      const paths = resolvePaths();
+      if (!existsSync(paths.runtime)) {
+        throw new CliError("mingle_not_running", 'Mingle is not running. Start it with "mingle start"');
+      }
+      const runtime = JSON.parse(readFileSync(paths.runtime, "utf8")) as { url: string; adminToken: string };
+      const url = consoleUrl(runtime.url, runtime.adminToken);
+      openUrl(url);
+      print({ url }, () => url);
+      return true;
+    }
   }
   return false;
 }
@@ -460,7 +473,7 @@ async function start(flags: Flags): Promise<void> {
     } catch {}
   };
   // Loaded here so agent commands, which run often, do not pay for OAR and the server.
-  const [{ createApi, listen }, { telegramChannel }, { Mingle }, { oarHarness }, { defaultSecrets }] =
+  const [{ createApi, listen, serveConsole }, { telegramChannel }, { Mingle }, { oarHarness }, { defaultSecrets }] =
     await Promise.all([
       import("../api/server.ts"),
       import("../channels/telegram/telegram.ts"),
@@ -477,6 +490,7 @@ async function start(flags: Flags): Promise<void> {
     log,
   });
   const app = createApi(mingle);
+  const hasConsole = serveConsole(app);
   const port = Number(flags.port ?? process.env.MINGLE_PORT ?? 7419);
   const server = await listen(app, port).catch(() => listen(app, 0));
   await mingle.start(server.url);
@@ -484,6 +498,14 @@ async function start(flags: Flags): Promise<void> {
     mode: 0o600,
   });
   log(`Mingle ${VERSION} listening on ${server.url}, data in ${paths.home}`);
+  if (hasConsole) {
+    const url = consoleUrl(server.url, mingle.adminToken);
+    // The URL carries the admin token: show it on screen, keep it out of the log file.
+    console.log(`console: ${url}`);
+    if (!flags["no-open"]) openUrl(url);
+  } else {
+    log('console not built; run "pnpm build" to include it');
+  }
 
   let stopping = false;
   const shutdown = async () => {
@@ -499,12 +521,23 @@ async function start(flags: Flags): Promise<void> {
   process.on("SIGTERM", shutdown);
 }
 
+/** The admin token travels in the fragment, which browsers never send to the server or in Referer headers. */
+function consoleUrl(base: string, token: string): string {
+  return `${base}/#token=${token}`;
+}
+
+function openUrl(url: string): void {
+  const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
+  execFile(opener, [url], () => {});
+}
+
 // -------------------------------------------------------------------- help
 
 const HELP = `mingle ${VERSION}
 
 For the owner:
-  mingle start [--port 7419]               run Mingle in this terminal
+  mingle start [--port 7419] [--no-open]   run Mingle in this terminal and open the console
+  mingle open                              open the console of the running Mingle
   mingle status                            agents and their connections
   mingle harnesses                         harnesses installed on this computer
   mingle agent create --name <n> --harness <id> [--model <m>] [--role <text> | --role-file <path>]

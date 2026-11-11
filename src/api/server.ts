@@ -1,8 +1,11 @@
-import { mkdirSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import type { Platform } from "../channels/channel.ts";
+import type { OnboardingMethod, Platform } from "../channels/channel.ts";
 import { MingleError, notFound } from "../core/errors.ts";
 import { formatMessage } from "../core/format.ts";
 import { readRole } from "../core/home.ts";
@@ -265,6 +268,50 @@ export function createApi(mingle: Mingle): Hono<Env> {
   app.get("/v1/admin/status", (c) => c.json({ version: VERSION, agents: store.agents().map(agentView) }));
   app.get("/v1/admin/harnesses", async (c) => c.json(await mingle.availableHarnesses()));
 
+  /** Every first-batch platform, with how to connect it, or null when it is not built yet. */
+  app.get("/v1/admin/platforms", (c) => {
+    const all: Platform[] = ["wechat", "wecom", "feishu", "dingtalk", "qq", "slack", "discord", "telegram"];
+    return c.json(
+      all.map((platform) => {
+        let onboarding: OnboardingMethod | null = null;
+        try {
+          onboarding = mingle.channel(platform).onboarding;
+        } catch {}
+        return { platform, onboarding };
+      }),
+    );
+  });
+
+  app.get("/v1/admin/agents/:id/activity", (c) => {
+    const agent = mingle.agent(c.req.param("id"));
+    const limit = clamp(Number(c.req.query("limit") ?? 30), 1, 200);
+    return c.json(
+      store.agentActivity(agent.id, limit).map((m) => ({
+        id: m.id,
+        direction: m.direction,
+        platform: m.platform,
+        chat: { id: m.chat.id, kind: m.chat.kind, name: m.chat.name },
+        sender: m.direction === "in" ? (m.senderName ?? m.senderId) : agent.name,
+        body: m.body,
+        state: m.state,
+        files: m.attachments.map((a) => a.name),
+        createdAt: m.createdAt,
+      })),
+    );
+  });
+
+  app.get("/v1/admin/agents/:id/work", (c) => {
+    const agent = mingle.agent(c.req.param("id"));
+    return c.json({ tasks: store.tasks(agent.id, false), reminders: store.reminders(agent.id) });
+  });
+
+  app.post("/v1/admin/agents/:id/open-home", (c) => {
+    const agent = mingle.agent(c.req.param("id"));
+    const opener = process.platform === "darwin" ? "open" : "xdg-open";
+    execFile(opener, [mingle.homeDir(agent)], () => {});
+    return c.json({ ok: true });
+  });
+
   app.post("/v1/admin/agents", async (c) => {
     const body = await c.req.json<{ name: string; role?: string; harness: string; model?: string }>();
     const harnesses = await mingle.availableHarnesses();
@@ -329,6 +376,21 @@ function resolveFiles(home: string, files: readonly string[] | undefined): strin
 
 function clamp(n: number, min: number, max: number): number {
   return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.trunc(n))) : min;
+}
+
+/** Serve the built console, if there is one. */
+export function serveConsole(app: Hono<Env>): boolean {
+  const candidates = [
+    fileURLToPath(new URL("../web/", import.meta.url)), // dist/api → dist/web
+    fileURLToPath(new URL("../../web/dist/", import.meta.url)), // src/api → web/dist
+  ];
+  const root = candidates.find((dir) => existsSync(resolve(dir, "index.html")));
+  if (!root) return false;
+  app.use("/assets/*", serveStatic({ root }));
+  const index = serveStatic({ root, path: "index.html" });
+  // Everything that is not the API is the single-page console.
+  app.get("*", (c, next) => (c.req.path.startsWith("/v1/") ? next() : index(c, next)));
+  return true;
 }
 
 export function listen(app: Hono<Env>, port: number): Promise<{ url: string; close: () => Promise<void> }> {

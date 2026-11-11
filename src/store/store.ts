@@ -385,6 +385,20 @@ export class Store {
     return (this.db.prepare(sql).all(needle, agentId, ...scopeArgs, limit) as Row[]).map(toMessage);
   }
 
+  /** Recent messages across all of an agent's chats, newest first, for the console. */
+  agentActivity(agentId: string, limit: number): (Message & { chat: Chat; platform: Platform })[] {
+    const rows = this.db
+      .prepare(
+        `SELECT m.*, n.platform FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
+         WHERE n.agent_id = ? ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?`,
+      )
+      .all(agentId, limit) as Row[];
+    return rows.map((r) => {
+      const message = toMessage(r);
+      return { ...message, chat: this.chat(message.chatId) as Chat, platform: String(r.platform) as Platform };
+    });
+  }
+
   /** Delivered inbound messages for this agent that nobody has answered yet. */
   awaitingReply(agentId: string): Message[] {
     const rows = this.db

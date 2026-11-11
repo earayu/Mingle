@@ -13,17 +13,27 @@
     "mingle": "./dist/cli/main.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs && chmod +x dist/cli/main.js",
-    "typecheck": "tsc --noEmit",
+    "build": "pnpm build:web && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs && chmod +x dist/cli/main.js",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web",
     "test": "vitest run",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "check": "pnpm typecheck && pnpm lint && pnpm test"
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "build:web": "vite build --config web/vite.config.ts",
+    "dev:web": "vite --config web/vite.config.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.6",
+    "@tailwindcss/vite": "^4.3.5",
     "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
+    "vite": "^8.3.7",
     "vitest": "^5.1.0"
   },
   "dependencies": {

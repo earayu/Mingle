@@ -1,5 +1,18 @@
 {
-  "files": { "includes": ["**", "!dist", "!spikes", "!node_modules", "!**/*.md"] },
-  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 120 },
-  "linter": { "enabled": true }
+  "files": {
+    "includes": ["**", "!dist", "!web/dist", "!spikes", "!node_modules", "!**/*.md"]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 120
+  },
+  "linter": {
+    "enabled": true
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  }
 }

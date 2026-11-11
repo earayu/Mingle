@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+/* Tokens from DESIGN.md. Components use these names only, never raw colors. */
+:root {
+  --bg: #ffffff;
+  --surface: #f7f7f5;
+  --border: #e8e8e4;
+  --text: #1a1a1a;
+  --text-secondary: #6b6b66;
+  --text-tertiary: #a3a39e;
+  --accent: #1a1a1a;
+  --on-accent: #ffffff;
+  --ok: #2e9e5b;
+  --wait: #c98a14;
+  --error: #d4483b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161616;
+    --surface: #1f1f1e;
+    --border: #2e2e2c;
+    --text: #ededea;
+    --text-secondary: #9c9c96;
+    --text-tertiary: #62625e;
+    --accent: #ededea;
+    --on-accent: #161616;
+    --ok: #4cb878;
+    --wait: #d9a441;
+    --error: #e5695d;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #161616;
+  --surface: #1f1f1e;
+  --border: #2e2e2c;
+  --text: #ededea;
+  --text-secondary: #9c9c96;
+  --text-tertiary: #62625e;
+  --accent: #ededea;
+  --on-accent: #161616;
+  --ok: #4cb878;
+  --wait: #d9a441;
+  --error: #e5695d;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-ok: var(--ok);
+  --color-wait: var(--wait);
+  --color-error: var(--error);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --text-title: 20px;
+  --text-title--line-height: 28px;
+  --text-heading: 15px;
+  --text-heading--line-height: 22px;
+  --text-body: 14px;
+  --text-body--line-height: 22px;
+  --text-small: 12px;
+  --text-small--line-height: 18px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 22px;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  :focus-visible {
+    outline: 1px solid var(--text);
+    outline-offset: 2px;
+  }
+}
+
+/* Controls sitting on a surface (sidebar, inline panels) take the page color so they stay visible.
+   Unlayered on purpose: it must win over the bg-surface utility on the control. */
+.panel :is(input, select, textarea) {
+  background: var(--bg);
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.breathe {
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .breathe {
+    animation: none;
+  }
+  * {
+    transition-duration: 0s;
+  }
+}

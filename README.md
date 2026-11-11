@@ -11,7 +11,7 @@ Create an agent on your own computer: it has a name, a role, a memory and a home
 
 ## Status
 
-Early development. The core works end to end with Claude Code and a Telegram bot, managed from the command line. The web console and the other chat apps are not built yet. There is no release.
+Early development. The core works end to end with Claude Code and a Telegram bot, managed from a local web console or the command line. The other chat apps are not built yet. There is no release.
 
 ```sh
 pnpm install && pnpm build
@@ -20,7 +20,7 @@ node dist/cli/main.js agent create --name Alex --harness claude --role "You help
 echo "$TELEGRAM_BOT_TOKEN" | node dist/cli/main.js connect alex telegram
 ```
 
-Then send the bot a direct message from your own Telegram account; that makes you its owner.
+`mingle start` opens the console in your browser; `mingle open` opens it again later. Send the bot a direct message from your own Telegram account; that makes you its owner.
 
 ## Documentation
 

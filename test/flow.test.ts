@@ -194,3 +194,52 @@ describe("agent CLI", () => {
     expect(result.stderr).toMatch(/^error: not_in_agent_session/);
   });
 });
+
+describe("admin API (console)", () => {
+  it("lists platforms, activity and work, and rejects bad tokens", async () => {
+    current = await rig(async (t) => {
+      for (const id of messageIds(t.input)) {
+        await runCli(t.options.env as Record<string, string>, ["message", "reply", id], "Saturday is clear.");
+        await runCli(t.options.env as Record<string, string>, ["task", "create", "Compare the routes", "--from", id]);
+      }
+    });
+    const { channel, admin, agentId } = current;
+    channel.receive({ text: "weather on Saturday?" });
+    await until(() => channel.sent.length === 1);
+
+    const platforms = (await admin("GET", "/v1/admin/platforms")).json as { platform: string; onboarding: unknown }[];
+    expect(platforms.map((p) => p.platform)).toEqual([
+      "wechat",
+      "wecom",
+      "feishu",
+      "dingtalk",
+      "qq",
+      "slack",
+      "discord",
+      "telegram",
+    ]);
+    expect(platforms.find((p) => p.platform === "telegram")?.onboarding).not.toBeNull();
+    expect(platforms.find((p) => p.platform === "feishu")?.onboarding).toBeNull();
+
+    const activity = (await admin("GET", `/v1/admin/agents/${agentId}/activity`)).json as {
+      direction: string;
+      body: string;
+      state: string;
+    }[];
+    expect(activity.map((m) => [m.direction, m.body, m.state])).toEqual([
+      ["out", "Saturday is clear.", "sent"],
+      ["in", "weather on Saturday?", "replied"],
+    ]);
+
+    await until(() => current?.mingle.store.tasks(agentId, false).length === 1);
+    const work = (await admin("GET", `/v1/admin/agents/${agentId}/work`)).json as { tasks: { title: string }[] };
+    expect(work.tasks.map((t) => t.title)).toEqual(["Compare the routes"]);
+
+    const status = (await admin("GET", "/v1/admin/status")).json as { agents: { name: string; role: string }[] };
+    expect(status.agents[0]).toMatchObject({ name: "Alex", role: expect.stringContaining("hikes") });
+
+    expect((await admin("DELETE", "/v1/admin/connections/nnope")).status).toBe(404);
+    const anonymous = await fetch(`${current.url}/v1/admin/status`);
+    expect(anonymous.status).toBe(401);
+  });
+});

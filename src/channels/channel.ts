@@ -8,7 +8,7 @@
  * - An adapter never throws for "the platform cannot do this": it degrades and says so.
  */
 
-export type Platform = "feishu" | "dingtalk" | "wecom" | "slack" | "discord" | "telegram";
+export type Platform = "wechat" | "wecom" | "feishu" | "dingtalk" | "qq" | "slack" | "discord" | "telegram";
 
 export type ChatKind = "dm" | "group" | "thread";
 

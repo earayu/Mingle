@@ -12,7 +12,7 @@ Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claud
 
 ## 当前状态
 
-M1 进行中，进度见 `docs/spec.md` 11.1。已实现：存储、Agent 运行时、本地 API、`mingle` CLI、Telegram 适配器。未开始：控制台（`web/`）、飞书适配器。
+M1 进行中，进度见 `docs/spec.md` 11.1。已实现：存储、Agent 运行时、本地 API、`mingle` CLI、Telegram 适配器、控制台（`web/`）。未开始：飞书适配器。
 
 代码地图：
 
@@ -23,6 +23,7 @@ M1 进行中，进度见 `docs/spec.md` 11.1。已实现：存储、Agent 运行
 - `src/cli/main.ts`：`mingle` 命令；`src/cli/manual.md` 是注入给 harness 的指南
 - `src/harness/harness.ts`：唯一引用 OAR 的地方
 - `src/channels/`：`channel.ts` 是适配器接口，每个平台一个目录
+- `web/`：控制台，React + Vite + Tailwind。视觉只用 `web/src/styles.css` 里来自 `DESIGN.md` 的 token；文案只走 `web/src/i18n.ts`，中英文两份都要加
 - `spikes/`：技术验证脚本，不属于产品代码
 
 ## 不可违背的产品约束
@@ -96,7 +97,8 @@ pnpm typecheck
 pnpm lint
 pnpm format       # 自动修复格式
 pnpm test
-pnpm build
+pnpm build        # 先构建控制台（web/dist），再编译到 dist/
+pnpm dev:web      # 控制台热更新开发，API 代理到正在运行的 mingle start
 MINGLE_E2E=claude pnpm vitest run test/e2e.test.ts   # 用本机真实的 Claude Code 跑端到端，会消耗额度
 ```
 

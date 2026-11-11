@@ -108,6 +108,9 @@ export async function until<T>(check: () => T | undefined | false, timeoutMs = 1
 
 export interface Rig {
   mingle: Mingle;
+  url: string;
+  /** Call the admin API as the console does. */
+  admin(method: string, path: string, body?: unknown): Promise<{ status: number; json: unknown }>;
   channel: FakeChannel;
   agentId: string;
   turns: { readonly input: string; readonly steered: string[] }[];
@@ -155,8 +158,17 @@ export async function rig(
   await mingle.addConnection(agent.id, "telegram", { token: "fake" });
   return {
     mingle,
+    url: server.url,
     channel,
     agentId: agent.id,
+    async admin(method, path, body) {
+      const response = await fetch(`${server.url}${path}`, {
+        method,
+        headers: { authorization: `Bearer ${mingle.adminToken}`, "content-type": "application/json" },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+      return { status: response.status, json: await response.json().catch(() => null) };
+    },
     turns,
     async close() {
       await mingle.stop();
