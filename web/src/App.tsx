@@ -3,7 +3,7 @@ import { AgentPage } from "./AgentPage.tsx";
 import { type AgentView, ApiError, api, captureToken } from "./api.ts";
 import { CreateAgent } from "./CreateAgent.tsx";
 import { detectLocale, I18n, type Locale, translator, useI18n } from "./i18n.ts";
-import { AgentStatusLine, Avatar, Button, Code, Muted, Select } from "./ui.tsx";
+import { AgentStatusLine, Avatar, Button, Code, Muted, Select, StatusDot } from "./ui.tsx";
 
 type View = { kind: "agent"; slug: string } | { kind: "new" } | { kind: "home" };
 type Theme = "system" | "light" | "dark";
@@ -46,6 +46,15 @@ function Shell() {
   const [agents, setAgents] = useState<AgentView[] | null>(null);
   const [problem, setProblem] = useState<"offline" | "unauthorized" | null>(token ? null : "unauthorized");
   const [view, setView] = useState<View>(viewFromPath);
+  // ?menu=1 opens the drawer on load (narrow windows); used by scripts/ui-review.mjs.
+  const [menuOpen, setMenuOpen] = useState(() => new URLSearchParams(location.search).get("menu") === "1");
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [menuOpen]);
 
   const navigate = useCallback((next: View) => {
     history.pushState(null, "", pathFor(next));
@@ -93,32 +102,47 @@ function Shell() {
 
   return (
     <div className="flex h-full">
-      <aside className="panel hidden w-[220px] shrink-0 flex-col border-r border-border bg-surface md:flex">
-        <div className="flex h-14 items-center px-4 text-heading font-semibold">{t("app.title")}</div>
-        <nav className="flex flex-1 flex-col overflow-y-auto">
-          {(agents ?? []).map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              onClick={() => navigate({ kind: "agent", slug: a.slug })}
-              aria-current={current?.id === a.id ? "page" : undefined}
-              className="flex h-11 items-center gap-3 px-4 text-left hover:bg-bg aria-[current=page]:bg-bg"
-            >
-              <Avatar name={a.name} size={24} />
-              <span className="min-w-0 flex-1 truncate">{a.name}</span>
-              <AgentStatusLine status={a.status} />
-            </button>
-          ))}
-          {agents?.length === 0 ? <p className="px-4 py-3 text-small text-text-tertiary">{t("agents.empty")}</p> : null}
-        </nav>
-        <div className="flex flex-col gap-2 border-t border-border p-4">
-          <Button onClick={() => navigate({ kind: "new" })}>{t("agents.new")}</Button>
-          <Settings />
-        </div>
+      <aside className="panel hidden w-[220px] shrink-0 border-r border-border bg-surface md:flex">
+        <Sidebar agents={agents} currentId={current?.id} onNavigate={navigate} />
       </aside>
 
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-0 max-w-[640px] px-10 py-10">
+      {menuOpen ? (
+        <div className="fixed inset-0 z-20 flex md:hidden">
+          <div className="panel flex w-[280px] max-w-[85%] bg-surface">
+            <Sidebar
+              agents={agents}
+              currentId={current?.id}
+              onNavigate={(next) => {
+                setMenuOpen(false);
+                navigate(next);
+              }}
+            />
+          </div>
+          <button
+            type="button"
+            aria-label={t("nav.close")}
+            className="flex-1 bg-text/20"
+            onClick={() => setMenuOpen(false)}
+          />
+        </div>
+      ) : null}
+
+      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4 md:hidden">
+          <button
+            type="button"
+            aria-label={t("nav.menu")}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(true)}
+            className="-ml-2 flex size-8 items-center justify-center rounded-sm hover:bg-surface"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+          <span className="truncate text-heading font-semibold">{current?.name ?? t("app.title")}</span>
+        </header>
+        <div className="w-full max-w-[640px] px-5 py-8 md:px-10 md:py-10">
           {problem === "offline" ? <p className="mb-6 text-small text-error">{t("error.offline")}</p> : null}
           {agents === null ? null : showCreate ? (
             <CreateAgent
@@ -144,6 +168,45 @@ function Shell() {
           )}
         </div>
       </main>
+    </div>
+  );
+}
+
+function Sidebar({
+  agents,
+  currentId,
+  onNavigate,
+}: {
+  agents: AgentView[] | null;
+  currentId: string | undefined;
+  onNavigate: (view: View) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex h-14 shrink-0 items-center px-4 text-heading font-semibold">{t("app.title")}</div>
+      <nav className="flex flex-1 flex-col overflow-y-auto">
+        {(agents ?? []).map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            title={`${a.name} · ${t(`status.${a.status}`)}`}
+            onClick={() => onNavigate({ kind: "agent", slug: a.slug })}
+            aria-current={currentId === a.id ? "page" : undefined}
+            className="flex h-11 shrink-0 items-center gap-3 px-4 text-left hover:bg-bg aria-[current=page]:bg-bg"
+          >
+            <Avatar name={a.name} size={24} />
+            <span className="min-w-0 flex-1 truncate">{a.name}</span>
+            <StatusDot state={a.status} />
+            <span className="sr-only">{t(`status.${a.status}`)}</span>
+          </button>
+        ))}
+        {agents?.length === 0 ? <p className="px-4 py-3 text-small text-text-tertiary">{t("agents.empty")}</p> : null}
+      </nav>
+      <div className="flex shrink-0 flex-col gap-2 border-t border-border p-4">
+        <Button onClick={() => onNavigate({ kind: "new" })}>{t("agents.new")}</Button>
+        <Settings />
+      </div>
     </div>
   );
 }

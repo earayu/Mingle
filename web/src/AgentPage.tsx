@@ -20,6 +20,7 @@ import {
   relativeTime,
   Section,
   StatusDot,
+  shortDateTime,
   Textarea,
 } from "./ui.tsx";
 
@@ -32,7 +33,7 @@ export function AgentPage({
   onChanged: () => void;
   onDeleted: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [activity, setActivity] = useState<Activity[]>([]);
   const [work, setWork] = useState<{ tasks: Task[]; reminders: Reminder[] }>({ tasks: [], reminders: [] });
   const [notice, setNotice] = useState<string | null>(null);
@@ -71,10 +72,17 @@ export function AgentPage({
       <header className="flex items-center gap-4">
         <Avatar name={agent.name} size={48} />
         <div className="flex min-w-0 flex-col gap-1">
-          <h1 className="truncate text-title font-semibold">{agent.name}</h1>
-          <AgentStatusLine status={agent.status} detail={agent.statusDetail} />
+          <h1 className="truncate text-title font-semibold" title={agent.name}>
+            {agent.name}
+          </h1>
+          <AgentStatusLine status={agent.status} detail={agent.status === "working" ? agent.statusDetail : null} />
         </div>
       </header>
+      {agent.status === "error" && agent.statusDetail ? (
+        <p className="-mt-6 rounded-sm bg-surface px-3 py-2 font-mono text-small wrap-anywhere text-text-secondary">
+          {agent.statusDetail}
+        </p>
+      ) : null}
 
       <RoleEditor agent={agent} onSaved={onChanged} />
       <Connections agent={agent} onChanged={onChanged} />
@@ -88,8 +96,12 @@ export function AgentPage({
           <ul className="flex flex-col">
             {work.tasks.map((task) => (
               <li key={task.id} className="flex h-11 items-center gap-3 border-b border-border last:border-0">
-                <span className="w-20 shrink-0 text-small text-text-secondary">{task.status.replace("_", " ")}</span>
-                <span className="truncate">{task.title}</span>
+                <span className="w-16 shrink-0 text-small text-text-secondary">
+                  {t(`task.${task.status}` as MessageKey)}
+                </span>
+                <span className="min-w-0 flex-1 truncate" title={task.title}>
+                  {task.title}
+                </span>
               </li>
             ))}
           </ul>
@@ -101,12 +113,12 @@ export function AgentPage({
           <ul className="flex flex-col">
             {work.reminders.map((r) => (
               <li key={r.id} className="flex h-11 items-center gap-3 border-b border-border last:border-0">
-                <span className="w-32 shrink-0 text-small text-text-secondary">
-                  {r.nextFireAt
-                    ? new Date(r.nextFireAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })
-                    : ""}
+                <span className="w-28 shrink-0 whitespace-nowrap text-small text-text-secondary">
+                  {r.nextFireAt ? shortDateTime(r.nextFireAt, locale) : ""}
                 </span>
-                <span className="truncate">{r.body}</span>
+                <span className="min-w-0 flex-1 truncate" title={r.body}>
+                  {r.body}
+                </span>
               </li>
             ))}
           </ul>
@@ -181,7 +193,7 @@ function RoleEditor({ agent, onSaved }: { agent: AgentView; onSaved: () => void 
             setEditing(true);
             setSaved(false);
           }}
-          className="-mx-3 rounded-sm px-3 py-2 text-left whitespace-pre-wrap hover:bg-surface"
+          className="-mx-3 rounded-sm px-3 py-2 text-left whitespace-pre-wrap wrap-anywhere hover:bg-surface"
         >
           {agent.role.trim() ? agent.role.trim() : <span className="text-text-tertiary">{t("agent.roleEmpty")}</span>}
         </button>
@@ -231,31 +243,58 @@ function Connections({ agent, onChanged }: { agent: AgentView; onChanged: () => 
 
 function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; onChanged: () => void }) {
   const { t } = useI18n();
+  const [confirming, setConfirming] = useState(false);
+  const detailKey = `connection.detail.${connection.detail}` as MessageKey;
+  const hint =
+    connection.state === "error"
+      ? t(detailKey) !== detailKey
+        ? t(detailKey)
+        : t("connection.detail.unknown")
+      : connection.state === "awaiting_approval"
+        ? t("connection.approvalHint")
+        : connection.state === "connected" && !connection.owner
+          ? t("connection.noOwner")
+          : null;
+
   return (
-    <li className="group flex min-h-11 flex-col justify-center border-b border-border py-2 last:border-0">
+    <li className="flex flex-col gap-1 border-b border-border py-3 last:border-0">
       <div className="flex items-center gap-3">
-        <span className="w-20 shrink-0 text-text-secondary">{t(`platform.${connection.platform}` as MessageKey)}</span>
-        <span className="min-w-0 flex-1 truncate">{connection.bot ?? ""}</span>
-        <span className="flex items-center gap-2 text-small text-text-secondary">
-          <StatusDot state={connection.state} />
-          {t(`connection.${connection.state}` as MessageKey)}
-        </span>
-        <Button
-          variant="text"
-          className="opacity-0 group-hover:opacity-100 focus:opacity-100"
-          onClick={async () => {
-            await api.disconnect(connection.id);
-            onChanged();
-          }}
-        >
-          {t("connection.remove")}
-        </Button>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate" title={connection.bot ?? undefined}>
+            {connection.bot ?? t(`platform.${connection.platform}` as MessageKey)}
+          </span>
+          <span className="text-small text-text-secondary">{t(`platform.${connection.platform}` as MessageKey)}</span>
+        </div>
+        {confirming ? (
+          <span className="flex shrink-0 items-center gap-1">
+            <Button
+              variant="primary"
+              onClick={async () => {
+                await api.disconnect(connection.id);
+                onChanged();
+              }}
+            >
+              {t("connection.removeYes")}
+            </Button>
+            <Button variant="text" onClick={() => setConfirming(false)}>
+              {t("agent.deleteNo")}
+            </Button>
+          </span>
+        ) : (
+          <>
+            <span className="flex shrink-0 items-center gap-2 whitespace-nowrap text-small text-text-secondary">
+              <StatusDot state={connection.state} />
+              {t(`connection.${connection.state}` as MessageKey)}
+            </span>
+            <Button variant="text" className="shrink-0" onClick={() => setConfirming(true)}>
+              {t("connection.remove")}
+            </Button>
+          </>
+        )}
       </div>
-      {connection.state === "connected" && !connection.owner ? (
-        <p className="pl-23 text-small text-text-tertiary">{t("connection.noOwner")}</p>
-      ) : null}
-      {connection.state === "error" && connection.detail ? (
-        <p className="pl-23 text-small text-error">{connection.detail}</p>
+      {confirming ? <p className="text-small text-text-secondary">{t("connection.removeConfirm")}</p> : null}
+      {!confirming && hint ? (
+        <p className={`text-small ${connection.state === "error" ? "text-error" : "text-text-tertiary"}`}>{hint}</p>
       ) : null}
     </li>
   );
@@ -371,16 +410,22 @@ function ActivityList({ items }: { items: Activity[] }) {
     <ul className="flex flex-col">
       {items.map((m) => (
         <li key={m.id} className="flex flex-col gap-0.5 border-b border-border py-3 last:border-0">
-          <div className="flex items-center gap-2 text-small text-text-secondary">
-            <span className="truncate font-semibold text-text">{m.sender ?? ""}</span>
-            <span className="truncate">
-              {t(`platform.${m.platform}` as MessageKey)}
-              {m.chat.kind !== "dm" && m.chat.name ? ` · ${m.chat.name}` : ""}
+          <div className="flex items-baseline gap-2 text-small text-text-secondary">
+            <span className="max-w-[45%] shrink-0 truncate font-semibold text-text" title={m.sender ?? undefined}>
+              {m.sender ?? ""}
             </span>
-            <span className="ml-auto shrink-0">{relativeTime(m.createdAt, locale)}</span>
+            <span className="min-w-0 flex-1 truncate" title={m.chat.name ?? undefined}>
+              {t(`platform.${m.platform}` as MessageKey)} ·{" "}
+              {m.chat.kind === "dm" ? t("chat.dm") : (m.chat.name ?? t("chat.group"))}
+            </span>
+            <span className="shrink-0 whitespace-nowrap">{relativeTime(m.createdAt, locale)}</span>
           </div>
-          <p className="line-clamp-3 whitespace-pre-wrap break-words">{m.body}</p>
-          {m.files.length ? <p className="text-small text-text-secondary">{m.files.join(", ")}</p> : null}
+          <p className="line-clamp-3 whitespace-pre-wrap wrap-anywhere">{m.body}</p>
+          {m.files.length ? (
+            <p className="truncate font-mono text-small text-text-secondary" title={m.files.join(", ")}>
+              {m.files.join(", ")}
+            </p>
+          ) : null}
           {m.direction === "in" && m.state === "unanswered" ? (
             <p className="flex items-center gap-2 text-small text-text-secondary">
               <StatusDot state="error" />

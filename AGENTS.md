@@ -74,6 +74,8 @@ docs/           文档
 
 ## 工作方式
 
+- 改控制台后必须跑 `pnpm build && pnpm ui:review`，逐张看截图再提交：不允许文字被遮挡或截断到看不出意思、不允许横向溢出、不允许界面里出现英文内部错误码或未翻译的文案。
+
 - 改动产品范围、领域模型、架构或技术选型时，先更新 `docs/spec.md`，与代码在同一次提交里。
 - `docs/spec.md` 第 12 节的待验证项有了实测结论后，把结论写回文档并移出该节。
 - 不凭记忆断言第三方 SDK 或平台的行为。查当前文档或源码，或实测；未实测的写明"待验证"。
@@ -99,6 +101,7 @@ pnpm format       # 自动修复格式
 pnpm test
 pnpm build        # 先构建控制台（web/dist），再编译到 dist/
 pnpm dev:web      # 控制台热更新开发，API 代理到正在运行的 mingle start
+pnpm ui:review    # 先 pnpm build。用长名字、长文本和所有状态，在多个宽度 × 中英文下截图到 .ui-review/
 MINGLE_E2E=claude pnpm vitest run test/e2e.test.ts   # 用本机真实的 Claude Code 跑端到端，会消耗额度
 ```
 

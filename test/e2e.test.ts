@@ -30,16 +30,17 @@ describe.skipIf(!harness)(`real harness: ${harness}`, () => {
       text: "Also, what is 17 times 3? Reply to me separately.",
       sender: { id: "u2", name: "Li Si", isBot: false },
     });
-    await until(() => channel.sent.length >= 3, 240_000);
-    const texts = channel.sent
-      .slice(1)
-      .map((m) => m.text)
-      .join("\n");
-    expect(texts).toMatch(/BANANA/i);
-    expect(texts).toMatch(/51/);
-
+    // Done when every message has been answered (an "on it" first is fine) and the agent is idle again.
     const chat = mingle.store.agentChats(current.agentId)[0]?.id as string;
-    const inbound = mingle.store.chatMessages(chat, 20).filter((m) => m.direction === "in");
+    const inboundOf = () => mingle.store.chatMessages(chat, 20).filter((m) => m.direction === "in");
+    await until(
+      () => inboundOf().length === 3 && inboundOf().every((m) => m.state !== "delivered" && m.state !== "received"),
+      300_000,
+    );
+    await until(() => !mingle.runtime(current?.agentId as string)?.busy, 120_000);
+    // Messages sent after "done" (a final answer after an acknowledgement) still count.
+    await new Promise((r) => setTimeout(r, 2000));
+    const inbound = inboundOf();
     console.log(
       mingle.store
         .chatMessages(chat, 20)
@@ -50,5 +51,11 @@ describe.skipIf(!harness)(`real harness: ${harness}`, () => {
         .join("\n"),
     );
     expect(inbound.every((m) => m.state === "replied")).toBe(true);
+    const texts = channel.sent
+      .slice(1)
+      .map((m) => m.text)
+      .join("\n");
+    expect(texts).toMatch(/BANANA/i);
+    expect(texts).toMatch(/51/);
   }, 420_000);
 });

@@ -116,6 +116,20 @@ export function Code({ children }: { children: ReactNode }) {
   return <code className="font-mono text-small">{children}</code>;
 }
 
+/** "Tomorrow 20:02", "Thu 09:00", or "Nov 20, 09:00" for further out. */
+export function shortDateTime(ms: number, locale: string): string {
+  const date = new Date(ms);
+  const time = date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hour12: false });
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOfDay(date) - startOfDay(new Date())) / 86_400_000);
+  if (days === 0 || days === 1) {
+    const word = new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(days, "day");
+    return `${word} ${time}`;
+  }
+  if (days > 1 && days < 7) return `${date.toLocaleDateString(locale, { weekday: "short" })} ${time}`;
+  return `${date.toLocaleDateString(locale, { month: "short", day: "numeric" })} ${time}`;
+}
+
 export function relativeTime(ms: number, locale: string): string {
   const diff = (ms - Date.now()) / 1000;
   const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });

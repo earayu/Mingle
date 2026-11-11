@@ -1,6 +1,6 @@
 {
   "files": {
-    "includes": ["**", "!dist", "!web/dist", "!spikes", "!node_modules", "!**/*.md"]
+    "includes": ["**", "!dist", "!web/dist", "!.ui-review", "!spikes", "!node_modules", "!**/*.md"]
   },
   "formatter": {
     "indentStyle": "space",

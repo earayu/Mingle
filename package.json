@@ -20,7 +20,8 @@
     "format": "biome check --write .",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "build:web": "vite build --config web/vite.config.ts",
-    "dev:web": "vite --config web/vite.config.ts"
+    "dev:web": "vite --config web/vite.config.ts",
+    "ui:review": "node scripts/ui-review.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.6",

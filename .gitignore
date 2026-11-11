@@ -5,3 +5,4 @@ dist/
 .env
 .env.*
 web/dist/
+.ui-review/
