@@ -4,18 +4,20 @@
 
 ## 项目
 
-Mingle 让用户在本机创建"数字员工"，由本机的 Claude Code、Codex 等 harness 驱动，以机器人身份加入飞书、钉钉、企业微信、Slack、Discord、Telegram。本地运行，没有服务端。
+Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claude Code、Codex 等 harness 驱动，以机器人身份加入飞书、钉钉、企业微信、Slack、Discord、Telegram。本地运行，没有服务端。不预设公司或工作场景。
+
+注意区分两个"agent"：读本文件的你是开发 Mingle 的 coding agent；文档里的 Agent 指 Mingle 的产品对象。
 
 **开始任何工作前先读 [`docs/design.md`](docs/design.md)。** 它是产品范围、领域模型、架构和技术选型的唯一依据。
 
 ## 当前状态
 
-仓库目前只有文档，还没有代码。下一步是 `docs/design.md` 第 10 节的 M0 技术验证。本文件中关于命令和目录的内容是约定，随代码落地时更新。
+仓库目前只有文档，还没有代码。下一步是 `docs/design.md` 第 11 节的 M0 技术验证。本文件中关于命令和目录的内容是约定，随代码落地时更新。
 
 ## 不可违背的产品约束
 
 1. **没有服务端。** 不引入任何云端组件、账号、遥测或对外上报。本地 HTTP 服务只监听 `127.0.0.1`。
-2. **员工是一等对象。** 不向 IM 用户暴露 harness 会话，不加 `/new`、`/switch` 这类会话命令。
+2. **Agent 是一等对象。** 不向 IM 用户暴露 harness 会话，不加 `/new`、`/switch` 这类会话命令。
 3. **只走官方机器人通道。** 不使用个人账号的非官方协议。
 4. **不自己实现 agent 循环。** 模型调用和工具执行交给 harness，通过 OAR 接入。
 5. **密钥不落库、不进日志、不出现在 API 响应里。** IM 凭据只存系统 Keychain。
@@ -33,13 +35,13 @@ Mingle 让用户在本机创建"数字员工"，由本机的 Claude Code、Codex
 ## 目录约定
 
 ```text
-src/core/       领域类型、员工运行时、收件箱、调度器
+src/core/       领域类型、Agent 运行时、收件箱、调度器
 src/harness/    OAR 的薄封装
 src/channels/   Channel 接口和各平台适配器，每个平台一个目录
-src/tools/      员工工具
 src/store/      SQLite 访问和迁移
 src/platform/   Keychain、自启等系统相关能力
 src/api/        本地 HTTP API
+src/cli/        mingle 命令和操作指南
 web/            控制台
 docs/           文档
 ```
@@ -48,7 +50,9 @@ docs/           文档
 
 - **OAR 只在 `src/harness/` 内被引用。** 其他模块依赖我们自己的接口。OAR 更新很快，这一层用来隔离变化。
 - **平台 SDK 只在对应的 `src/channels/<平台>/` 内被引用。** 核心层只认 `Channel` 接口和语义类型，不出现平台名称的分支判断。
-- **员工对 IM 的一切输出都经过 `src/tools/`。** 不要在别处直接调用适配器发消息，权限检查集中在这一层。
+- **Agent 对 IM 的一切输出都经过 `mingle` CLI 和本地 API。** 不要在别处直接调用适配器发消息，权限检查集中在 API 层。
+- **`mingle` CLI 保持小而稳定。** 新增命令先在 `docs/design.md` 第 5 节定义。操作指南和注入给 harness 的提示词必须由同一份源生成。
+- **Agent 主目录只约定 `ROLE.md`、`MEMORY.md`、`notes/`。** 不要让 Mingle 往里写别的文件。
 - **系统相关代码只在 `src/platform/`。** 核心保持可在 Linux 上无界面运行。
 - **渠道能力按机器人实例判断。** 新增呈现能力时同时写明不支持时的降级行为。
 - 数据库结构变更通过迁移文件，不手改已有迁移。
@@ -56,10 +60,10 @@ docs/           文档
 ## 工作方式
 
 - 改动产品范围、领域模型、架构或技术选型时，先更新 `docs/design.md`，与代码在同一次提交里。
-- `docs/design.md` 第 11 节的待验证项有了实测结论后，把结论写回文档并移出该节。
+- `docs/design.md` 第 12 节的待验证项有了实测结论后，把结论写回文档并移出该节。
 - 不凭记忆断言第三方 SDK 或平台的行为。查当前文档或源码，或实测；未实测的写明"待验证"。
 - 新增依赖要有理由，优先用 Node 内置能力。
-- 行为变更附带测试。员工运行时的测试用 OAR 的 `testing` 脚本化运行时，不依赖真实 harness 登录。
+- 行为变更附带测试。Agent 运行时的测试用 OAR 的 `testing` 脚本化运行时，不依赖真实 harness 登录。
 - 参考 Raft 源码时只学设计，不复制代码（FSL 许可）。从 dsh-im 移植代码时保留 MIT 署名。
 
 ## 提交
