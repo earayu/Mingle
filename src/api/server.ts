@@ -449,7 +449,12 @@ export function listen(app: Hono<Env>, port: number): Promise<{ url: string; clo
     const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {
       resolveListen({
         url: `http://127.0.0.1:${info.port}`,
-        close: () => new Promise((r) => server.close(() => r())),
+        // Open keep-alive connections (an open console polls) would hold close() forever.
+        close: () =>
+          new Promise((r) => {
+            server.close(() => r());
+            (server as { closeAllConnections?: () => void }).closeAllConnections?.();
+          }),
       });
     });
     server.on("error", reject);

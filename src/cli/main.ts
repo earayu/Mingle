@@ -513,8 +513,11 @@ async function start(flags: Flags): Promise<void> {
     stopping = true;
     log("stopping");
     rmSync(paths.runtime, { force: true });
-    await mingle.stop();
+    // Never hang on the way out: whoever sent the signal is waiting.
+    setTimeout(() => process.exit(0), 10_000).unref();
+    // Stop taking requests before the store closes under them.
     await server.close();
+    await mingle.stop();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
