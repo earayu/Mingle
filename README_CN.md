@@ -11,7 +11,7 @@
 
 ## 状态
 
-早期开发中。核心流程已能用 Claude Code 或 Codex，在飞书和 Telegram 上端到端跑通，可以用本地网页控制台或命令行管理。其他 IM 正在接入，没有发布版本。用法见 [README.md](README.md)。
+早期开发中。核心流程已能用 Claude Code 或 Codex 端到端跑通，可以用本地网页控制台、macOS 桌面应用或命令行管理。八个 IM 都已接入，飞书在真实租户上验证过，其余对着平台接口和测试验证。还没有发布版本。用法见 [README.md](README.md)，桌面应用用 `pnpm desktop:build` 在本机构建。
 
 ## 文档
 

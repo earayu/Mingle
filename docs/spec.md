@@ -436,7 +436,8 @@ flowchart TD
 | IM 接入 | 各平台官方 SDK + 自有 `Channel` 接口 | 见 6.2 |
 | 存储 | `node:sqlite` + 文件 | 见第 8 节 |
 | 本地 API | Hono | 轻，无额外运行时要求 |
-| 控制台 | React + Vite + Tailwind，视觉按 `DESIGN.md` | 通用，将来可原样装进桌面壳 |
+| 控制台 | React + Vite + Tailwind，视觉按 `DESIGN.md` | 通用，浏览器和桌面应用用同一套 |
+| 桌面应用 | [mygo](https://github.com/egoist/mygo) 0.9 的 webview 模式（Go），内置 Node.js 24 | 见 9.1 |
 | 包管理 | pnpm | |
 | 测试 | Vitest；harness 侧用 OAR 的 `testing` 脚本化运行时 | 不需要真实登录即可测试 Agent 运行时 |
 | 代码检查 | Biome | 格式化和 lint 一个工具 |
@@ -445,7 +446,14 @@ flowchart TD
 
 **有界面，形态是本机进程提供的网页控制台。** 扫码、创建 Agent、查看状态都在控制台完成。启动 Mingle 时自动打开浏览器。
 
-**暂不采用 nsh 或 mygo。** 两者都创建不足两个月，且分别是 Rust 和 Go，而核心必须是 Node。等产品验证后需要"双击安装、菜单栏图标、开机自启、自动更新"时，用 mygo 的 webview 模式把同一个控制台包成桌面应用；nsh 的强项是跨移动端原生 UI，不是我们的需求。
+**桌面应用用 mygo 的 webview 模式包同一个控制台**（2026-11-13 决定，代码在 `desktop/`）。
+
+- 应用是一个菜单栏程序：窗口里是 `mingle start` 提供的控制台，菜单栏图标里有打开窗口、查看日志、登录时打开、检查更新、退出。关掉窗口 Mingle 继续在后台运行，Dock 图标只在窗口显示时出现。
+- 应用内置 Node.js 24（版本和校验和锁定在 `desktop/scripts/prepare.mjs`）和 Mingle 的构建产物，启动时用它运行 `mingle start --no-open`，进程退出后自动重启，退出应用时先让它正常关闭。核心仍是同一个 Node 进程，桌面壳不碰业务逻辑。
+- 从 Finder 打开的应用拿到的 `PATH` 很短，找不到用户用 Homebrew、npm 装的 harness。所以启动 Mingle 前先读一次用户登录 shell 的 `PATH`。
+- 已经有一个 Mingle 在跑（比如在终端里 `mingle start`），应用直接显示它，不另起一个。
+- 选 mygo 而不是原生 SwiftUI 壳：控制台不用写第二套；托盘、登录项、DMG、签名、公证、带签名的增量自动更新都是现成的。代价是依赖一个年轻的单人项目（2026-09 创建，0.9.0），但壳只有约 300 行，将来换壳成本低。nsh 的强项是跨移动端原生 UI，不是我们的需求。
+- 自动更新：mygo 的 updater 插件（类 Sparkle 的更新窗口），从本仓库的 GitHub Releases 读带签名的更新清单。签名私钥不在仓库里，在 CI 的 `MYGO_UPDATER_PRIVATE_KEY` secret 中。
 
 ### 9.2 平台
 
@@ -471,7 +479,7 @@ docs/             文档
 ### 9.4 分发
 
 - **首版**：npm 包，命令行启动，浏览器打开控制台。
-- **桌面应用**：签名并公证的 DMG，加 Homebrew cask，带自动更新。
+- **桌面应用**：DMG（Apple 芯片和 Intel 各一个），带自动更新。打 `v<版本>` 标签后由 `.github/workflows/desktop.yml` 构建并上传到草稿 Release，发布草稿即推送更新。有 Developer ID 证书时签名并公证；没有时是 ad hoc 签名，别的 Mac 上首次打开要在系统设置里放行。Homebrew cask 待首个正式版后再加。
 - **Mac App Store 上不了。** 上架要求应用沙箱，而沙箱内的进程及其子进程不能执行用户自己安装的 `claude`、`codex`，也读不到 `~/.claude` 之类的登录态和用户的代码目录。Mingle 的核心就是拉起这些 harness，这一点和 MiaoYan 这类只读写用户所选文件夹的应用不同。
 - npm 包名 `mingle-app`（`mingle` 已被占用），命令名 `mingle`。
 - 开源，MIT 许可。
@@ -529,6 +537,16 @@ docs/             文档
 | 各平台文件收发 | 飞书、Telegram、企业微信、QQ、Slack、Discord、个人微信、钉钉已支持，八个平台全部完成 |
 | 实时回复与表情 | 飞书（流式卡片，真机验证通过）、Telegram（编辑消息）、企业微信（流式回复）、钉钉（AI 卡片）、QQ 私聊（流式消息）、Slack（编辑消息）、Discord（编辑消息）完成；个人微信和 QQ 用"正在输入"代替表情 |
 
+### 11.3 M3 进度
+
+| 项 | 状态 |
+|---|---|
+| 桌面壳 | 完成：mygo webview 窗口装控制台，菜单栏图标，关窗后留在后台，单实例，Mingle 进程退出后自动重启，退出应用时正常关闭它。本机实测：构建出的 DMG 约 54 MB；从应用启动内置 Node 跑起 Mingle、读到全部本机 harness；关窗隐藏、再次打开显示原窗口；手动杀掉 Mingle 进程后自动重启；Cmd-Q 后 Mingle 进程退出 |
+| 开机自启 | 完成：菜单栏里的"登录时打开"，登录时启动不弹窗口 |
+| 自动更新 | 已接好：mygo updater 插件和签名清单，发布流程见 9.4。尚未有发布版本，所以更新本身未实测 |
+| 签名与公证 | 流程已写进 CI，需要维护者提供 Developer ID 证书和 Apple 账号的 secret；没有时是 ad hoc 签名 |
+| 更多 harness、审批转发 | 未开始 |
+
 ## 12. 验证记录
 
 ### 12.1 已实测
@@ -575,5 +593,4 @@ docs/             文档
 
 - **群内非 @ 消息**：是否让 Agent 读到群里没有 @ 它的消息作为背景。多数平台需要额外的敏感权限，本版不做。
 - **多个 Agent 同在一个群**：互相 @ 时的防循环规则。
-- **桌面壳**：mygo 的 webview 模式，还是原生 SwiftUI 壳加内置 Node 进程。两者都通过本地 API 与核心交互，M1 之后再定，维护者无倾向。
 - **长任务末尾的插话**：消息恰好在一轮结束的瞬间插入时，harness 可能接受了却不处理。聊天消息由"未回复提醒"兜底；提醒和系统通知改为等到下一轮再投递。真实 harness 上是否会出现，待长期使用观察。

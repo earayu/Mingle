@@ -1,0 +1,87 @@
+name: Desktop release
+
+# Push a tag v<version of package.json> to build the macOS app for Apple silicon and
+# Intel, and upload the disk images and signed update files to a draft release.
+# Publishing the draft is what installed apps update to.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "tag $GITHUB_REF_NAME, package.json $version"; exit 1; }
+
+      - name: Create the draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Mingle $GITHUB_REF_NAME" --generate-notes
+
+      # Without a Developer ID the app is signed ad hoc: it runs, but Gatekeeper
+      # blocks it on other Macs until the user allows it in System Settings.
+      - name: Import the Developer ID certificate and notary credentials
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ]; then echo "no certificate: ad hoc signing"; exit 0; fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -base64 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain
+          xcrun notarytool store-credentials notary --keychain "$keychain" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          echo "NOTARY_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "MACOS_SIGNING_IDENTITY=$MACOS_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Stage Mingle and Node.js
+        run: node desktop/scripts/prepare.mjs --arch all
+
+      - name: Build, sign and upload
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          if [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then upload=-upload; fi
+          go tool mygo build -platform darwin/arm64,darwin/amd64 $upload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mingle-macos
+          path: desktop/build/*/*.dmg

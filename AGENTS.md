@@ -12,7 +12,7 @@ Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claud
 
 ## 当前状态
 
-M2 进行中，进度见 `docs/spec.md` 11.1、11.2。已实现：存储、Agent 运行时、本地 API、`mingle` CLI、控制台（`web/`），以及全部八个平台的适配器。
+M3 进行中，进度见 `docs/spec.md` 11.1–11.3。已实现：存储、Agent 运行时、本地 API、`mingle` CLI、控制台（`web/`）、全部八个平台的适配器和文件收发、macOS 桌面应用（`desktop/`）。
 
 代码地图：
 
@@ -24,6 +24,7 @@ M2 进行中，进度见 `docs/spec.md` 11.1、11.2。已实现：存储、Agent
 - `src/harness/harness.ts`：唯一引用 OAR 的地方
 - `src/channels/`：`channel.ts` 是适配器接口，每个平台一个目录
 - `web/`：控制台，React + Vite + Tailwind。视觉只用 `web/src/styles.css` 里来自 `DESIGN.md` 的 token；文案只走 `web/src/i18n.ts`，中英文两份都要加
+- `desktop/`：macOS 桌面应用，mygo（Go）写的菜单栏壳，内置 Node 运行 `mingle start`，见 `docs/spec.md` 9.1。`desktop/scripts/prepare.mjs` 把 Mingle 和 Node.js 放进 `desktop/resources/`
 - `spikes/`：技术验证脚本，不属于产品代码
 
 ## 不可违背的产品约束
@@ -103,6 +104,8 @@ pnpm build        # 先构建控制台（web/dist），再编译到 dist/
 pnpm dev:web      # 控制台热更新开发，API 代理到正在运行的 mingle start
 pnpm ui:review    # 先 pnpm build。用长名字、长文本和所有状态，在多个宽度 × 中英文下截图到 .ui-review/
 MINGLE_E2E=claude pnpm vitest run test/e2e.test.ts   # 用本机真实的 Claude Code 跑端到端，会消耗额度
+pnpm desktop:build  # 构建桌面应用到 desktop/build/（需要 Go，go.mod 指定的版本会自动下载）
+pnpm desktop:dev    # 用 go run 跑桌面壳，Node 用 PATH 上的，Mingle 用仓库的 dist/
 ```
 
 本地手动运行：

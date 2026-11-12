@@ -1,0 +1,32 @@
+// The desktop app's configuration for the mygo CLI (https://github.com/egoist/mygo).
+// Plain object, no import: the CLI evaluates this file with Node.js type stripping.
+import { readFileSync } from "node:fs";
+
+const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+  version: string;
+};
+
+export default {
+  name: "Mingle",
+  slug: "mingle",
+  identifier: "io.github.earayu.mingle",
+  // The app and the npm package release together, from one version.
+  version,
+  copyright: "© 2026 Mingle contributors",
+  license: "MIT",
+  out: "build",
+  updates: {
+    publicKey: "sPkcU9YfvgSNIpGsaSHyvJgx+Tf/jCRJpjOdlzHIOGM=",
+    github: "earayu/Mingle",
+  },
+  macos: {
+    minimumSystemVersion: "13.0",
+    // A menu bar app: no Dock icon until the window shows.
+    infoPlist: { LSUIElement: true },
+    // Ad hoc unless a Developer ID is given (CI sets these, see .github/workflows/desktop.yml).
+    signingIdentity: process.env.MACOS_SIGNING_IDENTITY ?? "-",
+    ...(process.env.NOTARY_KEYCHAIN
+      ? { notarize: { keychainProfile: "notary", keychain: process.env.NOTARY_KEYCHAIN } }
+      : {}),
+  },
+};

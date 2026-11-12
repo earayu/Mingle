@@ -1,6 +1,18 @@
 {
   "files": {
-    "includes": ["**", "!dist", "!web/dist", "!.ui-review", "!spikes", "!node_modules", "!**/*.md"]
+    "includes": [
+      "**",
+      "!dist",
+      "!web/dist",
+      "!.ui-review",
+      "!spikes",
+      "!node_modules",
+      "!**/*.md",
+      "!desktop/build",
+      "!desktop/resources/mingle",
+      "!desktop/.cache",
+      "!desktop/.mygo"
+    ]
   },
   "formatter": {
     "indentStyle": "space",

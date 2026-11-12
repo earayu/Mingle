@@ -1,6 +1,6 @@
 {
   "name": "mingle-app",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "license": "MIT",
   "description": "Bring your agent companion into the chat apps you already use. Runs on your machine, no server.",
@@ -21,7 +21,9 @@
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
-    "ui:review": "pnpm build && node scripts/ui-review.mjs"
+    "ui:review": "pnpm build && node scripts/ui-review.mjs",
+    "desktop:build": "node desktop/scripts/prepare.mjs && cd desktop && go tool mygo build",
+    "desktop:dev": "pnpm build && cd desktop && go run ."
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.6",

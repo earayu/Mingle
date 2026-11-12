@@ -11,7 +11,7 @@ Create an agent on your own computer: it has a name, a role, a memory and a home
 
 ## Status
 
-Early development. The core works end to end with Claude Code or Codex, on Feishu and Telegram, managed from a local web console or the command line. The other chat apps are in progress. There is no release.
+Early development. The core works end to end with Claude Code or Codex, managed from a local web console, the macOS desktop app or the command line. All eight chat apps are built; Feishu is verified on a real tenant, the others against their APIs and in tests. There is no release yet.
 
 ```sh
 pnpm install && pnpm build
@@ -21,6 +21,14 @@ echo "$TELEGRAM_BOT_TOKEN" | node dist/cli/main.js connect alex telegram
 ```
 
 `mingle start` opens the console in your browser; `mingle open` opens it again later. Send the bot a direct message from your own Telegram account; that makes you its owner.
+
+### Desktop app (macOS)
+
+The desktop app wraps the same console in a window and a menu bar icon, ships its own Node.js, keeps Mingle running in the background, and can open at login and update itself. Build it locally (needs Go; the right version downloads itself):
+
+```sh
+pnpm desktop:build      # writes desktop/build/darwin-arm64/Mingle.app and a .dmg
+```
 
 ## Documentation
 
