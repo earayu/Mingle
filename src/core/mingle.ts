@@ -33,10 +33,13 @@ export interface OnboardingSession {
     | { kind: "qr"; content: string; expiresAt: number }
     | { kind: "scanned" }
     | { kind: "awaiting_approval" }
+    | { kind: "needs_code"; retry: boolean }
     | { kind: "done"; connectionId: string; pendingApproval: boolean }
     | { kind: "failed"; code: string };
   readonly abort: AbortController;
   updatedAt: number;
+  /** Set while the platform waits for a code typed in the console. */
+  submitCode?: ((code: string) => void) | undefined;
 }
 
 function onboardingError(platform: Platform, code: OnboardingFailure): MingleError {
@@ -229,10 +232,18 @@ export class Mingle {
     };
     void (async () => {
       try {
-        for await (const event of channel.onboard(undefined, abort.signal, { agentName: agent.name })) {
+        const awaitCode = () =>
+          new Promise<string>((resolve) => {
+            session.submitCode = (code) => {
+              session.submitCode = undefined;
+              resolve(code);
+            };
+          });
+        for await (const event of channel.onboard(undefined, abort.signal, { agentName: agent.name, awaitCode })) {
           if (event.kind === "qr_ready") set({ kind: "qr", content: event.qrContent, expiresAt: event.expiresAt });
           else if (event.kind === "scanned") set({ kind: "scanned" });
           else if (event.kind === "awaiting_approval") set({ kind: "awaiting_approval" });
+          else if (event.kind === "needs_code") set({ kind: "needs_code", retry: Boolean(event.retry) });
           else if (event.kind === "failed") set({ kind: "failed", code: event.code });
           else if (event.kind === "succeeded") {
             const connection = await this.finishOnboarding(agent.id, platform, event);

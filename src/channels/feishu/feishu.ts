@@ -88,7 +88,7 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
 
   return {
     platform: "feishu",
-    onboarding: { kind: "qr" },
+    onboarding: { kind: "qr", desktopLink: true },
     manualFields: [
       { key: "appId", labelKey: "feishu.appId", secret: false },
       { key: "appSecret", labelKey: "feishu.appSecret", secret: true },

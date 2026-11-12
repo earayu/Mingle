@@ -548,7 +548,8 @@ function QrOnboarding({
             <li>{t(`${info.platform}.qr3` as MessageKey)}</li>
           </ol>
           <OnboardingStatus state={state} expired={expired} remaining={remaining} platformName={platformName} />
-          {state.state === "qr" && !expired ? (
+          {state.state === "needs_code" && sessionId ? <CodeForm sessionId={sessionId} retry={state.retry} /> : null}
+          {state.state === "qr" && !expired && info.onboarding?.kind === "qr" && info.onboarding.desktopLink ? (
             <a
               href={state.url}
               target="_blank"
@@ -571,6 +572,40 @@ function QrOnboarding({
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** The code the phone shows after scanning, typed here (WeChat asks for this on some accounts). */
+function CodeForm({ sessionId, retry }: { sessionId: string; retry: boolean }) {
+  const { t } = useI18n();
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clear the field when the platform asks again
+  useEffect(() => setCode(""), [retry]);
+  return (
+    <form
+      className="flex items-end gap-2"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        await api.submitCode(sessionId, code).catch(() => {});
+        setBusy(false);
+      }}
+    >
+      <Field label={t("qr.codeLabel")}>
+        <Input
+          autoFocus
+          required
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+        />
+      </Field>
+      <Button type="submit" variant="primary" disabled={busy || !code.trim()}>
+        {t("qr.codeSubmit")}
+      </Button>
+    </form>
   );
 }
 
@@ -614,6 +649,8 @@ function OnboardingStatus({
       return line("reconnecting", t("qr.scanned"));
     case "awaiting_approval":
       return line("awaiting_approval", t("connection.approvalHint"));
+    case "needs_code":
+      return line("reconnecting", t(state.retry ? "qr.codeRetry" : "qr.code"));
     case "done":
       return state.pendingApproval
         ? line("awaiting_approval", t("qr.donePending"))

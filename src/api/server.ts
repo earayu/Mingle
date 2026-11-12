@@ -384,6 +384,17 @@ export function createApi(mingle: Mingle): Hono<Env> {
     return c.json({ ...state, state: state.kind });
   });
 
+  app.post("/v1/admin/onboarding/:id/code", async (c) => {
+    const session = mingle.onboarding(c.req.param("id"));
+    if (!session) throw new MingleError("onboarding_not_found", "start connecting again", 404);
+    const { code } = await c.req.json<{ code: string }>();
+    if (!session.submitCode) throw new MingleError("code_not_expected", "the chat app is not waiting for a code");
+    if (!code?.trim()) throw new MingleError("code_required", "type the code shown on your phone");
+    session.submitCode(code.trim());
+    session.state = { kind: "scanned" };
+    return c.json({ ok: true });
+  });
+
   app.delete("/v1/admin/onboarding/:id", (c) => {
     mingle.cancelOnboarding(c.req.param("id"));
     return c.json({ ok: true });

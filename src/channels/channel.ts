@@ -28,7 +28,8 @@ export interface Capabilities {
 
 /** How a user connects a bot on this platform. Drives the console's connect screen. */
 export type OnboardingMethod =
-  | { readonly kind: "qr" }
+  /** `desktopLink`: the QR's link also works when opened in a signed-in browser on this computer. */
+  | { readonly kind: "qr"; readonly desktopLink?: boolean }
   | { readonly kind: "credentials"; readonly fields: readonly CredentialField[] };
 
 export interface CredentialField {
@@ -41,6 +42,8 @@ export interface CredentialField {
 export type OnboardingEvent =
   | { readonly kind: "qr_ready"; readonly qrContent: string; readonly expiresAt: number }
   | { readonly kind: "scanned" }
+  /** The platform wants a code typed on this computer (shown on the phone). Answer through `context.awaitCode`. */
+  | { readonly kind: "needs_code"; readonly retry?: boolean }
   | { readonly kind: "awaiting_approval"; readonly detailKey?: string }
   | {
       readonly kind: "succeeded";
@@ -56,9 +59,18 @@ export type OnboardingEvent =
 export interface OnboardingContext {
   /** Used to name the bot where the platform lets us suggest one. */
   readonly agentName?: string;
+  /** Resolves with the code the user types in the console after a `needs_code` event. */
+  readonly awaitCode?: () => Promise<string>;
 }
 
-export type OnboardingFailure = "expired" | "denied" | "cancelled" | "invalid_credentials" | "network" | "unknown";
+export type OnboardingFailure =
+  | "expired"
+  | "denied"
+  | "cancelled"
+  | "invalid_credentials"
+  | "network"
+  | "already_bound"
+  | "unknown";
 
 /** Opaque to the core. Stored in the system keychain, never in SQLite or logs. */
 export type Credentials = Readonly<Record<string, string>>;

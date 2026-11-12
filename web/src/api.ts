@@ -97,7 +97,7 @@ export interface CredentialField {
 
 export interface PlatformInfo {
   platform: Platform;
-  onboarding: { kind: "qr" } | { kind: "credentials"; fields: CredentialField[] } | null;
+  onboarding: { kind: "qr"; desktopLink?: boolean } | { kind: "credentials"; fields: CredentialField[] } | null;
   manualFields: CredentialField[];
 }
 
@@ -106,6 +106,7 @@ export type OnboardingState =
   | { state: "qr"; qrSvg: string; url: string; expiresAt: number }
   | { state: "scanned" }
   | { state: "awaiting_approval" }
+  | { state: "needs_code"; retry: boolean }
   | { state: "done"; connectionId: string; pendingApproval: boolean }
   | { state: "failed"; code: string };
 
@@ -141,4 +142,5 @@ export const api = {
     call<{ id: string }>("POST", `/v1/admin/agents/${id}/onboarding`, { platform }),
   onboarding: (id: string) => call<OnboardingState>("GET", `/v1/admin/onboarding/${id}`),
   cancelOnboarding: (id: string) => call("DELETE", `/v1/admin/onboarding/${id}`),
+  submitCode: (id: string, code: string) => call("POST", `/v1/admin/onboarding/${id}/code`, { code }),
 };
