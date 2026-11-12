@@ -43,6 +43,7 @@
     "@hono/node-server": "^2.1.6",
     "@larksuiteoapi/node-sdk": "1.76.0",
     "@wecom/aibot-node-sdk": "1.0.7",
+    "dingtalk-stream": "2.1.4",
     "hono": "^4.13.17",
     "qrcode": "1.5.4"
   }
