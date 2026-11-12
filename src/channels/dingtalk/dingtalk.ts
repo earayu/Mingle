@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
+import { basename, extname } from "node:path";
 import { DWClient, TOPIC_ROBOT } from "dingtalk-stream";
 import type {
   Capabilities,
@@ -8,6 +9,7 @@ import type {
   ChannelEvents,
   ChatRef,
   Credentials,
+  Degradation,
   InboundAttachment,
   InboundMessage,
   LiveOptions,
@@ -36,12 +38,16 @@ const THINKING = "🤔思考中";
 const TEXT_REACTION_ID = "2659900";
 const TEXT_REACTION_BACKGROUND = "im_bg_1";
 const QR_MAX_MS = 15 * 60_000;
+/** DingTalk's media upload takes images and files up to 20 MB. */
+const MAX_MEDIA_BYTES = 20 * 1024 * 1024;
+/** What the robot's image message (sampleImageMsg) shows inline; everything else goes as a file. */
+const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".bmp"]);
 
 const CAPABILITIES: Capabilities = {
   quoteReply: false,
   reactions: true,
   typingIndicator: false,
-  fileUpload: false,
+  fileUpload: true,
   fileDownload: true,
   listMembers: false,
   maxTextLength: 5000,
@@ -125,9 +131,30 @@ export function dingtalkApi(fetchImpl: Fetch = fetch) {
       body: JSON.stringify(body),
     });
 
+  /** Upload to the media store; the returned media ID is what image and file messages carry. */
+  async function uploadMedia(
+    c: { appKey: string; appSecret: string },
+    file: { bytes: Buffer; name: string },
+    type: "image" | "file",
+  ): Promise<string> {
+    const url = new URL(`${REGISTRATION_BASE}/media/upload`);
+    url.searchParams.set("access_token", await token(c.appKey, c.appSecret));
+    url.searchParams.set("type", type);
+    const form = new FormData();
+    form.append("media", new Blob([new Uint8Array(file.bytes)]), file.name);
+    const body = await json<{ media_id?: string }>(url.toString(), {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!body.media_id) throw new Error("DingTalk returned no media ID");
+    return body.media_id;
+  }
+
   return {
     token,
     call,
+    uploadMedia,
     register: {
       async begin(signal?: AbortSignal) {
         const post = <T>(path: string, body: unknown) =>
@@ -284,23 +311,41 @@ export function dingtalkChannel(options: DingtalkOptions = {}): Channel {
       });
       await client.connect();
 
-      const sendMarkdown = async (chat: ChatRef, text: string) => {
-        const msgParam = JSON.stringify({ title: text.split("\n")[0]?.slice(0, 40) || "Mingle", text });
+      const sendRobot = async (chat: ChatRef, msgKey: string, param: Record<string, string>) => {
+        const msgParam = JSON.stringify(param);
         if (chat.kind === "dm") {
           await api.call(keys, "v1.0/robot/oToMessages/batchSend", {
             robotCode,
             userIds: [chat.platformId],
-            msgKey: "sampleMarkdown",
+            msgKey,
             msgParam,
           });
         } else {
           await api.call(keys, "v1.0/robot/groupMessages/send", {
             robotCode,
             openConversationId: chat.platformId,
-            msgKey: "sampleMarkdown",
+            msgKey,
             msgParam,
           });
         }
+      };
+      const sendMarkdown = (chat: ChatRef, text: string) =>
+        sendRobot(chat, "sampleMarkdown", { title: text.split("\n")[0]?.slice(0, 40) || "Mingle", text });
+      /** Each file is its own message: an inline image where DingTalk can show one, otherwise a file. */
+      const sendFile = async (chat: ChatRef, file: { path: string; name?: string }): Promise<boolean> => {
+        const { size } = await stat(file.path);
+        if (size === 0 || size > MAX_MEDIA_BYTES) return false;
+        const name = file.name ?? basename(file.path);
+        const extension = extname(name).toLowerCase();
+        const bytes = await readFile(file.path);
+        if (IMAGE_EXTENSIONS.has(extension)) {
+          const mediaId = await api.uploadMedia(keys, { bytes, name }, "image");
+          await sendRobot(chat, "sampleImageMsg", { photoURL: mediaId });
+        } else {
+          const mediaId = await api.uploadMedia(keys, { bytes, name }, "file");
+          await sendRobot(chat, "sampleFile", { mediaId, fileName: name, fileType: extension.slice(1) || "file" });
+        }
+        return true;
       };
 
       const emotion = async (platformMessageId: string, action: "reply" | "recall") => {
@@ -326,17 +371,25 @@ export function dingtalkChannel(options: DingtalkOptions = {}): Channel {
         capabilities: () => CAPABILITIES,
 
         async send(message: OutboundMessage): Promise<SendResult> {
+          const degraded: Degradation[] = message.replyTo ? ["quote_dropped"] : [];
+          let sentAny = false;
           try {
-            if (message.text) await sendMarkdown(message.chat, message.text);
-            return {
-              kind: "sent",
-              platformId: `out-${randomUUID()}`,
-              degraded: [
-                ...(message.replyTo ? (["quote_dropped"] as const) : []),
-                ...(message.files?.length ? (["files_dropped"] as const) : []),
-              ],
-            };
+            if (message.text) {
+              await sendMarkdown(message.chat, message.text);
+              sentAny = true;
+            }
+            for (const file of message.files ?? []) {
+              if (await sendFile(message.chat, file)) sentAny = true;
+              else if (!degraded.includes("files_dropped")) degraded.push("files_dropped");
+            }
+            if (!sentAny) return { kind: "failed", code: "too_large", retryable: false };
+            return { kind: "sent", platformId: `out-${randomUUID()}`, degraded };
           } catch (error) {
+            // The text, or some files, are out already: report what was sent rather than invite a resend.
+            if (sentAny) {
+              if (!degraded.includes("files_dropped")) degraded.push("files_dropped");
+              return { kind: "sent", platformId: `out-${randomUUID()}`, degraded };
+            }
             const status = (error as { status?: number }).status ?? 0;
             if (status === 429) return { kind: "failed", code: "rate_limited", retryable: true };
             if (status === 403) return { kind: "failed", code: "forbidden", retryable: false };

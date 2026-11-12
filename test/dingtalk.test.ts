@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { InboundMessage, OnboardingEvent } from "../src/channels/channel.ts";
 import { dingtalkApi, dingtalkChannel, type StreamClientLike, toInbound } from "../src/channels/dingtalk/dingtalk.ts";
@@ -5,11 +8,12 @@ import { until } from "./helpers.ts";
 
 /** A fake DingTalk HTTP API: routes by path, records calls. */
 function fakeHttp(routes: Record<string, (body: Record<string, unknown>) => unknown>) {
-  const calls: { path: string; method: string; body: Record<string, unknown> }[] = [];
+  const calls: { path: string; method: string; body: Record<string, unknown>; url: URL; form?: FormData }[] = [];
   const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
     const url = new URL(String(input));
-    const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
-    calls.push({ path: url.pathname, method: init?.method ?? "GET", body });
+    const form = init?.body instanceof FormData ? init.body : undefined;
+    const body = init?.body && !form ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+    calls.push({ path: url.pathname, method: init?.method ?? "GET", body, url, ...(form ? { form } : {}) });
     const route = routes[url.pathname];
     return Response.json(route ? route(body) : {});
   }) as typeof fetch;
@@ -159,6 +163,45 @@ describe("dingtalk connection", () => {
       userIds: ["staff1"],
       msgKey: "sampleMarkdown",
     });
+    await connection.close();
+  });
+
+  it("uploads files to the media store and sends images inline, other files as files", async () => {
+    let media = 0;
+    const http = fakeHttp({
+      "/v1.0/oauth2/accessToken": () => ({ accessToken: "tok", expireIn: 7200 }),
+      "/media/upload": () => ({ errcode: 0, media_id: `@media${++media}` }),
+    });
+    const connection = await dingtalkChannel({
+      api: dingtalkApi(http.fetchImpl),
+      createClient: () => fakeStream().client,
+    }).connect(
+      { clientId: "ding1", clientSecret: "sec" },
+      { onMessage: () => {}, onState: () => {}, onMembership: () => {} },
+    );
+    const dir = await mkdtemp(join(tmpdir(), "mingle-dingtalk-"));
+    await writeFile(join(dir, "map.png"), "png");
+    await writeFile(join(dir, "plan.xlsx"), "xlsx");
+    const result = await connection.send({
+      chat: { platformId: "cid1", kind: "group" },
+      text: "",
+      files: [{ path: join(dir, "map.png") }, { path: join(dir, "plan.xlsx") }],
+    });
+    expect(result).toMatchObject({ kind: "sent", degraded: [] });
+    const uploads = http.calls.filter((c) => c.path === "/media/upload");
+    expect(uploads.map((c) => [c.url.searchParams.get("type"), c.url.searchParams.get("access_token")])).toEqual([
+      ["image", "tok"],
+      ["file", "tok"],
+    ]);
+    expect((uploads[1]?.form?.get("media") as File).name).toBe("plan.xlsx");
+    const sent = http.calls.filter((c) => c.path === "/v1.0/robot/groupMessages/send").map((c) => c.body);
+    expect(sent).toMatchObject([
+      { openConversationId: "cid1", msgKey: "sampleImageMsg", msgParam: JSON.stringify({ photoURL: "@media1" }) },
+      {
+        msgKey: "sampleFile",
+        msgParam: JSON.stringify({ mediaId: "@media2", fileName: "plan.xlsx", fileType: "xlsx" }),
+      },
+    ]);
     await connection.close();
   });
 });
