@@ -1,6 +1,6 @@
 // Screenshot the console with awkward content at several widths and in both languages.
 //
-//   pnpm build && pnpm ui:review        → .ui-review/*.png
+//   pnpm ui:review (builds first)       → .ui-review/*.png
 //
 // Starts a throwaway Mingle (its own MINGLE_HOME), seeds long names, long text and
 // every connection state, then renders each page with headless Chrome. Look at every
@@ -186,7 +186,8 @@ try {
       for (const [name, path] of pages) {
         const file = join(OUT, `${locale}-${width}-${name}.png`);
         const profile = mkdtempSync(join(tmpdir(), "mingle-chrome-"));
-        jobs.push(
+        // Thunks, so only four Chromes run at a time.
+        jobs.push(() =>
           run(CHROME, [
             "--headless=new",
             "--disable-gpu",
@@ -198,12 +199,17 @@ try {
             "--virtual-time-budget=5000",
             `--screenshot=${file}`,
             `${url}${path}#token=${adminToken}`,
-          ]).finally(() => rmSync(profile, { recursive: true, force: true })),
+          ])
+            // Chrome sometimes trips its teardown watchdog after writing the file; the file is what counts.
+            .catch((error) => {
+              if (!existsSync(file)) throw error;
+            })
+            .finally(() => rmSync(profile, { recursive: true, force: true })),
         );
       }
     }
   }
-  for (let i = 0; i < jobs.length; i += 4) await Promise.all(jobs.slice(i, i + 4));
+  for (let i = 0; i < jobs.length; i += 4) await Promise.all(jobs.slice(i, i + 4).map((job) => job()));
   console.log(`${jobs.length} screenshots in ${OUT}`);
 } finally {
   daemon.kill("SIGTERM");

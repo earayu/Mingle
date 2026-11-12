@@ -21,7 +21,7 @@
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
-    "ui:review": "node scripts/ui-review.mjs"
+    "ui:review": "pnpm build && node scripts/ui-review.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.6",
@@ -42,6 +42,8 @@
     "@botiverse/oar": "0.97.0",
     "@hono/node-server": "^2.1.6",
     "@larksuiteoapi/node-sdk": "1.76.0",
+    "@tencent-connect/qqbot-connector": "1.2.0",
+    "@tencent-connect/qqbot-nodejs": "1.0.4",
     "@wecom/aibot-node-sdk": "1.0.7",
     "dingtalk-stream": "2.1.4",
     "hono": "^4.13.17",
