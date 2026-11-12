@@ -193,7 +193,7 @@ describe("dingtalk connection", () => {
       ["image", "tok"],
       ["file", "tok"],
     ]);
-    expect((uploads[1]?.form?.get("media") as File).name).toBe("plan.xlsx");
+    expect((uploads[1]?.form?.get("media") as File | undefined)?.name).toBe("plan.xlsx");
     const sent = http.calls.filter((c) => c.path === "/v1.0/robot/groupMessages/send").map((c) => c.body);
     expect(sent).toMatchObject([
       { openConversationId: "cid1", msgKey: "sampleImageMsg", msgParam: JSON.stringify({ photoURL: "@media1" }) },
