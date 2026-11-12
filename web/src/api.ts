@@ -55,6 +55,8 @@ export interface ConnectionView {
   state: "awaiting_credentials" | "awaiting_approval" | "connected" | "reconnecting" | "error";
   detail: string | null;
   owner: boolean;
+  /** Where to add the bot to a server, for platforms where that is a separate step. */
+  invite: string | null;
 }
 
 export interface AgentView {

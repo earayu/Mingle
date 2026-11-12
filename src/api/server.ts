@@ -263,8 +263,18 @@ export function createApi(mingle: Mingle): Hono<Env> {
       state: n.state,
       detail: n.stateDetail,
       owner: n.ownerId !== null,
+      invite: inviteUrl(n.platform, n.botId, n.botName),
     })),
   });
+
+  const inviteUrl = (platform: Platform, botId: string | null, botName: string | null): string | null => {
+    if (!botId) return null;
+    try {
+      return mingle.channel(platform).inviteUrl?.({ id: botId, name: botName ?? "" }) ?? null;
+    } catch {
+      return null;
+    }
+  };
 
   app.get("/v1/admin/status", (c) => c.json({ version: VERSION, agents: store.agents().map(agentView) }));
   app.get("/v1/admin/harnesses", async (c) => c.json(await mingle.availableHarnesses()));

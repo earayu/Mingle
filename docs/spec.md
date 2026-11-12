@@ -286,7 +286,7 @@ MSG
 | 钉钉 | 扫码或在电脑上打开授权页创建应用，或填 Client ID / Secret | Stream 长连接 | 需要组织管理员创建应用 |
 | 企业微信 | 扫码创建智能机器人，或填 Bot ID / Secret | 官方 WebSocket 长连接 | 是 |
 | Slack | 预置 App Manifest 创建应用，填两个 token | Socket Mode | 视工作区设置 |
-| Discord | Developer Portal 生成 bot token | Gateway | 否，需服务器管理权限拉入 |
+| Discord | Developer Portal 建应用，填 bot token；连上后用控制台给的邀请链接拉进服务器 | Gateway（直连 WebSocket，不引入 SDK） | 否，需服务器管理权限拉入 |
 | Telegram | @BotFather 生成 bot token | 长轮询 | 否 |
 | 个人微信 | 微信扫码绑定 | 腾讯 iLink 机器人服务（`ilinkai.weixin.qq.com`）长轮询 | 否 |
 | QQ | 手机 QQ 扫码创建机器人，或填 AppID / AppSecret | 官方 WebSocket | 否 |
@@ -314,7 +314,7 @@ MSG
 沿用 dsh-im 的原则：
 
 - 核心层只处理语义：消息、引用、聊天、文件、进度。
-- 适配器按平台习惯呈现：飞书用卡片，Telegram 用消息编辑，Discord 用 Thread。
+- 适配器按平台习惯呈现：飞书用卡片，Telegram、Slack、Discord 用消息编辑。Discord 在服务器频道里引用原消息回复（不另开 Thread，这是 Discord 机器人的常见做法）；用户自己开的 Thread 是一个独立的聊天。
 - 能力按机器人实例实际拥有的权限判断，不按平台名称假定。不支持时明确降级。
 
 ### 6.4 连接状态
@@ -525,9 +525,9 @@ docs/             文档
 | 钉钉 | 完成：扫码或在电脑上打开授权页创建应用（或填 Client ID / Secret），Stream 长连接收消息，机器人 OpenAPI 回复 Markdown，处理中在消息上挂"🤔思考中"标签，实时回复用钉钉 AI 卡片，可下载收到的图片和文件。发文件放在文件收发一项。待真机验证 |
 | QQ | 完成：手机 QQ 扫码创建机器人（或填 AppID / AppSecret），官方 SDK 的 WebSocket 收私聊和群里 @ 机器人的消息，按消息 ID 被动回复（窗口过期时改为主动消息）；私聊里处理中显示"正在输入"，实时回复用 QQ 的流式消息；群聊没有流式和表情能力，直接回复。可收发图片和文件（发通用文件需要平台的文件权限，没有时只发文字并标注）。纯文本发送，Markdown 需平台审核后再开。待真机扫码验证 |
 | Slack | 完成：Socket Mode 长连接（不需要公网地址），直接用 Web API，不引入 SDK。控制台给出预填好名称、权限、事件和 Socket Mode 的建应用链接，用户安装后粘贴 Bot token 和 App-level token。私聊直接回复；频道里 @ 它时在该消息下开线程，线程即一个会话，之后线程内不必再 @。回复用 Slack 的 `markdown` 块（标准 Markdown）。表情 👀 → ✅ / ❌，实时回复编辑同一条消息。收发文件（上传走 Slack 的外部上传流程）。待真机验证 |
-| Discord | 未开始 |
-| 各平台文件收发 | 飞书、Telegram、企业微信、QQ、Slack 已支持；个人微信、钉钉发文件未开始 |
-| 实时回复与表情 | 飞书（流式卡片，真机验证通过）、Telegram（编辑消息）、企业微信（流式回复）、钉钉（AI 卡片）、QQ 私聊（流式消息）、Slack（编辑消息）完成；个人微信和 QQ 用"正在输入"代替表情 |
+| Discord | 完成：Gateway 直连（心跳、断线后 resume、按 Discord 要求重连），REST 直接调用，不引入 SDK。控制台给出开发者后台链接和步骤，用户粘贴 bot token；应用的所有者自动成为 owner；连上后连接旁有"添加到服务器"的邀请链接（权限已预填）。私聊直接回复；服务器频道里的消息都存作上下文，@ 它或回复它的消息时触发，回答引用原消息；用户开的 Thread 是独立的聊天。开了 Message Content Intent 才能看到没 @ 它的消息，没开时自动只用 @ 和私聊，不会连不上。表情 👀 → ✅ / ❌，实时回复编辑同一条消息，收发文件（单条消息最多 10 个、合计 10 MiB，超出的不发并标注）。待真机验证 |
+| 各平台文件收发 | 飞书、Telegram、企业微信、QQ、Slack、Discord 已支持；个人微信、钉钉发文件未开始 |
+| 实时回复与表情 | 飞书（流式卡片，真机验证通过）、Telegram（编辑消息）、企业微信（流式回复）、钉钉（AI 卡片）、QQ 私聊（流式消息）、Slack（编辑消息）、Discord（编辑消息）完成；个人微信和 QQ 用"正在输入"代替表情 |
 
 ## 12. 验证记录
 
@@ -568,6 +568,7 @@ docs/             文档
 | QQ 端到端 | 扫码建机器人、私聊流式回复、群聊 @ 回复、收发图片 | 维护者用手机 QQ 扫一次码 |
 | Slack 端到端 | 预填建应用链接能否打开（该链接格式不在 Slack 官方文档里）、Socket Mode 收发、线程回复、`markdown` 块渲染、文件上传 | 一个 Slack 工作区 |
 | Telegram 端到端 | 长轮询收发、引用回复、表情回执 | 一个 bot token |
+| Discord 端到端 | Gateway 收发、resume、引用回复、表情、实时编辑、文件上传、邀请链接（假定应用 ID 等于机器人用户 ID，新建应用都是这样） | 一个 Discord bot token 和一个测试服务器 |
 | 离线补推 | 各平台长连接断开期间的消息是否补推、补推多久 | 已接入的机器人 |
 
 ## 13. 未决问题

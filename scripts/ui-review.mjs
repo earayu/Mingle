@@ -180,6 +180,7 @@ try {
     // virtual clock outruns. Check it in a real browser against a running Mingle instead.
     ["connect", `/a/${long.slug}?connect=none`],
     ["connect-slack", `/a/${long.slug}?connect=slack`],
+    ["connect-discord", `/a/${long.slug}?connect=discord`],
   ];
   const jobs = [];
   for (const locale of LOCALES) {
@@ -188,19 +189,27 @@ try {
         const file = join(OUT, `${locale}-${width}-${name}.png`);
         const profile = mkdtempSync(join(tmpdir(), "mingle-chrome-"));
         // Thunks, so only four Chromes run at a time.
+        const shoot = () =>
+          run(
+            CHROME,
+            [
+              "--headless=new",
+              "--disable-gpu",
+              "--hide-scrollbars",
+              `--user-data-dir=${profile}`,
+              `--lang=${locale}`,
+              `--accept-lang=${locale}`,
+              `--window-size=${width},1600`,
+              "--virtual-time-budget=5000",
+              `--screenshot=${file}`,
+              `${url}${path}#token=${adminToken}`,
+            ],
+            { timeout: 60_000 },
+          );
         jobs.push(() =>
-          run(CHROME, [
-            "--headless=new",
-            "--disable-gpu",
-            "--hide-scrollbars",
-            `--user-data-dir=${profile}`,
-            `--lang=${locale}`,
-            `--accept-lang=${locale}`,
-            `--window-size=${width},1600`,
-            "--virtual-time-budget=5000",
-            `--screenshot=${file}`,
-            `${url}${path}#token=${adminToken}`,
-          ])
+          // Headless Chrome now and then hangs; give each shot a minute and one more try.
+          shoot()
+            .catch((error) => (existsSync(file) ? undefined : shoot().catch(() => Promise.reject(error))))
             // Chrome sometimes trips its teardown watchdog after writing the file; the file is what counts.
             .catch((error) => {
               if (!existsSync(file)) throw error;

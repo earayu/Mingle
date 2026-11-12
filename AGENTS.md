@@ -12,7 +12,7 @@ Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claud
 
 ## 当前状态
 
-M1 进行中，进度见 `docs/spec.md` 11.1。已实现：存储、Agent 运行时、本地 API、`mingle` CLI、控制台（`web/`）、Telegram 和飞书适配器。
+M2 进行中，进度见 `docs/spec.md` 11.1、11.2。已实现：存储、Agent 运行时、本地 API、`mingle` CLI、控制台（`web/`），以及全部八个平台的适配器。
 
 代码地图：
 

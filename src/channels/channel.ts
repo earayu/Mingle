@@ -186,6 +186,8 @@ export interface Channel {
   readonly onboarding: OnboardingMethod;
   /** For QR platforms: fields for binding an existing app by hand instead of scanning. */
   readonly manualFields?: readonly CredentialField[];
+  /** Where the owner adds a connected bot to a server or group, for platforms where that is a separate step. */
+  inviteUrl?(bot: BotIdentity): string;
 
   /** Start connecting a new bot. Yields progress until `succeeded` or `failed`. */
   onboard(

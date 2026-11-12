@@ -54,6 +54,7 @@ const en = {
   "connection.error": "Error",
   "connection.noOwner": "Send it a direct message from your own account to become its owner.",
   "connection.remove": "Remove",
+  "connection.invite": "Add to a server",
   "connection.removeYes": "Remove",
   "connection.removeConfirm": "Remove this bot from the agent? Its credentials are deleted from this computer.",
   "connection.approvalHint": "Mingle connects on its own once an admin approves the app. You can close this page.",
@@ -81,6 +82,10 @@ const en = {
   "slack.steps":
     "Create the app from the link below. Its name, permissions and Socket Mode are filled in.\nInstall it to your workspace, then copy the Bot User OAuth Token (xoxb-) from OAuth & Permissions.\nUnder Basic Information → App-Level Tokens, generate a token with connections:write and copy it (xapp-).",
   "slack.botToken": "Bot token (xoxb-…)",
+  "discord.setup": "Open the Discord Developer Portal",
+  "discord.steps":
+    "Create a New Application from the link below and name it after the agent.\nOn the Bot page, turn on Message Content Intent so it can follow threads without an @. Without it, it only sees messages that @ it.\nOn the same page, click Reset Token, copy the token and paste it here.\nOnce connected, use “Add to a server” to invite it.",
+  "discord.token": "Bot token",
   "slack.appToken": "App-level token (xapp-…)",
   "feishu.qr1": "Open Feishu on your phone and scan the code.",
   "feishu.qr2": "Confirm. The name and permissions are filled in.",
@@ -216,6 +221,7 @@ const zh: Record<MessageKey, string> = {
   "connection.error": "出错",
   "connection.noOwner": "用你自己的账号给它发一条私聊，你就成为它的 owner。",
   "connection.remove": "移除",
+  "connection.invite": "添加到服务器",
   "connection.removeYes": "移除",
   "connection.removeConfirm": "从 Agent 移除这个机器人？它的凭据会从这台电脑上删除。",
   "connection.approvalHint": "管理员通过后 Mingle 会自动连上，可以关闭这个页面。",
@@ -242,6 +248,10 @@ const zh: Record<MessageKey, string> = {
   "slack.steps":
     "用下面的链接创建应用，名称、权限和 Socket Mode 都已填好。\n把应用安装到工作区，在 OAuth & Permissions 里复制 Bot User OAuth Token（xoxb-）。\n在 Basic Information → App-Level Tokens 里生成一个带 connections:write 的 token 并复制（xapp-）。",
   "slack.botToken": "Bot token（xoxb-…）",
+  "discord.setup": "打开 Discord 开发者后台",
+  "discord.steps":
+    "用下面的链接新建一个应用（New Application），用 Agent 的名字命名。\n在 Bot 页面打开 Message Content Intent，它才能看到没有 @ 它的消息；不开的话只能看到 @ 它的消息。\n在同一页点 Reset Token，复制 token 粘贴到这里。\n连上后，点“添加到服务器”把它拉进你的服务器。",
+  "discord.token": "Bot token",
   "slack.appToken": "App-level token（xapp-…）",
   "feishu.qr1": "用手机飞书扫码。",
   "feishu.qr2": "确认创建，名称和权限已填好。",

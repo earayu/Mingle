@@ -299,6 +299,16 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
         )}
       </div>
       {confirming ? <p className="text-small text-text-secondary">{t("connection.removeConfirm")}</p> : null}
+      {!confirming && connection.invite ? (
+        <a
+          href={connection.invite}
+          target="_blank"
+          rel="noreferrer"
+          className="self-start text-small text-text-secondary underline-offset-2 hover:text-text hover:underline"
+        >
+          {t("connection.invite")} ↗
+        </a>
+      ) : null}
       {!confirming && hint ? (
         <p className={`text-small ${connection.state === "error" ? "text-error" : "text-text-tertiary"}`}>{hint}</p>
       ) : null}
