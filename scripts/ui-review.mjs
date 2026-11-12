@@ -176,6 +176,9 @@ try {
     ["new", "/new"],
     ["home", "/"],
     ["menu", `/a/${alex.slug}?menu=1`],
+    // The QR step is not here: it needs a live call to the platform, which headless Chrome's
+    // virtual clock outruns. Check it in a real browser against a running Mingle instead.
+    ["connect", `/a/${long.slug}?connect=none`],
   ];
   const jobs = [];
   for (const locale of LOCALES) {

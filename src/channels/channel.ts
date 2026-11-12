@@ -42,8 +42,21 @@ export type OnboardingEvent =
   | { readonly kind: "qr_ready"; readonly qrContent: string; readonly expiresAt: number }
   | { readonly kind: "scanned" }
   | { readonly kind: "awaiting_approval"; readonly detailKey?: string }
-  | { readonly kind: "succeeded"; readonly credentials: Credentials; readonly bot: BotIdentity }
+  | {
+      readonly kind: "succeeded";
+      readonly credentials: Credentials;
+      readonly bot: BotIdentity;
+      /** The person who scanned, when the platform reports it. They become the bot's owner. */
+      readonly ownerId?: string;
+      /** The bot exists but an admin still has to approve or enable it. */
+      readonly pendingApproval?: boolean;
+    }
   | { readonly kind: "failed"; readonly code: OnboardingFailure };
+
+export interface OnboardingContext {
+  /** Used to name the bot where the platform lets us suggest one. */
+  readonly agentName?: string;
+}
 
 export type OnboardingFailure = "expired" | "denied" | "cancelled" | "invalid_credentials" | "network" | "unknown";
 
@@ -136,9 +149,15 @@ export interface ChannelEvents {
 export interface Channel {
   readonly platform: Platform;
   readonly onboarding: OnboardingMethod;
+  /** For QR platforms: fields for binding an existing app by hand instead of scanning. */
+  readonly manualFields?: readonly CredentialField[];
 
   /** Start connecting a new bot. Yields progress until `succeeded` or `failed`. */
-  onboard(input: Credentials | undefined, signal: AbortSignal): AsyncIterable<OnboardingEvent>;
+  onboard(
+    input: Credentials | undefined,
+    signal: AbortSignal,
+    context?: OnboardingContext,
+  ): AsyncIterable<OnboardingEvent>;
 
   /** Open a live connection for one bot. */
   connect(credentials: Credentials, events: ChannelEvents): Promise<ChannelConnection>;
@@ -156,6 +175,8 @@ export interface ChannelConnection {
   setTyping(chat: ChatRef, typing: boolean): Promise<void>;
 
   download(attachment: InboundAttachment, toPath: string): Promise<void>;
+  /** Open a direct conversation with a user by sending the first message. Where the platform allows it. */
+  messageUser?(userId: string, text: string): Promise<void>;
   listMembers(chat: ChatRef): Promise<readonly Sender[]>;
 
   close(): Promise<void>;

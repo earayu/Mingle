@@ -4,6 +4,8 @@ import {
   type AgentView,
   api,
   type ConnectionView,
+  type CredentialField,
+  type OnboardingState,
   type Platform,
   type PlatformInfo,
   type Reminder,
@@ -205,10 +207,12 @@ function RoleEditor({ agent, onSaved }: { agent: AgentView; onSaved: () => void 
 
 function Connections({ agent, onChanged }: { agent: AgentView; onChanged: () => void }) {
   const { t } = useI18n();
-  const [adding, setAdding] = useState(false);
+  // ?connect=<platform> opens the add panel on that platform (deep link; used by scripts/ui-review.mjs).
+  const [linked] = useState(() => new URLSearchParams(location.search).get("connect") as Platform | null);
+  const [adding, setAdding] = useState(Boolean(linked));
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset when switching to another agent
-  useEffect(() => setAdding(false), [agent.id]);
+  useEffect(() => setAdding((current) => current && Boolean(linked)), [agent.id]);
 
   return (
     <Section
@@ -230,6 +234,7 @@ function Connections({ agent, onChanged }: { agent: AgentView; onChanged: () => 
       {adding ? (
         <AddConnection
           agentId={agent.id}
+          initial={linked}
           onDone={() => {
             setAdding(false);
             onChanged();
@@ -300,10 +305,20 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
   );
 }
 
-function AddConnection({ agentId, onDone, onCancel }: { agentId: string; onDone: () => void; onCancel: () => void }) {
+function AddConnection({
+  agentId,
+  initial,
+  onDone,
+  onCancel,
+}: {
+  agentId: string;
+  initial: Platform | null;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
   const { t } = useI18n();
   const [platforms, setPlatforms] = useState<PlatformInfo[]>([]);
-  const [chosen, setChosen] = useState<Platform | null>(null);
+  const [chosen, setChosen] = useState<Platform | null>(initial);
 
   useEffect(() => {
     api
@@ -312,9 +327,35 @@ function AddConnection({ agentId, onDone, onCancel }: { agentId: string; onDone:
       .catch(() => {});
   }, []);
 
+  const [manual, setManual] = useState(false);
   const info = platforms.find((p) => p.platform === chosen);
+  const back = () => {
+    setChosen(null);
+    setManual(false);
+  };
   if (chosen && info?.onboarding?.kind === "credentials") {
-    return <CredentialsForm agentId={agentId} info={info} onDone={onDone} onBack={() => setChosen(null)} />;
+    return (
+      <CredentialsForm agentId={agentId} info={info} fields={info.onboarding.fields} onDone={onDone} onBack={back} />
+    );
+  }
+  if (chosen && info?.onboarding?.kind === "qr") {
+    return manual ? (
+      <CredentialsForm
+        agentId={agentId}
+        info={info}
+        fields={info.manualFields}
+        onDone={onDone}
+        onBack={() => setManual(false)}
+      />
+    ) : (
+      <QrOnboarding
+        agentId={agentId}
+        info={info}
+        onDone={onDone}
+        onBack={back}
+        {...(info.manualFields.length ? { onManual: () => setManual(true) } : {})}
+      />
+    );
   }
 
   return (
@@ -346,16 +387,17 @@ function AddConnection({ agentId, onDone, onCancel }: { agentId: string; onDone:
 function CredentialsForm({
   agentId,
   info,
+  fields,
   onDone,
   onBack,
 }: {
   agentId: string;
   info: PlatformInfo;
+  fields: CredentialField[];
   onDone: () => void;
   onBack: () => void;
 }) {
   const { t } = useI18n();
-  const fields = info.onboarding?.kind === "credentials" ? info.onboarding.fields : [];
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -374,7 +416,7 @@ function CredentialsForm({
     }
   }
 
-  const steps = `${info.platform}.steps` as MessageKey;
+  const steps = `${info.platform}.${info.onboarding?.kind === "qr" ? "manualSteps" : "steps"}` as MessageKey;
   return (
     <form onSubmit={submit} className="panel flex flex-col gap-4 rounded-md bg-surface p-4">
       <span className="text-heading font-semibold">{t(`platform.${info.platform}` as MessageKey)}</span>
@@ -404,6 +446,189 @@ function CredentialsForm({
   );
 }
 
+/** Scan-to-create flow (DESIGN.md "接入 IM"): QR, three steps, state advancing in place. */
+function QrOnboarding({
+  agentId,
+  info,
+  onDone,
+  onBack,
+  onManual,
+}: {
+  agentId: string;
+  info: PlatformInfo;
+  onDone: () => void;
+  onBack: () => void;
+  onManual?: () => void;
+}) {
+  const { t } = useI18n();
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [state, setState] = useState<OnboardingState>({ state: "starting" });
+  const [attempt, setAttempt] = useState(0);
+  const [now, setNow] = useState(Date.now());
+  const platformName = t(`platform.${info.platform}` as MessageKey);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new attempt restarts the flow
+  useEffect(() => {
+    let id: string | null = null;
+    let stopped = false;
+    setState({ state: "starting" });
+    api
+      .startOnboarding(agentId, info.platform)
+      .then((r) => {
+        id = r.id;
+        if (stopped) api.cancelOnboarding(r.id).catch(() => {});
+        else setSessionId(r.id);
+      })
+      .catch((e) => setState({ state: "failed", code: (e as { code?: string }).code ?? "unknown" }));
+    return () => {
+      stopped = true;
+      if (id) api.cancelOnboarding(id).catch(() => {});
+    };
+  }, [agentId, info.platform, attempt]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let active = true;
+    const tick = async () => {
+      const next = await api.onboarding(sessionId).catch(() => null);
+      if (!active || !next) return;
+      setState(next);
+      if (next.state === "done") {
+        active = false;
+        setTimeout(onDone, next.pendingApproval ? 2500 : 800);
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 1500);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [sessionId, onDone]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const expired = state.state === "qr" && state.expiresAt <= now;
+  const failedExpired = state.state === "failed" && state.code === "expired";
+  const remaining = state.state === "qr" ? Math.max(0, Math.round((state.expiresAt - now) / 1000)) : 0;
+  const restart = () => {
+    setSessionId(null);
+    setAttempt((n) => n + 1);
+  };
+
+  return (
+    <div className="panel flex flex-col gap-4 rounded-md bg-surface p-4">
+      <span className="text-heading font-semibold">{platformName}</span>
+      <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
+        {/* The QR stays on white in both themes so phones can read it; text on it uses fixed light-theme greys. */}
+        <div className="flex size-[248px] shrink-0 items-center justify-center rounded-md bg-white p-6">
+          {state.state === "qr" && !expired ? (
+            <div
+              className="size-[200px] [&_svg]:size-full"
+              role="img"
+              aria-label={t("qr.label", { platform: platformName })}
+              // biome-ignore lint/security/noDangerouslySetInnerHtml: SVG generated by our own server from a URL
+              dangerouslySetInnerHTML={{ __html: state.qrSvg }}
+            />
+          ) : expired || failedExpired ? (
+            <Button onClick={restart}>{t("qr.refresh")}</Button>
+          ) : state.state === "done" || state.state === "awaiting_approval" || state.state === "scanned" ? (
+            <span className="text-center text-small text-[#6b6b66]">{t("qr.scanned")}</span>
+          ) : state.state === "failed" ? null : (
+            <span className="text-small text-[#a3a39e]">{t("qr.loading")}</span>
+          )}
+        </div>
+        <div className="flex min-w-0 flex-col gap-3">
+          <ol className="flex list-decimal flex-col gap-1 pl-5 text-text-secondary">
+            <li>{t(`${info.platform}.qr1` as MessageKey)}</li>
+            <li>{t(`${info.platform}.qr2` as MessageKey)}</li>
+            <li>{t(`${info.platform}.qr3` as MessageKey)}</li>
+          </ol>
+          <OnboardingStatus state={state} expired={expired} remaining={remaining} platformName={platformName} />
+          {state.state === "qr" && !expired ? (
+            <a
+              href={state.url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-small text-text-secondary underline underline-offset-2 hover:text-text"
+            >
+              {t("qr.openHere")}
+            </a>
+          ) : null}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="text" onClick={onBack}>
+          {t("connect.back")}
+        </Button>
+        {onManual && state.state !== "done" ? (
+          <Button variant="text" onClick={onManual}>
+            {t("qr.manual")}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function OnboardingStatus({
+  state,
+  expired,
+  remaining,
+  platformName,
+}: {
+  state: OnboardingState;
+  expired: boolean;
+  remaining: number;
+  platformName: string;
+}) {
+  const { t } = useI18n();
+  const line = (dot: string, text: string, tone = "text-text-secondary") => (
+    <p className={`flex items-start gap-2 text-small ${tone}`}>
+      {/* One text line tall, so the dot centres on the first line. */}
+      <span className="flex h-[18px] shrink-0 items-center">
+        <StatusDot state={dot} />
+      </span>
+      <span>{text}</span>
+    </p>
+  );
+  if (expired || (state.state === "failed" && state.code === "expired")) return line("offline", t("qr.expired"));
+  switch (state.state) {
+    case "starting":
+      return line("offline", t("qr.loading"));
+    case "qr":
+      // Minutes while there is plenty of time; a ticking clock only in the last two minutes.
+      return line(
+        "awaiting_credentials",
+        remaining > 120
+          ? t("qr.waitingMinutes", { minutes: String(Math.ceil(remaining / 60)) })
+          : t("qr.waiting", {
+              minutes: String(Math.floor(remaining / 60)),
+              seconds: String(remaining % 60).padStart(2, "0"),
+            }),
+      );
+    case "scanned":
+      return line("reconnecting", t("qr.scanned"));
+    case "awaiting_approval":
+      return line("awaiting_approval", t("connection.approvalHint"));
+    case "done":
+      return state.pendingApproval
+        ? line("awaiting_approval", t("qr.donePending"))
+        : line("connected", t("qr.done", { platform: platformName }));
+    case "failed":
+      return line("error", errorTextFor(t, state.code), "text-error");
+  }
+}
+
+function errorTextFor(t: ReturnType<typeof useI18n>["t"], code: string): string {
+  const key = `qr.failed.${code}` as MessageKey;
+  const text = t(key);
+  return text === key ? t("qr.failed.unknown") : text;
+}
+
 function ActivityList({ items }: { items: Activity[] }) {
   const { t, locale } = useI18n();
   return (
@@ -412,7 +637,7 @@ function ActivityList({ items }: { items: Activity[] }) {
         <li key={m.id} className="flex flex-col gap-0.5 border-b border-border py-3 last:border-0">
           <div className="flex items-baseline gap-2 text-small text-text-secondary">
             <span className="max-w-[45%] shrink-0 truncate font-semibold text-text" title={m.sender ?? undefined}>
-              {m.sender ?? ""}
+              {m.sender ?? (m.senderIsOwner ? t("activity.you") : t("activity.someone"))}
             </span>
             <span className="min-w-0 flex-1 truncate" title={m.chat.name ?? undefined}>
               {t(`platform.${m.platform}` as MessageKey)} ·{" "}

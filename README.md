@@ -11,7 +11,7 @@ Create an agent on your own computer: it has a name, a role, a memory and a home
 
 ## Status
 
-Early development. The core works end to end with Claude Code and a Telegram bot, managed from a local web console or the command line. The other chat apps are not built yet. There is no release.
+Early development. The core works end to end with Claude Code or Codex, on Feishu and Telegram, managed from a local web console or the command line. The other chat apps are in progress. There is no release.
 
 ```sh
 pnpm install && pnpm build

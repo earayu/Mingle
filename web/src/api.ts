@@ -76,6 +76,7 @@ export interface Activity {
   platform: Platform;
   chat: { id: string; kind: "dm" | "group" | "thread"; name: string | null };
   sender: string | null;
+  senderIsOwner: boolean;
   body: string;
   state: string;
   files: string[];
@@ -88,13 +89,25 @@ export interface Harness {
   version?: string;
 }
 
+export interface CredentialField {
+  key: string;
+  labelKey: string;
+  secret: boolean;
+}
+
 export interface PlatformInfo {
   platform: Platform;
-  onboarding:
-    | { kind: "qr" }
-    | { kind: "credentials"; fields: { key: string; labelKey: string; secret: boolean }[] }
-    | null;
+  onboarding: { kind: "qr" } | { kind: "credentials"; fields: CredentialField[] } | null;
+  manualFields: CredentialField[];
 }
+
+export type OnboardingState =
+  | { state: "starting" }
+  | { state: "qr"; qrSvg: string; url: string; expiresAt: number }
+  | { state: "scanned" }
+  | { state: "awaiting_approval" }
+  | { state: "done"; connectionId: string; pendingApproval: boolean }
+  | { state: "failed"; code: string };
 
 export interface Task {
   id: string;
@@ -124,4 +137,8 @@ export const api = {
   connect: (id: string, platform: Platform, credentials: Record<string, string>) =>
     call<{ id: string }>("POST", `/v1/admin/agents/${id}/connections`, { platform, credentials }),
   disconnect: (connectionId: string) => call("DELETE", `/v1/admin/connections/${connectionId}`),
+  startOnboarding: (id: string, platform: Platform) =>
+    call<{ id: string }>("POST", `/v1/admin/agents/${id}/onboarding`, { platform }),
+  onboarding: (id: string) => call<OnboardingState>("GET", `/v1/admin/onboarding/${id}`),
+  cancelOnboarding: (id: string) => call("DELETE", `/v1/admin/onboarding/${id}`),
 };

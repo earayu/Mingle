@@ -27,6 +27,7 @@
     "@biomejs/biome": "^2.6.6",
     "@tailwindcss/vite": "^4.3.5",
     "@types/node": "^24.19.2",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
@@ -40,6 +41,8 @@
   "dependencies": {
     "@botiverse/oar": "0.97.0",
     "@hono/node-server": "^2.1.6",
-    "hono": "^4.13.17"
+    "@larksuiteoapi/node-sdk": "1.76.0",
+    "hono": "^4.13.17",
+    "qrcode": "1.5.4"
   }
 }

@@ -11,7 +11,7 @@
 
 ## 状态
 
-早期开发中。核心流程已能和 Claude Code、Telegram 机器人端到端跑通，可以用本地网页控制台或命令行管理。其他 IM 还没做，没有发布版本。用法见 [README.md](README.md)。
+早期开发中。核心流程已能用 Claude Code 或 Codex，在飞书和 Telegram 上端到端跑通，可以用本地网页控制台或命令行管理。其他 IM 正在接入，没有发布版本。用法见 [README.md](README.md)。
 
 ## 文档
 

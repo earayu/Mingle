@@ -8,6 +8,8 @@ import type {
   ConnectionState,
   Credentials,
   InboundMessage,
+  OnboardingEvent,
+  OnboardingFailure,
   Platform,
 } from "../channels/channel.ts";
 import type { Harness } from "../harness/harness.ts";
@@ -21,6 +23,28 @@ import { Outbox } from "./outbox.ts";
 import type { Paths } from "./paths.ts";
 import { AgentRuntime } from "./runtime.ts";
 import { nextFire } from "./schedule.ts";
+
+export interface OnboardingSession {
+  readonly id: string;
+  readonly agentId: string;
+  readonly platform: Platform;
+  state:
+    | { kind: "starting" }
+    | { kind: "qr"; content: string; expiresAt: number }
+    | { kind: "scanned" }
+    | { kind: "awaiting_approval" }
+    | { kind: "done"; connectionId: string; pendingApproval: boolean }
+    | { kind: "failed"; code: string };
+  readonly abort: AbortController;
+  updatedAt: number;
+}
+
+function onboardingError(platform: Platform, code: OnboardingFailure): MingleError {
+  return new MingleError(
+    `onboarding_${code}`,
+    code === "invalid_credentials" ? `${platform} did not accept these credentials` : "try again",
+  );
+}
 
 export interface MingleOptions {
   readonly paths: Paths;
@@ -45,6 +69,7 @@ export class Mingle {
   private readonly live = new Map<string, ChannelConnection>();
   private readonly tokens = new Map<string, string>();
   private reminderTimer: NodeJS.Timeout | undefined;
+  private readonly onboardings = new Map<string, OnboardingSession>();
 
   private readonly options: MingleOptions;
 
@@ -73,6 +98,7 @@ export class Mingle {
 
   async stop(): Promise<void> {
     clearInterval(this.reminderTimer);
+    for (const id of [...this.onboardings.keys()]) this.cancelOnboarding(id);
     await Promise.all([...this.live.values()].map((c) => c.close().catch(() => {})));
     this.live.clear();
     await Promise.all([...this.runtimes.values()].map((r) => r.dispose()));
@@ -169,34 +195,105 @@ export class Mingle {
   }
 
   /** Connect a bot with credentials (token-style platforms). QR onboarding goes through the console. */
+  /** Connect a bot with credentials (token-style platforms, or manual App ID / Secret). */
   async addConnection(agentId: string, platform: Platform, credentials: Credentials): Promise<Connection> {
     const agent = this.agent(agentId);
-    const channel = this.channel(platform);
     const abort = new AbortController();
-    for await (const event of channel.onboard(credentials, abort.signal)) {
-      if (event.kind === "failed") {
-        throw new MingleError(
-          `onboarding_${event.code}`,
-          event.code === "invalid_credentials" ? `${platform} did not accept these credentials` : "try again",
-        );
-      }
-      if (event.kind === "succeeded") {
-        const existing = this.store.connections().find((c) => c.platform === platform && c.botId === event.bot.id);
-        if (existing) {
-          throw new MingleError(
-            "bot_in_use",
-            `this bot is already connected to ${this.store.agent(existing.agentId)?.name ?? "another agent"}`,
-          );
-        }
-        const secretRef = `${platform}:${event.bot.id}`;
-        await this.options.secrets.set(secretRef, JSON.stringify(event.credentials));
-        const connection = this.store.createConnection({ agentId: agent.id, platform, secretRef });
-        this.store.updateConnection(connection.id, { botId: event.bot.id, botName: event.bot.name });
-        await this.connect(this.store.connection(connection.id) as Connection, event.credentials);
-        return this.store.connection(connection.id) as Connection;
-      }
+    for await (const event of this.channel(platform).onboard(credentials, abort.signal, { agentName: agent.name })) {
+      if (event.kind === "failed") throw onboardingError(platform, event.code);
+      if (event.kind === "succeeded") return this.finishOnboarding(agent.id, platform, event);
     }
     throw new MingleError("onboarding_unknown", "the chat app did not finish connecting; try again");
+  }
+
+  /** Start a QR (or other multi-step) onboarding the console follows by polling `onboarding(id)`. */
+  startOnboarding(agentId: string, platform: Platform): OnboardingSession {
+    const agent = this.agent(agentId);
+    const channel = this.channel(platform);
+    for (const [id, old] of this.onboardings) {
+      if (old.agentId === agent.id && old.platform === platform) this.cancelOnboarding(id);
+    }
+    const abort = new AbortController();
+    const session: OnboardingSession = {
+      id: randomBytes(9).toString("base64url"),
+      agentId: agent.id,
+      platform,
+      state: { kind: "starting" },
+      abort,
+      updatedAt: Date.now(),
+    };
+    this.onboardings.set(session.id, session);
+    const set = (state: OnboardingSession["state"]) => {
+      session.state = state;
+      session.updatedAt = Date.now();
+    };
+    void (async () => {
+      try {
+        for await (const event of channel.onboard(undefined, abort.signal, { agentName: agent.name })) {
+          if (event.kind === "qr_ready") set({ kind: "qr", content: event.qrContent, expiresAt: event.expiresAt });
+          else if (event.kind === "scanned") set({ kind: "scanned" });
+          else if (event.kind === "awaiting_approval") set({ kind: "awaiting_approval" });
+          else if (event.kind === "failed") set({ kind: "failed", code: event.code });
+          else if (event.kind === "succeeded") {
+            const connection = await this.finishOnboarding(agent.id, platform, event);
+            set({ kind: "done", connectionId: connection.id, pendingApproval: Boolean(event.pendingApproval) });
+          }
+        }
+      } catch (error) {
+        set({ kind: "failed", code: error instanceof MingleError ? error.code : "unknown" });
+      }
+    })();
+    // Forget finished sessions after a while.
+    setTimeout(() => this.onboardings.delete(session.id), 30 * 60_000).unref();
+    return session;
+  }
+
+  onboarding(id: string): OnboardingSession | undefined {
+    return this.onboardings.get(id);
+  }
+
+  cancelOnboarding(id: string): void {
+    const session = this.onboardings.get(id);
+    session?.abort.abort();
+    this.onboardings.delete(id);
+  }
+
+  private async finishOnboarding(
+    agentId: string,
+    platform: Platform,
+    event: Extract<OnboardingEvent, { kind: "succeeded" }>,
+  ): Promise<Connection> {
+    const existing = this.store.connections().find((c) => c.platform === platform && c.botId === event.bot.id);
+    if (existing) {
+      throw new MingleError(
+        "bot_in_use",
+        `this bot is already connected to ${this.store.agent(existing.agentId)?.name ?? "another agent"}`,
+      );
+    }
+    const secretRef = `${platform}:${event.bot.id}`;
+    await this.options.secrets.set(secretRef, JSON.stringify(event.credentials));
+    const connection = this.store.createConnection({ agentId, platform, secretRef });
+    this.store.updateConnection(connection.id, {
+      botId: event.bot.id,
+      botName: event.bot.name,
+      ...(event.ownerId ? { ownerId: event.ownerId } : {}),
+    });
+    await this.connect(this.store.connection(connection.id) as Connection, event.credentials);
+    if (event.ownerId) void this.greetOwner(connection.id, event.ownerId);
+    return this.store.connection(connection.id) as Connection;
+  }
+
+  /** A new bot says hello to its owner, so the conversation shows up in their chat list. */
+  private async greetOwner(connectionId: string, ownerId: string): Promise<void> {
+    const connection = this.store.connection(connectionId);
+    const live = this.live.get(connectionId);
+    const agent = connection && this.store.agent(connection.agentId);
+    if (!live?.messageUser || !agent || connection.state !== "connected") return;
+    const chinese = ["wechat", "wecom", "feishu", "dingtalk", "qq"].includes(connection.platform);
+    const text = chinese
+      ? `你好，我是 ${agent.name}。直接在这里给我发消息，或者把我拉进群里 @ 我。`
+      : `Hi, I'm ${agent.name}. Message me here, or add me to a group and @ me.`;
+    await live.messageUser(ownerId, text).catch((error) => this.log(`greeting failed: ${(error as Error).message}`));
   }
 
   async removeConnection(connectionId: string): Promise<void> {
@@ -239,13 +336,19 @@ export class Mingle {
   private async connect(connection: Connection, credentials: Credentials): Promise<void> {
     const channel = this.channel(connection.platform);
     this.store.updateConnection(connection.id, { state: "reconnecting", stateDetail: null });
+    // An adapter may report a state while connecting (for example, waiting for an admin); keep it.
+    let reported = false;
     const live = await channel.connect(credentials, {
       onMessage: (message) => this.receive(connection.id, message),
-      onState: (state) => this.onState(connection.id, state),
+      onState: (state) => {
+        reported = true;
+        this.onState(connection.id, state);
+      },
       onMembership: (change) => this.onMembership(connection.id, change),
     });
     this.live.set(connection.id, live);
-    this.store.updateConnection(connection.id, { state: "connected", botId: live.bot.id, botName: live.bot.name });
+    this.store.updateConnection(connection.id, { botId: live.bot.id, botName: live.bot.name });
+    if (!reported) this.store.updateConnection(connection.id, { state: "connected" });
   }
 
   private onState(connectionId: string, state: ConnectionState): void {
@@ -295,8 +398,10 @@ export class Mingle {
         `${connection.platform}: ${inbound.sender.name} is now the owner of ${connection.botName ?? connection.id}`,
       );
     }
-    const triggers = chat.kind === "dm" || inbound.addressedToBot;
-    const replyTo = inbound.replyTo ? (this.store.messageByPlatformId(chat.id, inbound.replyTo)?.id ?? null) : null;
+    const quoted = inbound.replyTo ? this.store.messageByPlatformId(chat.id, inbound.replyTo) : undefined;
+    const replyTo = quoted?.id ?? null;
+    // A reply to something the agent said is addressed to it, even where the platform does not say so.
+    const triggers = chat.kind === "dm" || inbound.addressedToBot || quoted?.direction === "out";
     const message = this.store.insertInbound({
       chatId: chat.id,
       platformId: inbound.platformId,

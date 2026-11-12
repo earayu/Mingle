@@ -25,7 +25,7 @@ export function formatMessage(
   if (message.direction === "out") {
     parts.push(`from=${quote(opts.agentName ?? "you")}`, "you");
   } else {
-    parts.push(`from=${quote(message.senderName ?? message.senderId ?? "unknown")}`);
+    parts.push(`from=${quote(message.senderName || message.senderId || "unknown")}`);
     if (opts.ownerId && message.senderId === opts.ownerId) parts.push("owner");
   }
   if (message.replyTo) parts.push(`reply_to=${message.replyTo}`);

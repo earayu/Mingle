@@ -473,18 +473,25 @@ async function start(flags: Flags): Promise<void> {
     } catch {}
   };
   // Loaded here so agent commands, which run often, do not pay for OAR and the server.
-  const [{ createApi, listen, serveConsole }, { telegramChannel }, { Mingle }, { oarHarness }, { defaultSecrets }] =
-    await Promise.all([
-      import("../api/server.ts"),
-      import("../channels/telegram/telegram.ts"),
-      import("../core/mingle.ts"),
-      import("../harness/harness.ts"),
-      import("../platform/secrets.ts"),
-    ]);
+  const [
+    { createApi, listen, serveConsole },
+    { telegramChannel },
+    { feishuChannel },
+    { Mingle },
+    { oarHarness },
+    { defaultSecrets },
+  ] = await Promise.all([
+    import("../api/server.ts"),
+    import("../channels/telegram/telegram.ts"),
+    import("../channels/feishu/feishu.ts"),
+    import("../core/mingle.ts"),
+    import("../harness/harness.ts"),
+    import("../platform/secrets.ts"),
+  ]);
   const mingle = new Mingle({
     paths,
     harness: oarHarness(),
-    channels: { telegram: telegramChannel() },
+    channels: { telegram: telegramChannel(), feishu: feishuChannel() },
     secrets: defaultSecrets(resolve(paths.home, "secrets.json")),
     cliEntry: fileURLToPath(import.meta.url),
     log,

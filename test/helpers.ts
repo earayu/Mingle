@@ -12,6 +12,7 @@ import type {
   ChatRef,
   InboundMessage,
   OutboundMessage,
+  Platform,
 } from "../src/channels/channel.ts";
 import { Mingle } from "../src/core/mingle.ts";
 import { resolvePaths } from "../src/core/paths.ts";
@@ -120,7 +121,12 @@ export interface Rig {
 /** A full Mingle (store, runtime, HTTP API, CLI) with a scripted harness and a fake chat app. */
 export async function rig(
   turn: (t: ScriptedTurn) => Promise<void>,
-  options: { harness?: string; real?: boolean; coalesceMs?: number } = {},
+  options: {
+    harness?: string;
+    real?: boolean;
+    coalesceMs?: number;
+    channels?: Partial<Record<Platform, Channel>>;
+  } = {},
 ): Promise<Rig> {
   const home = mkdtempSync(join(tmpdir(), "mingle-test-"));
   const channel = new FakeChannel();
@@ -141,7 +147,7 @@ export async function rig(
   const mingle = new Mingle({
     paths: resolvePaths(home),
     harness: options.real ? oarHarness() : oarHarness({ require: () => runtime }),
-    channels: { telegram: channel },
+    channels: { telegram: channel, ...options.channels },
     secrets: memorySecrets(),
     cliEntry: CLI_ENTRY,
     coalesceMs: options.coalesceMs ?? 150,
@@ -180,3 +186,14 @@ export async function rig(
 
 /** Message IDs in a delivered input, in order. */
 export const messageIds = (text: string) => [...text.matchAll(/\bmsg=(m\w+)/g)].map((m) => m[1] as string);
+
+/** Like `until`, for checks that need to await (an HTTP call, say). */
+export async function eventually<T>(check: () => Promise<T | undefined | false>, timeoutMs = 10_000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await check();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error("timed out waiting for condition");
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}

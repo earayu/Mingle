@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import type { OnboardingMethod, Platform } from "../channels/channel.ts";
+import QRCode from "qrcode";
+import type { CredentialField, OnboardingMethod, Platform } from "../channels/channel.ts";
 import { MingleError, notFound } from "../core/errors.ts";
 import { formatMessage } from "../core/format.ts";
 import { readRole } from "../core/home.ts";
@@ -274,10 +275,13 @@ export function createApi(mingle: Mingle): Hono<Env> {
     return c.json(
       all.map((platform) => {
         let onboarding: OnboardingMethod | null = null;
+        let manualFields: readonly CredentialField[] = [];
         try {
-          onboarding = mingle.channel(platform).onboarding;
+          const channel = mingle.channel(platform);
+          onboarding = channel.onboarding;
+          manualFields = channel.manualFields ?? [];
         } catch {}
-        return { platform, onboarding };
+        return { platform, onboarding, manualFields };
       }),
     );
   });
@@ -285,13 +289,16 @@ export function createApi(mingle: Mingle): Hono<Env> {
   app.get("/v1/admin/agents/:id/activity", (c) => {
     const agent = mingle.agent(c.req.param("id"));
     const limit = clamp(Number(c.req.query("limit") ?? 30), 1, 200);
+    const owners = new Set(store.connections(agent.id).map((n) => `${n.id}:${n.ownerId}`));
     return c.json(
       store.agentActivity(agent.id, limit).map((m) => ({
         id: m.id,
         direction: m.direction,
         platform: m.platform,
         chat: { id: m.chat.id, kind: m.chat.kind, name: m.chat.name },
-        sender: m.direction === "in" ? (m.senderName ?? m.senderId) : agent.name,
+        // A platform ID is not a name: send null and let the console label the person.
+        sender: m.direction === "out" ? agent.name : m.senderName && m.senderName !== m.senderId ? m.senderName : null,
+        senderIsOwner: m.direction === "in" && owners.has(`${m.chat.connectionId}:${m.senderId}`),
         body: m.body,
         state: m.state,
         files: m.attachments.map((a) => a.name),
@@ -357,6 +364,29 @@ export function createApi(mingle: Mingle): Hono<Env> {
       bot: connection.botName,
       state: connection.state,
     });
+  });
+
+  /** QR onboarding: start, then poll. The QR is rendered here so the console needs no encoder. */
+  app.post("/v1/admin/agents/:id/onboarding", async (c) => {
+    const { platform } = await c.req.json<{ platform: Platform }>();
+    const session = mingle.startOnboarding(c.req.param("id"), platform);
+    return c.json({ id: session.id });
+  });
+
+  app.get("/v1/admin/onboarding/:id", async (c) => {
+    const session = mingle.onboarding(c.req.param("id"));
+    if (!session) throw new MingleError("onboarding_not_found", "start connecting again", 404);
+    const state = session.state;
+    if (state.kind === "qr") {
+      const svg = await QRCode.toString(state.content, { type: "svg", margin: 0, errorCorrectionLevel: "M" });
+      return c.json({ state: "qr", qrSvg: svg, url: state.content, expiresAt: state.expiresAt });
+    }
+    return c.json({ ...state, state: state.kind });
+  });
+
+  app.delete("/v1/admin/onboarding/:id", (c) => {
+    mingle.cancelOnboarding(c.req.param("id"));
+    return c.json({ ok: true });
   });
 
   app.delete("/v1/admin/connections/:id", async (c) => {
