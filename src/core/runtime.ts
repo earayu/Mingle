@@ -11,6 +11,10 @@ export interface RuntimeDeps {
   readonly homeDir: string;
   /** Environment for the harness process: API address, token, CLI path. */
   readonly env: () => Readonly<Record<string, string>>;
+  /** Progress inside a turn, for live replies. */
+  readonly onActivity?: (kind: "thinking" | "tool", detail?: string) => void;
+  /** Messages that will not be answered: given up on after the nudge, or lost to a failed turn. */
+  readonly onSettled?: (messageIds: readonly string[], outcome: "unanswered" | "failed") => void;
   /** Wait before delivering to an idle agent, so a burst of messages becomes one input. */
   readonly coalesceMs?: number;
   readonly log?: (line: string) => void;
@@ -181,6 +185,7 @@ export class AgentRuntime {
         onTurnStarted: () => {
           this.running = true;
           this.setStatus("thinking");
+          this.deps.onActivity?.("thinking");
         },
         onTurnEnded: (outcome) => {
           this.running = false;
@@ -188,7 +193,10 @@ export class AgentRuntime {
           else this.setStatus("idle");
           this.afterTurn();
         },
-        onActivity: (kind, detail) => this.setStatus(kind === "tool" ? "working" : "thinking", detail ?? null),
+        onActivity: (kind, detail) => {
+          this.setStatus(kind === "tool" ? "working" : "thinking", detail ?? null);
+          this.deps.onActivity?.(kind, detail);
+        },
       },
     );
     if (agent.sessionId && !session.resumed) {
@@ -209,6 +217,11 @@ export class AgentRuntime {
       stale.map((m) => m.id),
       "unanswered",
     );
+    if (stale.length > 0)
+      this.deps.onSettled?.(
+        stale.map((m) => m.id),
+        "unanswered",
+      );
     if (fresh.length > 0) {
       store.markNudged(fresh.map((m) => m.id));
       const ids = fresh.map((m) => m.id).join(", ");
@@ -241,5 +254,7 @@ export class AgentRuntime {
     this.running = false;
     void session?.dispose().catch(() => {});
     this.setStatus("error", message);
+    const lost = this.deps.store.awaitingReply(this.agentId).map((m) => m.id);
+    if (lost.length > 0) this.deps.onSettled?.(lost, "failed");
   }
 }

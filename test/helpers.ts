@@ -13,6 +13,7 @@ import type {
   InboundMessage,
   OutboundMessage,
   Platform,
+  ReactionState,
 } from "../src/channels/channel.ts";
 import { Mingle } from "../src/core/mingle.ts";
 import { resolvePaths } from "../src/core/paths.ts";
@@ -27,6 +28,17 @@ export class FakeChannel implements Channel {
   readonly onboarding = { kind: "credentials" as const, fields: [] };
   readonly sent: (OutboundMessage & { platformId: string })[] = [];
   readonly acks: string[] = [];
+  readonly reactions: string[] = [];
+  /** Live replies opened, with every update and the final content. */
+  readonly lives: {
+    chat: ChatRef;
+    replyTo: string;
+    platformId: string;
+    updates: string[];
+    final: string | undefined;
+  }[] = [];
+  /** Off by default so most tests see plain replies; the live-reply tests turn it on. */
+  liveEnabled = false;
   private events: ChannelEvents | undefined;
   private seq = 1000;
 
@@ -52,9 +64,34 @@ export class FakeChannel implements Channel {
         this.sent.push({ ...message, platformId });
         return { kind: "sent", platformId };
       },
-      acknowledge: async (_chat: ChatRef, id: string) => {
-        this.acks.push(id);
+      react: async (_chat: ChatRef, id: string, state: ReactionState) => {
+        this.reactions.push(`${id}:${state}`);
+        if (state === "processing") this.acks.push(id);
       },
+      ...(this.liveEnabled
+        ? {
+            startLive: async (chat: ChatRef, options: { replyTo: string; initial: string }) => {
+              const platformId = String(this.seq++);
+              const record = {
+                chat,
+                replyTo: options.replyTo,
+                platformId,
+                updates: [options.initial],
+                final: undefined as string | undefined,
+              };
+              this.lives.push(record);
+              return {
+                update: async (markdown: string) => {
+                  record.updates.push(markdown);
+                },
+                finish: async (markdown: string) => {
+                  record.final = markdown;
+                  return { kind: "sent" as const, platformId };
+                },
+              };
+            },
+          }
+        : {}),
       setTyping: async () => {},
       download: async () => {},
       listMembers: async () => [],
@@ -125,11 +162,13 @@ export async function rig(
     harness?: string;
     real?: boolean;
     coalesceMs?: number;
+    live?: boolean;
     channels?: Partial<Record<Platform, Channel>>;
   } = {},
 ): Promise<Rig> {
   const home = mkdtempSync(join(tmpdir(), "mingle-test-"));
   const channel = new FakeChannel();
+  channel.liveEnabled = Boolean(options.live);
   const turns: Rig["turns"] = [];
   const runtime = scriptedRuntime({
     id: "scripted",

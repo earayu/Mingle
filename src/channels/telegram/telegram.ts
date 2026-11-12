@@ -10,8 +10,11 @@ import type {
   Credentials,
   InboundAttachment,
   InboundMessage,
+  LiveOptions,
+  LiveReply,
   OnboardingEvent,
   OutboundMessage,
+  ReactionState,
   SendResult,
 } from "../channel.ts";
 
@@ -254,15 +257,47 @@ export function telegramChannel(options: TelegramOptions = {}): Channel {
           }
         },
 
-        async acknowledge(chat: ChatRef, platformMessageId: string) {
+        async react(chat: ChatRef, platformMessageId: string, state: ReactionState) {
           const { chatId } = parseChat(chat.platformId);
+          // 👀 while working; cleared once answered (the answer speaks for itself); 👎 on failure.
+          const emoji = { processing: "👀", done: null, error: "👎", none: null }[state];
           await api
             .call("setMessageReaction", {
               chat_id: chatId,
               message_id: Number(platformMessageId),
-              reaction: [{ type: "emoji", emoji: "👀" }],
+              reaction: emoji ? [{ type: "emoji", emoji }] : [],
             })
-            .catch(() => setTyping(chat, true));
+            .catch(() => (state === "processing" ? setTyping(chat, true) : undefined));
+        },
+
+        /** A placeholder message, edited as progress comes in and finally replaced by the answer. */
+        async startLive(chat: ChatRef, options: LiveOptions): Promise<LiveReply> {
+          const { chatId, threadId } = parseChat(chat.platformId);
+          const placeholder = await api.call<TgMessage>("sendMessage", {
+            chat_id: chatId,
+            ...(threadId ? { message_thread_id: threadId } : {}),
+            reply_parameters: { message_id: Number(options.replyTo), allow_sending_without_reply: true },
+            text: plain(options.initial),
+          });
+          const edit = (text: string) =>
+            api.call("editMessageText", { chat_id: chatId, message_id: placeholder.message_id, text });
+          let last = plain(options.initial);
+          return {
+            update: async (markdown) => {
+              const text = plain(markdown);
+              if (text === last) return;
+              last = text;
+              await edit(text).catch(() => {});
+            },
+            finish: async (markdown) => {
+              try {
+                await edit(plain(markdown));
+                return { kind: "sent", platformId: String(placeholder.message_id), degraded: ["markdown_flattened"] };
+              } catch (error) {
+                return sendFailure(error);
+              }
+            },
+          };
         },
 
         setTyping,
@@ -288,6 +323,11 @@ export function telegramChannel(options: TelegramOptions = {}): Channel {
       };
     },
   };
+}
+
+/** Mingle's progress text uses **bold** and *italic*; Telegram gets it as plain text. */
+function plain(markdown: string): string {
+  return markdown.replace(/\*\*(.+?)\*\*/g, "$1").replace(/(^|\s)\*(\S.*?)\*(?=\s|$)/g, "$1$2");
 }
 
 function identity(user: TgUser): BotIdentity {

@@ -19,6 +19,7 @@ import { MingleError, notFound } from "./errors.ts";
 import { formatReminder } from "./format.ts";
 import { createHome, writeRole } from "./home.ts";
 import { slugify } from "./ids.ts";
+import { LiveReplies } from "./live.ts";
 import { Outbox } from "./outbox.ts";
 import type { Paths } from "./paths.ts";
 import { AgentRuntime } from "./runtime.ts";
@@ -66,6 +67,7 @@ export interface MingleOptions {
 export class Mingle {
   readonly store: Store;
   readonly outbox: Outbox;
+  private readonly replies: LiveReplies;
   readonly adminToken = randomBytes(24).toString("base64url");
   private apiUrl = "";
   private readonly runtimes = new Map<string, AgentRuntime>();
@@ -82,7 +84,8 @@ export class Mingle {
       mkdirSync(dir, { recursive: true });
     }
     this.store = new Store(options.paths.db);
-    this.outbox = new Outbox(this.store, (id) => this.live.get(id), options.retryDelaysMs);
+    this.replies = new LiveReplies((line) => this.log(line));
+    this.outbox = new Outbox(this.store, (id) => this.live.get(id), options.retryDelaysMs, this.replies);
   }
 
   get cliPath(): string {
@@ -101,6 +104,7 @@ export class Mingle {
 
   async stop(): Promise<void> {
     clearInterval(this.reminderTimer);
+    this.replies.dispose();
     for (const id of [...this.onboardings.keys()]) this.cancelOnboarding(id);
     await Promise.all([...this.live.values()].map((c) => c.close().catch(() => {})));
     this.live.clear();
@@ -183,6 +187,10 @@ export class Mingle {
       homeDir: this.homeDir(agent),
       env: () => ({ MINGLE_API: this.apiUrl, MINGLE_TOKEN: token, MINGLE_CLI: this.cliPath }),
       ...(this.options.coalesceMs !== undefined ? { coalesceMs: this.options.coalesceMs } : {}),
+      onActivity: (kind, detail) => this.replies.activity(agent.id, kind, detail),
+      onSettled: (ids, outcome) => {
+        for (const id of ids) this.replies.settle(id, outcome);
+      },
       log: (line) => this.log(line),
     });
     this.runtimes.set(agent.id, runtime);
@@ -432,10 +440,10 @@ export class Mingle {
     if (!message || !triggers) return; // Duplicate, or not addressed to the agent.
 
     const live = this.live.get(connectionId);
-    void live?.acknowledge(inbound.chat, inbound.platformId);
 
     if (inbound.text.trim() === "/stop" && inbound.sender.id === ownerId) {
       this.store.setInboundState([message.id], "replied");
+      for (const id of this.replies.openFor(connection.agentId)) this.replies.settle(id, "stopped");
       void this.runtimes
         .get(connection.agentId)
         ?.stop()
@@ -449,6 +457,17 @@ export class Mingle {
             .catch((error) => this.log(`stop reply failed: ${(error as Error).message}`)),
         );
       return;
+    }
+    if (live) {
+      this.replies.open({
+        messageId: message.id,
+        agentId: connection.agentId,
+        platform: connection.platform,
+        chat: inbound.chat,
+        platformMessageId: inbound.platformId,
+        senderId: inbound.sender.id,
+        connection: live,
+      });
     }
     this.runtimes.get(connection.agentId)?.enqueueMessage(message.id);
   }

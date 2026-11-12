@@ -31,6 +31,8 @@ function message(partial: Partial<NormalizedMessage>): NormalizedMessage {
 function fakeLark() {
   const handlers = new Map<string, (arg: unknown) => unknown>();
   const sent: { to: string; input: unknown; opts: unknown }[] = [];
+  const reactions: string[] = [];
+  const streams: { to: string; opts: unknown; contents: string[] }[] = [];
   let connected = false;
   let failNext: string | undefined;
   const channel = {
@@ -53,8 +55,24 @@ function fakeLark() {
       sent.push({ to, input, opts });
       return { messageId: `om_out_${sent.length}` };
     },
-    async addReaction() {
-      return "r1";
+    async addReaction(_id: string, emoji: string) {
+      reactions.push(`+${emoji}`);
+      return `r-${emoji}`;
+    },
+    async removeReaction(_id: string, reactionId: string) {
+      reactions.push(`-${reactionId}`);
+    },
+    async stream(to: string, input: { markdown: (c: unknown) => Promise<void> }, opts: unknown) {
+      const record = { to, opts, contents: [] as string[] };
+      streams.push(record);
+      await input.markdown({
+        messageId: "om_card",
+        append: async () => {},
+        setContent: async (full: string) => {
+          record.contents.push(full);
+        },
+      });
+      return { messageId: "om_card" };
     },
     async getChatInfo(chatId: string) {
       return { chatId, name: "周末徒步", chatType: "group" };
@@ -66,6 +84,8 @@ function fakeLark() {
     channel,
     sent,
     isConnected: () => connected,
+    reactions,
+    streams,
     emit: (name: string, arg: unknown) => handlers.get(name)?.(arg),
     failNextSend: (code: string) => {
       failNext = code;
@@ -235,6 +255,42 @@ describe("feishu connection", () => {
       kind: "uncertain",
     });
     rmSync(dir, { recursive: true, force: true });
+    await connection.close();
+  });
+});
+
+describe("feishu reactions and live cards", () => {
+  it("swaps OnIt for DONE, and streams one card that ends with the answer and an @-mention", async () => {
+    const lark = fakeLark();
+    const channel = feishuChannel({ api: fakeApi({ activated: () => true }), createChannel: () => lark.channel });
+    const connection = await channel.connect(
+      { appId: "cli_1", appSecret: "s" },
+      {
+        onMessage: () => {},
+        onState: () => {},
+        onMembership: () => {},
+      },
+    );
+    const chat = { platformId: "oc_1", kind: "group" as const };
+    await connection.react(chat, "om_1", "processing");
+    await connection.react(chat, "om_1", "done");
+    expect(lark.reactions).toEqual(["+OnIt", "-r-OnIt", "+DONE"]);
+
+    const live = await connection.startLive?.(chat, {
+      replyTo: "om_1",
+      mention: "ou_asker",
+      initial: "**正在思考** · 0 秒",
+    });
+    await live?.update("**正在处理** · 3 秒\n\n· 运行命令");
+    const result = await live?.finish("**周六**晴");
+    expect(result).toEqual({ kind: "sent", platformId: "om_card" });
+    expect(lark.streams).toHaveLength(1);
+    expect(lark.streams[0]?.opts).toEqual({ replyTo: "om_1" });
+    expect(lark.streams[0]?.contents).toEqual([
+      "**正在思考** · 0 秒",
+      "**正在处理** · 3 秒\n\n· 运行命令",
+      "<at id=ou_asker></at> **周六**晴",
+    ]);
     await connection.close();
   });
 });

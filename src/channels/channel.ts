@@ -157,6 +157,24 @@ export interface ChannelEvents {
   onMembership(change: { readonly chat: ChatRef; readonly joined: boolean }): void;
 }
 
+export type ReactionState = "processing" | "done" | "error" | "none";
+
+export interface LiveOptions {
+  /** Platform ID of the message being answered. */
+  readonly replyTo: string;
+  /** Platform user ID to @-mention in the final answer (groups). */
+  readonly mention?: string;
+  /** First content, shown at once. Markdown. */
+  readonly initial: string;
+}
+
+export interface LiveReply {
+  /** Replace the progress content. Markdown. Best effort. */
+  update(markdown: string): Promise<void>;
+  /** Replace the content with the final answer and close the reply. */
+  finish(markdown: string): Promise<SendResult>;
+}
+
 /** One adapter instance per platform. Stateless across bots. */
 export interface Channel {
   readonly platform: Platform;
@@ -181,8 +199,16 @@ export interface ChannelConnection {
   capabilities(): Capabilities;
 
   send(message: OutboundMessage): Promise<SendResult>;
-  /** Receipt shown the moment a message is stored. Best effort; never throws. */
-  acknowledge(chat: ChatRef, platformMessageId: string): Promise<void>;
+  /**
+   * The reaction on the person's message: processing while the agent works, done once
+   * it answers, error if the turn failed, none to clear it. Best effort; never throws.
+   */
+  react(chat: ChatRef, platformMessageId: string, state: ReactionState): Promise<void>;
+  /**
+   * Open a reply that can be rewritten in place (a streaming card, or a message edited
+   * as progress comes in). Absent where the platform cannot edit what it sent.
+   */
+  startLive?(chat: ChatRef, options: LiveOptions): Promise<LiveReply>;
   /** Best effort; never throws. */
   setTyping(chat: ChatRef, typing: boolean): Promise<void>;
 

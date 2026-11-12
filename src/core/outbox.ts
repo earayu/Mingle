@@ -1,6 +1,7 @@
 import type { ChannelConnection, Degradation, SendResult } from "../channels/channel.ts";
 import type { Message, Store } from "../store/store.ts";
 import { MingleError, notFound } from "./errors.ts";
+import type { LiveReplies } from "./live.ts";
 
 export interface SendRequest {
   readonly chatId: string;
@@ -22,14 +23,18 @@ export class Outbox {
   private readonly live: (connectionId: string) => ChannelConnection | undefined;
   private readonly retryDelaysMs: readonly number[];
 
+  private readonly replies: LiveReplies | undefined;
+
   constructor(
     store: Store,
     live: (connectionId: string) => ChannelConnection | undefined,
     retryDelaysMs: readonly number[] = [1000, 3000, 9000],
+    replies?: LiveReplies,
   ) {
     this.store = store;
     this.live = live;
     this.retryDelaysMs = retryDelaysMs;
+    this.replies = replies;
   }
 
   async send(agentId: string, request: SendRequest): Promise<SendReport> {
@@ -66,12 +71,29 @@ export class Outbox {
         body: chunk,
         replyTo: i === 0 ? (quoted?.id ?? null) : null,
       });
-      const result = await this.attempt(live, {
-        chat: ref,
-        text: chunk,
-        ...(i === 0 && quoted?.platformId ? { replyTo: quoted.platformId } : {}),
-        ...(last && request.files?.length ? { files: request.files.map((path) => ({ path })) } : {}),
-      });
+      const files = last && request.files?.length ? request.files.map((path) => ({ path })) : undefined;
+      // The first piece of a reply goes into the live reply opened for that message, if any.
+      const intoLive = i === 0 && quoted && chunk ? await this.replies?.answer(quoted.id, chunk) : undefined;
+      let result: SendResult;
+      if (intoLive) {
+        result = files
+          ? await this.attempt(live, {
+              chat: ref,
+              text: "",
+              files,
+              ...(quoted?.platformId ? { replyTo: quoted.platformId } : {}),
+            })
+          : intoLive;
+        if (result.kind === "sent")
+          result = { ...result, platformId: intoLive.kind === "sent" ? intoLive.platformId : result.platformId };
+      } else {
+        result = await this.attempt(live, {
+          chat: ref,
+          text: chunk,
+          ...(i === 0 && quoted?.platformId ? { replyTo: quoted.platformId } : {}),
+          ...(files ? { files } : {}),
+        });
+      }
       if (result.kind === "sent") {
         store.setOutboundResult(record.id, "sent", result.platformId);
         for (const d of result.degraded ?? []) degraded.add(d);
@@ -117,6 +139,7 @@ export class Outbox {
       return state === "received" || state === "delivered" || state === "unanswered";
     });
     this.store.setInboundState(answerable, "replied");
+    for (const id of answerable) this.replies?.settle(id, "answered");
   }
 }
 

@@ -11,9 +11,12 @@ import type {
   Credentials,
   InboundAttachment,
   InboundMessage,
+  LiveOptions,
+  LiveReply,
   OnboardingContext,
   OnboardingEvent,
   OutboundMessage,
+  ReactionState,
   SendResult,
 } from "../channel.ts";
 
@@ -44,6 +47,9 @@ const CAPABILITIES: Capabilities = {
   listMembers: false,
   maxTextLength: 8000,
 };
+
+/** Streaming cards stop taking updates after about ten minutes; stay under it. */
+const STREAM_LIMIT_MS = 9 * 60_000;
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 
@@ -78,7 +84,16 @@ export interface FeishuOptions {
 /** The part of LarkChannel this adapter uses. */
 export type LarkChannelLike = Pick<
   lark.LarkChannel,
-  "connect" | "disconnect" | "on" | "send" | "addReaction" | "getChatInfo" | "rawClient" | "botIdentity"
+  | "connect"
+  | "disconnect"
+  | "on"
+  | "send"
+  | "stream"
+  | "addReaction"
+  | "removeReaction"
+  | "getChatInfo"
+  | "rawClient"
+  | "botIdentity"
 >;
 
 export function feishuChannel(options: FeishuOptions = {}): Channel {
@@ -174,6 +189,8 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
       let closed = false;
       let approvalTimer: NodeJS.Timeout | undefined;
       const chatNames = new Map<string, string | undefined>();
+      /** Reaction IDs of the processing emoji, so it can be swapped for DONE. */
+      const reactions = new Map<string, string>();
       const userNames = new Map<string, string | undefined>();
 
       const userName = async (openId: string): Promise<string | undefined> => {
@@ -283,8 +300,66 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
           }
         },
 
-        async acknowledge(_chat: ChatRef, platformMessageId: string) {
-          await channel?.addReaction(platformMessageId, "OK").catch(() => {});
+        async react(_chat: ChatRef, platformMessageId: string, state: ReactionState) {
+          if (!channel) return;
+          // Feishu's own emoji: OnIt while working, DONE once answered, ERROR on failure.
+          const previous = reactions.get(platformMessageId);
+          if (previous) {
+            reactions.delete(platformMessageId);
+            await channel.removeReaction(platformMessageId, previous).catch(() => {});
+          }
+          const emoji = { processing: "OnIt", done: "DONE", error: "ERROR", none: null }[state];
+          if (!emoji) return;
+          const id = await channel.addReaction(platformMessageId, emoji).catch(() => undefined);
+          if (id && state === "processing") reactions.set(platformMessageId, id);
+        },
+
+        async startLive(chat: ChatRef, options: LiveOptions): Promise<LiveReply> {
+          if (!channel) throw new Error("the Feishu connection is not ready");
+          const startedAt = Date.now();
+          let controller: lark.MarkdownStreamController | undefined;
+          let release: () => void = () => {};
+          const released = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          const ready = Promise.withResolvers<void>();
+          // The SDK keeps a streaming card open while the producer runs; ours runs until finish().
+          const stream = channel
+            .stream(
+              chat.platformId,
+              {
+                markdown: async (c) => {
+                  controller = c;
+                  await c.setContent(options.initial);
+                  ready.resolve();
+                  await released;
+                },
+              },
+              { replyTo: options.replyTo },
+            )
+            .catch((error) => {
+              ready.reject(error);
+              throw error;
+            });
+          await ready.promise;
+          const mention = options.mention ? `<at id=${options.mention}></at> ` : "";
+          return {
+            update: async (markdown) => {
+              await controller?.setContent(markdown).catch(() => {});
+            },
+            finish: async (markdown) => {
+              // Feishu stops accepting updates to a streaming card after about ten minutes.
+              if (Date.now() - startedAt > STREAM_LIMIT_MS) {
+                release();
+                await stream.catch(() => {});
+                return { kind: "failed", code: "unknown", retryable: false };
+              }
+              await controller?.setContent(`${mention}${markdown}`);
+              release();
+              const result = await stream;
+              return { kind: "sent", platformId: result.messageId };
+            },
+          };
         },
 
         async setTyping() {},

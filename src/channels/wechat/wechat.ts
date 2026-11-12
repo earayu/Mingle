@@ -10,6 +10,7 @@ import type {
   OnboardingContext,
   OnboardingEvent,
   OutboundMessage,
+  ReactionState,
   SendResult,
 } from "../channel.ts";
 
@@ -431,8 +432,10 @@ export function wechatChannel(options: WechatOptions = {}): Channel {
           }
         },
 
-        async acknowledge(chat: ChatRef) {
-          await api.typing(base, token, chat.platformId, contexts.get(chat.platformId), true).catch(() => {});
+        /** WeChat has no reactions: "typing…" stands in while the agent works. */
+        async react(chat: ChatRef, _platformMessageId: string, state: ReactionState) {
+          const on = state === "processing";
+          await api.typing(base, token, chat.platformId, contexts.get(chat.platformId), on).catch(() => {});
         },
 
         async setTyping(chat: ChatRef, on: boolean) {
