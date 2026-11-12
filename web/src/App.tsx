@@ -247,7 +247,7 @@ function Pick({ agents, onPick }: { agents: AgentView[]; onPick: (slug: string) 
 
 function Settings() {
   const { t, locale, setLocale } = useI18n();
-  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("mingle.theme") as Theme) || "system");
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("mingle.theme") as Theme) || "light");
 
   useEffect(() => {
     if (theme === "system") delete document.documentElement.dataset.theme;

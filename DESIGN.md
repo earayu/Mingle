@@ -59,7 +59,7 @@ motion: { fast: 120ms, base: 180ms, easing: "cubic-bezier(0.2, 0, 0, 1)" }
 - `text` 用于正文和标题，`text-secondary` 用于说明，`text-tertiary` 用于占位和禁用。
 - `accent` 就是文字色。主按钮是黑底白字（暗色下反转）。没有品牌色。
 - `ok` / `wait` / `error` 只用于状态圆点和对应的一行状态文字，不做大面积底色。
-- 明暗跟随系统，可在设置里固定。
+- 默认浅色；可在设置里跟随系统或固定深色。
 
 ## 字体
 
