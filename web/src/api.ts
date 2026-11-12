@@ -97,7 +97,10 @@ export interface CredentialField {
 
 export interface PlatformInfo {
   platform: Platform;
-  onboarding: { kind: "qr"; desktopLink?: boolean } | { kind: "credentials"; fields: CredentialField[] } | null;
+  onboarding:
+    | { kind: "qr"; desktopLink?: boolean }
+    | { kind: "credentials"; fields: CredentialField[]; setupUrl?: string }
+    | null;
   manualFields: CredentialField[];
 }
 

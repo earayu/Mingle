@@ -9,6 +9,7 @@ export async function loadChannels(): Promise<Partial<Record<Platform, Channel>>
     { wecomChannel },
     { dingtalkChannel },
     { qqChannel },
+    { slackChannel },
   ] = await Promise.all([
     import("./telegram/telegram.ts"),
     import("./feishu/feishu.ts"),
@@ -16,6 +17,7 @@ export async function loadChannels(): Promise<Partial<Record<Platform, Channel>>
     import("./wecom/wecom.ts"),
     import("./dingtalk/dingtalk.ts"),
     import("./qq/qq.ts"),
+    import("./slack/slack.ts"),
   ]);
   return {
     telegram: telegramChannel(),
@@ -24,5 +26,6 @@ export async function loadChannels(): Promise<Partial<Record<Platform, Channel>>
     wecom: wecomChannel(),
     dingtalk: dingtalkChannel(),
     qq: qqChannel(),
+    slack: slackChannel(),
   };
 }

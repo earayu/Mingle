@@ -179,6 +179,7 @@ try {
     // The QR step is not here: it needs a live call to the platform, which headless Chrome's
     // virtual clock outruns. Check it in a real browser against a running Mingle instead.
     ["connect", `/a/${long.slug}?connect=none`],
+    ["connect-slack", `/a/${long.slug}?connect=slack`],
   ];
   const jobs = [];
   for (const locale of LOCALES) {

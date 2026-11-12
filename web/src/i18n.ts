@@ -77,6 +77,11 @@ const en = {
   "connect.back": "Back",
   "telegram.token": "Bot token",
   "telegram.steps": "In Telegram, message @BotFather, send /newbot, and paste the token it gives you.",
+  "slack.setup": "Create the app on Slack",
+  "slack.steps":
+    "Create the app from the link below. Its name, permissions and Socket Mode are filled in.\nInstall it to your workspace, then copy the Bot User OAuth Token (xoxb-) from OAuth & Permissions.\nUnder Basic Information → App-Level Tokens, generate a token with connections:write and copy it (xapp-).",
+  "slack.botToken": "Bot token (xoxb-…)",
+  "slack.appToken": "App-level token (xapp-…)",
   "feishu.qr1": "Open Feishu on your phone and scan the code.",
   "feishu.qr2": "Confirm. The name and permissions are filled in.",
   "feishu.qr3": "Add the bot to a group, or message it directly.",
@@ -233,6 +238,11 @@ const zh: Record<MessageKey, string> = {
   "connect.back": "返回",
   "telegram.token": "Bot token",
   "telegram.steps": "在 Telegram 里给 @BotFather 发 /newbot，把它给你的 token 粘贴到这里。",
+  "slack.setup": "在 Slack 上创建应用",
+  "slack.steps":
+    "用下面的链接创建应用，名称、权限和 Socket Mode 都已填好。\n把应用安装到工作区，在 OAuth & Permissions 里复制 Bot User OAuth Token（xoxb-）。\n在 Basic Information → App-Level Tokens 里生成一个带 connections:write 的 token 并复制（xapp-）。",
+  "slack.botToken": "Bot token（xoxb-…）",
+  "slack.appToken": "App-level token（xapp-…）",
   "feishu.qr1": "用手机飞书扫码。",
   "feishu.qr2": "确认创建，名称和权限已填好。",
   "feishu.qr3": "把机器人拉进群，或直接私聊它。",

@@ -30,7 +30,12 @@ export interface Capabilities {
 export type OnboardingMethod =
   /** `desktopLink`: the QR's link also works when opened in a signed-in browser on this computer. */
   | { readonly kind: "qr"; readonly desktopLink?: boolean }
-  | { readonly kind: "credentials"; readonly fields: readonly CredentialField[] };
+  | {
+      readonly kind: "credentials";
+      readonly fields: readonly CredentialField[];
+      /** Where to create the bot, prefilled where the platform allows. `__MINGLE_AGENT_NAME__` becomes the agent's name, `__MINGLE_AGENT_HANDLE__` a lowercase handle made from it. */
+      readonly setupUrl?: string;
+    };
 
 export interface CredentialField {
   readonly key: string;

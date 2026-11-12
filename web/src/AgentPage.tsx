@@ -234,6 +234,7 @@ function Connections({ agent, onChanged }: { agent: AgentView; onChanged: () => 
       {adding ? (
         <AddConnection
           agentId={agent.id}
+          agentName={agent.name}
           initial={linked}
           onDone={() => {
             setAdding(false);
@@ -307,11 +308,13 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
 
 function AddConnection({
   agentId,
+  agentName,
   initial,
   onDone,
   onCancel,
 }: {
   agentId: string;
+  agentName: string;
   initial: Platform | null;
   onDone: () => void;
   onCancel: () => void;
@@ -335,7 +338,14 @@ function AddConnection({
   };
   if (chosen && info?.onboarding?.kind === "credentials") {
     return (
-      <CredentialsForm agentId={agentId} info={info} fields={info.onboarding.fields} onDone={onDone} onBack={back} />
+      <CredentialsForm
+        agentId={agentId}
+        info={info}
+        fields={info.onboarding.fields}
+        {...(info.onboarding.setupUrl ? { setupUrl: withAgentName(info.onboarding.setupUrl, agentName) } : {})}
+        onDone={onDone}
+        onBack={back}
+      />
     );
   }
   if (chosen && info?.onboarding?.kind === "qr") {
@@ -384,16 +394,34 @@ function AddConnection({
   );
 }
 
+/** Put the agent's name into a prefilled setup link (it sits inside URL-encoded JSON). */
+function withAgentName(url: string, name: string): string {
+  const safe = JSON.stringify(name.trim().slice(0, 35)).slice(1, -1);
+  // Handles allow only a-z, 0-9, "-", "_" and "."; names in other scripts fall back to a generic one.
+  const handle =
+    name
+      .normalize("NFKD")
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "")
+      .slice(0, 80) || "mingle-agent";
+  return url
+    .replaceAll("__MINGLE_AGENT_NAME__", encodeURIComponent(safe))
+    .replaceAll("__MINGLE_AGENT_HANDLE__", encodeURIComponent(handle));
+}
+
 function CredentialsForm({
   agentId,
   info,
   fields,
+  setupUrl,
   onDone,
   onBack,
 }: {
   agentId: string;
   info: PlatformInfo;
   fields: CredentialField[];
+  setupUrl?: string;
   onDone: () => void;
   onBack: () => void;
 }) {
@@ -420,11 +448,32 @@ function CredentialsForm({
   return (
     <form onSubmit={submit} className="panel flex flex-col gap-4 rounded-md bg-surface p-4">
       <span className="text-heading font-semibold">{t(`platform.${info.platform}` as MessageKey)}</span>
-      <p className="text-small text-text-secondary">{t(steps)}</p>
-      {fields.map((f) => (
+      {/* One line reads as a sentence; several become numbered steps. */}
+      {t(steps).includes("\n") ? (
+        <ol className="flex list-decimal flex-col gap-1 pl-5 text-small text-text-secondary">
+          {t(steps)
+            .split("\n")
+            .map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+        </ol>
+      ) : (
+        <p className="text-small text-text-secondary">{t(steps)}</p>
+      )}
+      {setupUrl ? (
+        <a
+          href={setupUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex h-8 items-center self-start rounded-sm border border-border bg-bg px-3 text-body text-text transition-colors duration-[120ms] hover:border-text-tertiary"
+        >
+          {t(`${info.platform}.setup` as MessageKey)} ↗
+        </a>
+      ) : null}
+      {fields.map((f, i) => (
         <Field key={f.key} label={t(f.labelKey as MessageKey)}>
           <Input
-            autoFocus
+            autoFocus={i === 0}
             required
             type={f.secret ? "password" : "text"}
             autoComplete="off"
