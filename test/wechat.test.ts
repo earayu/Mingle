@@ -1,6 +1,10 @@
+import { createCipheriv, createDecipheriv } from "node:crypto";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ConnectionState, InboundMessage, OnboardingEvent } from "../src/channels/channel.ts";
-import { toInbound, trustedBaseUrl, wechatApi, wechatChannel } from "../src/channels/wechat/wechat.ts";
+import { mediaKey, toInbound, trustedBaseUrl, wechatApi, wechatChannel } from "../src/channels/wechat/wechat.ts";
 import { until } from "./helpers.ts";
 
 /** A fake iLink server: routes by endpoint, records requests. */
@@ -93,14 +97,15 @@ describe("wechat messages", () => {
         { type: 1, text_item: { text: "周六去哪？" } },
         { type: 3, voice_item: { text: "带水" } },
         { type: 2 },
-        { type: 4, file_item: { file_name: "route.gpx" } },
+        { type: 4, file_item: { file_name: "route.gpx", len: "42", media: { encrypt_query_param: "q" } } },
       ],
     });
     expect(inbound).toMatchObject({
       platformId: "7300000000000000001",
       chat: { platformId: "u@im.wechat", kind: "dm" },
       sender: { id: "u@im.wechat", name: "" },
-      text: "周六去哪？\n带水\n[image]\n[file: route.gpx]",
+      text: "周六去哪？\n带水\n[image]",
+      attachments: [{ id: "7300000000000000001#3", name: "route.gpx", size: 42 }],
       addressedToBot: true,
     });
     expect(toInbound({ message_id: "1", from_user_id: "bot", message_type: 2 })).toBeUndefined();
@@ -164,6 +169,107 @@ describe("wechat messages", () => {
     });
     const auth = ilink.calls.find((c) => c.endpoint === "ilink/bot/sendmessage")?.headers;
     expect(auth).toMatchObject({ AuthorizationType: "ilink_bot_token", Authorization: "Bearer tok" });
+    await connection.close();
+  });
+
+  it("uploads files encrypted to the CDN, sends them as image or file items, and decrypts what it receives", async () => {
+    const uploads: { url: URL; body: Buffer }[] = [];
+    const reserved: Record<string, unknown>[] = [];
+    let polled = false;
+    const peerKey = Buffer.alloc(16, 7);
+    const peerCipher = createCipheriv("aes-128-ecb", peerKey, null);
+    const peerFile = Buffer.concat([peerCipher.update("gpx data"), peerCipher.final()]);
+    const ilink = fakeIlink({
+      "ilink/bot/msg/notifystart": () => ({ ret: 0 }),
+      "ilink/bot/msg/notifystop": () => ({ ret: 0 }),
+      "ilink/bot/getupdates": async () => {
+        if (polled) {
+          await new Promise((r) => setTimeout(r, 50));
+          return { ret: 0, msgs: [] };
+        }
+        polled = true;
+        return {
+          ret: 0,
+          msgs: [
+            {
+              message_id: "m1",
+              from_user_id: "u@im.wechat",
+              context_token: "ctx",
+              item_list: [
+                {
+                  type: 4,
+                  file_item: {
+                    file_name: "route.gpx",
+                    media: {
+                      encrypt_query_param: "dl",
+                      aes_key: Buffer.from(peerKey.toString("hex")).toString("base64"),
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        };
+      },
+      "ilink/bot/getuploadurl": (body) => {
+        reserved.push(body as Record<string, unknown>);
+        return { ret: 0, upload_param: `up${reserved.length}` };
+      },
+      "ilink/bot/sendmessage": () => ({ ret: 0 }),
+    });
+    const fetchImpl = (async (input: URL | string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.hostname === "novac2c.cdn.weixin.qq.com" && url.pathname === "/c2c/upload") {
+        uploads.push({ url, body: Buffer.from(init?.body as Uint8Array) });
+        return new Response(null, { status: 200, headers: { "x-encrypted-param": `down${uploads.length}` } });
+      }
+      if (url.hostname === "novac2c.cdn.weixin.qq.com" && url.pathname === "/c2c/download")
+        return new Response(peerFile);
+      return ilink.fetchImpl(input, init);
+    }) as typeof fetch;
+
+    const received: InboundMessage[] = [];
+    const connection = await wechatChannel({ api: wechatApi(fetchImpl) }).connect(
+      { token: "tok", botId: "bot", baseUrl: "https://ilinkai.weixin.qq.com/" },
+      { onMessage: (m) => received.push(m), onState: () => {}, onMembership: () => {} },
+    );
+    await until(() => received.length === 1, 2000);
+    const dir = await mkdtemp(join(tmpdir(), "mingle-wechat-"));
+    const attachment = received[0]?.attachments[0];
+    expect(attachment).toMatchObject({ name: "route.gpx" });
+    await connection.download(attachment as never, join(dir, "in.gpx"));
+    expect(await readFile(join(dir, "in.gpx"), "utf8")).toBe("gpx data");
+
+    await writeFile(join(dir, "photo.PNG"), "png bytes");
+    await writeFile(join(dir, "notes.pdf"), "pdf bytes");
+    const result = await connection.send({
+      chat: { platformId: "u@im.wechat", kind: "dm" },
+      text: "here you go",
+      files: [{ path: join(dir, "photo.PNG") }, { path: join(dir, "notes.pdf") }],
+    });
+    expect(result).toMatchObject({ kind: "sent", degraded: ["markdown_flattened"] });
+    expect(reserved.map((r) => [r.media_type, r.rawsize, r.to_user_id])).toEqual([
+      [1, 9, "u@im.wechat"],
+      [3, 9, "u@im.wechat"],
+    ]);
+    expect(uploads[0]?.url.searchParams.get("encrypted_query_param")).toBe("up1");
+    expect(uploads[0]?.url.searchParams.get("filekey")).toBe(reserved[0]?.filekey);
+    // The CDN gets ciphertext under the key announced in getuploadurl.
+    const decipher = createDecipheriv("aes-128-ecb", Buffer.from(String(reserved[1]?.aeskey), "hex"), null);
+    expect(Buffer.concat([decipher.update(uploads[1]?.body as Buffer), decipher.final()]).toString()).toBe("pdf bytes");
+
+    const items = ilink.calls
+      .filter((c) => c.endpoint === "ilink/bot/sendmessage")
+      .map((c) => (c.body as { msg: { item_list: Record<string, unknown>[]; context_token: string } }).msg);
+    expect(items.map((m) => m.context_token)).toEqual(["ctx", "ctx", "ctx"]);
+    expect(items[0]?.item_list[0]).toMatchObject({ type: 1 });
+    expect(items[1]?.item_list[0]).toMatchObject({ type: 2, image_item: { media: { encrypt_query_param: "down1" } } });
+    const fileItem = items[2]?.item_list[0] as {
+      type: number;
+      file_item: { media: { aes_key: string }; file_name: string; len: string };
+    };
+    expect(fileItem).toMatchObject({ type: 4, file_item: { file_name: "notes.pdf", len: "9" } });
+    expect(mediaKey(fileItem.file_item).toString("hex")).toBe(reserved[1]?.aeskey);
     await connection.close();
   });
 });

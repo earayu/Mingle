@@ -1,4 +1,6 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { readFile, stat, writeFile } from "node:fs/promises";
+import { basename, extname } from "node:path";
 import type {
   Capabilities,
   Channel,
@@ -6,6 +8,8 @@ import type {
   ChannelEvents,
   ChatRef,
   Credentials,
+  Degradation,
+  InboundAttachment,
   InboundMessage,
   OnboardingContext,
   OnboardingEvent,
@@ -18,7 +22,10 @@ import type {
  * Personal WeChat through Tencent's iLink bot service (ilinkai.weixin.qq.com):
  * scan with the WeChat app, then long-poll for messages. Direct messages only.
  *
- * The protocol details (endpoints, headers, login states, context tokens) follow
+ * Files travel through Tencent's CDN: each one is encrypted with a fresh AES-128-ECB key,
+ * uploaded, and then sent as an image or file item that carries the key.
+ *
+ * The protocol details (endpoints, headers, login states, context tokens, media) follow
  * dsh-im's implementation, src/channels/weixin/weixin-api.mjs,
  * https://github.com/xmanrui/dsh-im (MIT, Copyright (c) xmanrui).
  */
@@ -32,13 +39,19 @@ const REQUEST_MS = 15_000;
 /** iLink truncates longer texts; the outbox splits at this length. */
 const MAX_TEXT = 1800;
 const QR_LIFETIME_MS = 8 * 60_000;
+const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
+const CDN_HOST = "novac2c.cdn.weixin.qq.com";
+/** Not a documented iLink limit; keeps a whole file comfortably in memory while it is encrypted. */
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
+const DEGRADATION_ORDER: Degradation[] = ["markdown_flattened", "quote_dropped", "files_dropped"];
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 
 const CAPABILITIES: Capabilities = {
   quoteReply: false,
   reactions: false,
   typingIndicator: true,
-  fileUpload: false,
-  fileDownload: false,
+  fileUpload: true,
+  fileDownload: true,
   listMembers: false,
   maxTextLength: MAX_TEXT,
 };
@@ -90,13 +103,100 @@ export function trustedBaseUrl(value: string | undefined, fallback: string): str
   return `${url.origin}${url.pathname.endsWith("/") ? url.pathname : `${url.pathname}/`}`;
 }
 
+interface WechatMedia {
+  encrypt_query_param?: string;
+  full_url?: string;
+  aes_key?: string;
+  encrypt_type?: number;
+}
+
 interface WechatItem {
   type?: number;
   text_item?: { text?: string };
   voice_item?: { text?: string };
-  image_item?: unknown;
-  file_item?: { file_name?: string };
+  image_item?: { media?: WechatMedia; aeskey?: string; mid_size?: number };
+  file_item?: { media?: WechatMedia; aeskey?: string; file_name?: string; len?: string };
   video_item?: unknown;
+}
+
+/** iLink sends media keys either as hex in `aeskey` or base64 (of raw bytes, or of hex) in `media.aes_key`. */
+export function mediaKey(item: { media?: WechatMedia; aeskey?: string }): Buffer {
+  const hex = item.aeskey?.trim();
+  if (hex) {
+    if (!/^[0-9a-fA-F]{32}$/.test(hex)) throw new WechatError("invalid_media_key", "WeChat sent an invalid file key");
+    return Buffer.from(hex, "hex");
+  }
+  const encoded = item.media?.aes_key?.trim() ?? "";
+  if (encoded && encoded.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+    const raw = Buffer.from(encoded, "base64");
+    if (raw.length === 16) return raw;
+    if (raw.length === 32 && /^[0-9a-fA-F]{32}$/.test(raw.toString("ascii")))
+      return Buffer.from(raw.toString("ascii"), "hex");
+  }
+  throw new WechatError("invalid_media_key", "WeChat sent an invalid file key");
+}
+
+/** Where to fetch an inbound file: only from Tencent's CDN. */
+export function mediaDownloadUrl(media: WechatMedia | undefined): string {
+  const query = media?.encrypt_query_param?.trim();
+  if (query) return `${CDN_BASE_URL}/download?encrypted_query_param=${encodeURIComponent(query)}`;
+  let url: URL;
+  try {
+    url = new URL(media?.full_url ?? "");
+  } catch {
+    throw new WechatError("missing_media_url", "this file has no download address");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== CDN_HOST ||
+    (url.port && url.port !== "443") ||
+    !url.pathname.startsWith("/c2c/")
+  )
+    throw new WechatError("untrusted_media_url", "WeChat sent a file address outside its CDN");
+  url.username = "";
+  url.password = "";
+  url.hash = "";
+  return url.toString();
+}
+
+function uploadUrl(response: { upload_full_url?: string; upload_param?: string }, fileKey: string): URL {
+  let url: URL;
+  if (response.upload_full_url?.trim()) {
+    try {
+      url = new URL(response.upload_full_url.trim());
+    } catch {
+      throw new WechatError("invalid_upload_url", "WeChat returned an invalid upload address");
+    }
+  } else if (response.upload_param?.trim()) {
+    url = new URL(`${CDN_BASE_URL}/upload`);
+    url.searchParams.set("encrypted_query_param", response.upload_param.trim());
+    url.searchParams.set("filekey", fileKey);
+  } else {
+    throw new WechatError("missing_upload_url", "WeChat returned no upload address");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== CDN_HOST ||
+    (url.port && url.port !== "443") ||
+    url.pathname !== "/c2c/upload" ||
+    url.username ||
+    url.password
+  )
+    throw new WechatError("untrusted_upload_url", "WeChat returned an upload address outside its CDN");
+  url.hash = "";
+  return url;
+}
+
+function encrypt(bytes: Buffer, key: Buffer): Buffer {
+  const cipher = createCipheriv("aes-128-ecb", key, null);
+  return Buffer.concat([cipher.update(bytes), cipher.final()]);
+}
+
+export function decryptMedia(ciphertext: Buffer, key: Buffer): Buffer {
+  if (key.length !== 16 || ciphertext.length === 0 || ciphertext.length % 16 !== 0)
+    throw new WechatError("invalid_media", "WeChat sent a damaged file");
+  const decipher = createDecipheriv("aes-128-ecb", key, null);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
 
 export interface WechatMessage {
@@ -217,6 +317,10 @@ export function wechatApi(fetchImpl: Fetch = fetch) {
     },
 
     sendText(base: string, token: string, to: string, text: string, contextToken: string | undefined) {
+      return this.sendItem(base, token, to, { type: 1, text_item: { text } }, contextToken);
+    },
+
+    sendItem(base: string, token: string, to: string, item: Record<string, unknown>, contextToken: string | undefined) {
       return request<{ ret?: number; errcode?: number }>({
         method: "POST",
         base,
@@ -229,12 +333,97 @@ export function wechatApi(fetchImpl: Fetch = fetch) {
             client_id: `mingle-${randomUUID()}`,
             message_type: 2,
             message_state: 2,
-            item_list: [{ type: 1, text_item: { text } }],
+            item_list: [item],
             ...(contextToken ? { context_token: contextToken } : {}),
           },
           base_info: baseInfo(),
         },
       });
+    },
+
+    /**
+     * Encrypt a file with a fresh key and put it on Tencent's CDN. Returns the item to send.
+     * mediaType 1 is an image, 3 a file.
+     */
+    async upload(base: string, token: string, to: string, file: { bytes: Buffer; name: string }, image: boolean) {
+      const fileKey = randomBytes(16).toString("hex");
+      const key = randomBytes(16);
+      const ciphertext = encrypt(file.bytes, key);
+      const reserved = await request<{
+        ret?: number;
+        errcode?: number;
+        upload_full_url?: string;
+        upload_param?: string;
+      }>({
+        method: "POST",
+        base,
+        endpoint: "ilink/bot/getuploadurl",
+        token,
+        body: {
+          filekey: fileKey,
+          media_type: image ? 1 : 3,
+          to_user_id: to,
+          rawsize: file.bytes.byteLength,
+          rawfilemd5: createHash("md5").update(file.bytes).digest("hex"),
+          filesize: ciphertext.byteLength,
+          no_need_thumb: true,
+          aeskey: key.toString("hex"),
+          base_info: baseInfo(),
+        },
+      });
+      const code = rejected(reserved);
+      if (code) throw new WechatError("upload_rejected", "WeChat refused the upload", code);
+      const target = uploadUrl(reserved, fileKey);
+      let downloadParam: string | undefined;
+      for (let attempt = 1; attempt <= 3 && !downloadParam; attempt++) {
+        let response: Response;
+        try {
+          response = await fetchImpl(target, {
+            method: "POST",
+            headers: { "content-type": "application/octet-stream" },
+            body: new Uint8Array(ciphertext),
+            redirect: "error",
+            signal: AbortSignal.timeout(120_000),
+          });
+        } catch (error) {
+          if (attempt === 3) throw error;
+          continue;
+        }
+        if (response.status >= 400 && response.status < 500)
+          throw new WechatError(
+            "upload_rejected",
+            `WeChat refused the upload (HTTP ${response.status})`,
+            String(response.status),
+          );
+        if (response.status === 200) downloadParam = response.headers.get("x-encrypted-param")?.trim() || undefined;
+        if (response.status === 200 && !downloadParam)
+          throw new WechatError("upload_failed", "WeChat's upload answer had no download parameter");
+        if (!downloadParam && attempt === 3)
+          throw new WechatError(
+            "upload_failed",
+            `WeChat upload failed (HTTP ${response.status})`,
+            String(response.status),
+          );
+      }
+      const media = {
+        encrypt_query_param: downloadParam,
+        aes_key: Buffer.from(key.toString("hex")).toString("base64"),
+        encrypt_type: 1,
+      };
+      return image
+        ? { type: 2, image_item: { media, mid_size: ciphertext.byteLength } }
+        : { type: 4, file_item: { media, file_name: file.name, len: String(file.bytes.byteLength) } };
+    },
+
+    async downloadMedia(item: { media?: WechatMedia; aeskey?: string }): Promise<Buffer> {
+      const key = mediaKey(item);
+      const response = await fetchImpl(mediaDownloadUrl(item.media), {
+        redirect: "manual",
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (!response.ok)
+        throw new WechatError("download_failed", `WeChat file download failed (HTTP ${response.status})`);
+      return decryptMedia(Buffer.from(await response.arrayBuffer()), key);
     },
 
     async typing(base: string, token: string, to: string, contextToken: string | undefined, on: boolean) {
@@ -367,6 +556,8 @@ export function wechatChannel(options: WechatOptions = {}): Channel {
       const stop = new AbortController();
       /** Replies must carry the latest context token from that user. */
       const contexts = new Map<string, string>();
+      /** Inbound images and files by attachment ID, for download. */
+      const media = new Map<string, { media?: WechatMedia; aeskey?: string }>();
       let cursor = "";
 
       const started = await api.notify(base, token, "start").catch(() => undefined);
@@ -392,6 +583,11 @@ export function wechatChannel(options: WechatOptions = {}): Channel {
               const inbound = toInbound(message);
               if (!inbound) continue;
               if (message.context_token) contexts.set(inbound.sender.id, message.context_token);
+              for (const [i, item] of (message.item_list ?? []).entries()) {
+                const found = item.image_item ?? item.file_item;
+                if (found) media.set(`${inbound.platformId}#${i}`, found);
+              }
+              while (media.size > 2000) media.delete(media.keys().next().value as string);
               events.onMessage(inbound);
             }
           } catch {
@@ -410,23 +606,54 @@ export function wechatChannel(options: WechatOptions = {}): Channel {
 
         async send(message: OutboundMessage): Promise<SendResult> {
           const to = message.chat.platformId;
+          const degraded = new Set<Degradation>();
+          const report = () =>
+            DEGRADATION_ORDER.filter((d) => degraded.has(d) || (d === "quote_dropped" && message.replyTo));
+          let sentAny = false;
           try {
-            const response = await api.sendText(base, token, to, message.text, contexts.get(to));
-            const code = api.rejected(response);
-            if (code === "-14") return { kind: "failed", code: "forbidden", retryable: false };
-            if (code) return { kind: "failed", code: "unknown", retryable: false };
-            return {
-              kind: "sent",
-              platformId: `out-${randomUUID()}`,
-              degraded: [
-                "markdown_flattened",
-                ...(message.replyTo ? (["quote_dropped"] as const) : []),
-                ...(message.files?.length ? (["files_dropped"] as const) : []),
-              ],
-            };
+            if (message.text.trim()) {
+              const response = await api.sendText(base, token, to, message.text, contexts.get(to));
+              const code = api.rejected(response);
+              if (code === "-14") return { kind: "failed", code: "forbidden", retryable: false };
+              if (code) return { kind: "failed", code: "unknown", retryable: false };
+              degraded.add("markdown_flattened");
+              sentAny = true;
+            }
+            // Each file is its own WeChat message, after the text.
+            for (const file of message.files ?? []) {
+              const { size } = await stat(file.path);
+              if (size === 0 || size > MAX_FILE_BYTES) {
+                degraded.add("files_dropped");
+                continue;
+              }
+              const name = file.name ?? basename(file.path);
+              const item = await api.upload(
+                base,
+                token,
+                to,
+                { bytes: await readFile(file.path), name },
+                IMAGE_EXTENSIONS.has(extname(name).toLowerCase()),
+              );
+              const response = await api.sendItem(base, token, to, item, contexts.get(to));
+              const code = api.rejected(response);
+              if (code === "-14") return { kind: "failed", code: "forbidden", retryable: false };
+              if (code) {
+                degraded.add("files_dropped");
+                continue;
+              }
+              sentAny = true;
+            }
+            if (!sentAny)
+              return { kind: "failed", code: message.files?.length ? "too_large" : "unknown", retryable: false };
+            return { kind: "sent", platformId: `out-${randomUUID()}`, degraded: report() };
           } catch (error) {
             // iLink does not deduplicate: after a timeout the message may have arrived.
             if ((error as Error).name === "TimeoutError") return { kind: "uncertain" };
+            // Part of the message may be out already; do not let a retry send it twice.
+            if (sentAny) {
+              degraded.add("files_dropped");
+              return { kind: "sent", platformId: `out-${randomUUID()}`, degraded: report() };
+            }
             if (error instanceof WechatError) return { kind: "failed", code: "unknown", retryable: true };
             return { kind: "failed", code: "network", retryable: true };
           }
@@ -442,8 +669,10 @@ export function wechatChannel(options: WechatOptions = {}): Channel {
           await api.typing(base, token, chat.platformId, contexts.get(chat.platformId), on).catch(() => {});
         },
 
-        async download() {
-          throw new Error("receiving files from WeChat is not supported yet");
+        async download(attachment: InboundAttachment, toPath: string) {
+          const item = media.get(attachment.id);
+          if (!item) throw new Error("this file is no longer available; ask for it to be sent again");
+          await writeFile(toPath, await api.downloadMedia(item));
         },
 
         async listMembers() {
@@ -468,12 +697,26 @@ export function toInbound(message: WechatMessage): InboundMessage | undefined {
   if (!sender || !id) return undefined;
 
   const parts: string[] = [];
-  for (const item of message.item_list ?? []) {
+  const attachments: InboundAttachment[] = [];
+  for (const [i, item] of (message.item_list ?? []).entries()) {
     if (item.type === 1 && item.text_item?.text?.trim()) parts.push(item.text_item.text.trim());
     else if (item.type === 3 && item.voice_item?.text?.trim()) parts.push(item.voice_item.text.trim());
-    else if (item.type === 2) parts.push("[image]");
-    else if (item.type === 4) parts.push(`[file: ${item.file_item?.file_name ?? "file"}]`);
     else if (item.type === 5) parts.push("[video]");
+    else if (item.type === 2 && !item.image_item?.media) parts.push("[image]");
+    else if (item.image_item) {
+      attachments.push({
+        id: `${id}#${i}`,
+        name: attachments.length ? `image-${attachments.length + 1}.jpg` : "image.jpg",
+        mime: "image/jpeg",
+      });
+    } else if (item.file_item) {
+      const size = Number(item.file_item.len);
+      attachments.push({
+        id: `${id}#${i}`,
+        name: item.file_item.file_name?.trim() || "file",
+        ...(Number.isFinite(size) && size > 0 ? { size } : {}),
+      });
+    }
   }
   return {
     platformId: id,
@@ -481,7 +724,7 @@ export function toInbound(message: WechatMessage): InboundMessage | undefined {
     // iLink does not tell bots the sender's nickname.
     sender: { id: sender, name: "", isBot: false },
     text: parts.join("\n"),
-    attachments: [],
+    attachments,
     addressedToBot: true,
     sentAt: message.create_time_ms ?? Date.now(),
   };
