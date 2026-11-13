@@ -6,6 +6,7 @@
 // every connection state, then renders each page with headless Chrome. Look at every
 // image before shipping a console change.
 
+import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -57,9 +58,15 @@ try {
       "Research assistant for the reading club. Summarises long articles, keeps a running list of recommended books with short reviews, answers questions about previous discussions, and posts a weekly digest every Sunday evening.",
   });
   await admin("POST", "/v1/admin/agents", { name: "小助手", harness, role: "" });
+  // Onboarding states: never answered yet (idle, busy, disconnected) and answered long ago.
+  const idleAgent = await admin("POST", "/v1/admin/agents", { name: "Poppy", harness, role: "" });
+  const busyAgent = await admin("POST", "/v1/admin/agents", { name: "Scout", harness, role: "" });
+  const offAgent = await admin("POST", "/v1/admin/agents", { name: "Milo", harness, role: "" });
+  const doneAgent = await admin("POST", "/v1/admin/agents", { name: "Riley", harness, role: "" });
 
   // Seed chats and history straight into the database.
   const db = new DatabaseSync(join(home, "mingle.db"));
+  db.exec("PRAGMA busy_timeout = 5000");
   const now = Date.now();
   const insert = (sql, ...args) => db.prepare(sql).run(...args);
   const conn = (id, agent, platform, bot, state, detail, owner) =>
@@ -175,6 +182,42 @@ try {
     now,
   );
   msg("m06", "c3", "in", "Wilhelmina", "Could you summarise this week's article for the club?", "failed", 60_000);
+
+  conn("n5", idleAgent.id, "telegram", "@poppy_bot", "connected", null, "u1");
+  conn("n6", busyAgent.id, "telegram", "@scout_bot", "connected", null, "u1");
+  conn("n7", offAgent.id, "telegram", "@milo_bot", "error", "connection_lost", "u1");
+  conn("n8", doneAgent.id, "telegram", "@riley_bot", "connected", null, "u1");
+  insert(
+    "INSERT INTO chats (id, connection_id, platform_id, kind, name, created_at, updated_at) VALUES ('c4','n5','11','dm','Owner',?,?)",
+    now,
+    now,
+  );
+  insert(
+    "INSERT INTO chats (id, connection_id, platform_id, kind, name, created_at, updated_at) VALUES ('c5','n6','12','dm','Owner',?,?)",
+    now,
+    now,
+  );
+  insert(
+    "INSERT INTO chats (id, connection_id, platform_id, kind, name, created_at, updated_at) VALUES ('c6','n7','13','dm','Owner',?,?)",
+    now,
+    now,
+  );
+  insert(
+    "INSERT INTO chats (id, connection_id, platform_id, kind, name, created_at, updated_at) VALUES ('c7','n8','14','dm','Owner',?,?)",
+    now,
+    now,
+  );
+  msg("m07", "c4", "in", "Owner", "What should we eat before the hike?", "unanswered", 3_600_000);
+  msg("m08", "c5", "in", "Owner", "Summarise the route notes", "delivered", 60_000);
+  msg("m09", "c6", "in", "Owner", "Are you still there?", "unanswered", 3_600_000);
+  msg("m40", "c7", "out", null, "Yes, the ridge route is still open.", "sent", 3_600_000);
+  for (let i = 0; i < 31; i++) {
+    msg(`h${i}`, "c7", "in", "Owner", `Later message ${i}`, "unanswered", 60_000 - i * 1000);
+  }
+  insert("UPDATE agents SET status = 'idle' WHERE id = ?", idleAgent.id);
+  insert("UPDATE agents SET status = 'thinking', status_detail = 'Reading the route notes' WHERE id = ?", busyAgent.id);
+  insert("UPDATE agents SET status = 'idle' WHERE id = ?", offAgent.id);
+  insert("UPDATE agents SET status = 'idle' WHERE id = ?", doneAgent.id);
   db.close();
 
   const pages = [
@@ -190,7 +233,50 @@ try {
     ["connect-slack", `/a/${long.slug}/connect/slack`],
     ["connect-discord", `/a/${long.slug}/connect/discord`],
     ["connect-telegram", `/a/${alex.slug}/connect/telegram`],
+    ["onboard-idle", `/a/${idleAgent.slug}`],
+    ["onboard-busy", `/a/${busyAgent.slug}`],
+    ["onboard-offline", `/a/${offAgent.slug}`],
+    ["onboard-done", `/a/${doneAgent.slug}`],
   ];
+  // DOM assertions on the dumped page, per page name. zh = the zh-CN locale run.
+  const checks = {
+    // Alex answered long ago (m02/m04): no onboarding card.
+    agent: (dom, zh) => {
+      assert.ok(dom.includes("Saturday") || dom.includes("周六晴"), "agent activity did not render");
+      assert.ok(!dom.includes(zh ? "上手" : "Getting started"), "answered agent still shows onboarding");
+    },
+    // Wilhelmina's turn failed: failure copy, never the replying spinner text.
+    long: (dom, zh) => {
+      assert.ok(
+        dom.includes(zh ? "没有登录" : "is not signed in") || dom.includes(zh ? "没能回复" : "couldn't reply"),
+        "errored agent shows no failure copy",
+      );
+      assert.ok(!dom.includes(zh ? "正在回复" : "got it and is answering"), "errored agent shows replying");
+    },
+    "onboard-idle": (dom, zh) => {
+      assert.ok(dom.includes(zh ? "还没有收到" : "hasn't replied yet"), "idle unanswered agent missing quiet copy");
+      assert.ok(!dom.includes(zh ? "正在回复" : "got it and is answering"), "idle agent shows replying");
+      assert.ok(!dom.includes('class="spin'), "inactive agent shows a spinner");
+    },
+    "onboard-busy": (dom, zh) => {
+      assert.ok(dom.includes(zh ? "正在回复" : "got it and is answering"), "thinking agent missing replying");
+      assert.ok(dom.includes('class="spin'), "thinking agent missing spinner");
+    },
+    "onboard-offline": (dom, zh) => {
+      assert.ok(
+        dom.includes(zh ? "未连接" : "chat app is disconnected"),
+        "disconnected agent missing disconnected copy",
+      );
+      assert.ok(!dom.includes(zh ? "正在回复" : "got it and is answering"), "disconnected agent shows replying");
+      assert.ok(!dom.includes('class="spin'), "inactive agent shows a spinner");
+    },
+    // Answered long ago, then 31 newer inbound pushed the reply out of the activity window.
+    "onboard-done": (dom, zh) => {
+      assert.ok(dom.includes("Later message 30"), "completed agent activity did not render");
+      assert.ok(!dom.includes(zh ? "上手" : "Getting started"), "answered agent still shows onboarding");
+      assert.ok(!dom.includes(zh ? "正在回复" : "got it and is answering"), "answered agent shows replying");
+    },
+  };
   const jobs = [];
   for (const locale of LOCALES) {
     for (const width of WIDTHS) {
@@ -211,18 +297,24 @@ try {
               `--window-size=${width},1600`,
               "--virtual-time-budget=5000",
               `--screenshot=${file}`,
+              "--dump-dom",
               `${url}${path}#token=${adminToken}`,
             ],
             { timeout: 60_000 },
           );
+        const capture = () =>
+          shoot().catch((error) => {
+            // Chrome may finish rendering and hit its teardown watchdog.
+            if (existsSync(file) && typeof error.stdout === "string" && error.stdout.includes("</html>")) {
+              return { stdout: error.stdout };
+            }
+            throw error;
+          });
         jobs.push(() =>
           // Headless Chrome now and then hangs; give each shot a minute and one more try.
-          shoot()
-            .catch((error) => (existsSync(file) ? undefined : shoot().catch(() => Promise.reject(error))))
-            // Chrome sometimes trips its teardown watchdog after writing the file; the file is what counts.
-            .catch((error) => {
-              if (!existsSync(file)) throw error;
-            })
+          capture()
+            .catch(() => capture())
+            .then(({ stdout }) => checks[name]?.(stdout, locale === "zh-CN"))
             .finally(() => rmSync(profile, { recursive: true, force: true })),
         );
       }

@@ -69,6 +69,8 @@ export interface AgentView {
   statusDetail: string | null;
   /** With status "error": auth, quota, billing, model_unavailable, ... or null when unknown. */
   statusFailure: string | null;
+  /** Whether this agent has ever successfully sent a message. */
+  hasReplied: boolean;
   /** The harness's display name ("Claude Code"). */
   harnessName: string;
   home: string;

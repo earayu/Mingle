@@ -20,6 +20,8 @@ export interface Agent {
   statusDetail: string | null;
   /** With status "error": the failure class (auth, quota, ...), or null when it is not known. */
   statusFailure: string | null;
+  /** Whether this agent has ever successfully sent a message. */
+  hasReplied: boolean;
   createdAt: number;
 }
 
@@ -561,6 +563,7 @@ function toAgent(r: Row): Agent {
     status: String(r.status) as AgentStatus,
     statusDetail: str(r.status_detail),
     statusFailure: str(r.status_failure),
+    hasReplied: Number(r.has_replied) === 1,
     createdAt: Number(r.created_at),
   };
 }

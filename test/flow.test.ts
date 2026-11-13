@@ -207,8 +207,12 @@ describe("admin API (console)", () => {
       }
     });
     const { channel, admin, agentId } = current;
+    expect((await admin("GET", `/v1/admin/agents/${agentId}`)).json).toMatchObject({ hasReplied: false });
     channel.receive({ text: "weather on Saturday?" });
     await until(() => channel.sent.length === 1);
+    await until(() => current?.mingle.store.agent(agentId)?.hasReplied === true);
+    expect((await admin("GET", `/v1/admin/agents/${agentId}`)).json).toMatchObject({ hasReplied: true });
+    expect((await admin("GET", "/v1/admin/status")).json).toMatchObject({ agents: [{ hasReplied: true }] });
 
     const platforms = (await admin("GET", "/v1/admin/platforms")).json as { platform: string; onboarding: unknown }[];
     expect(platforms.map((p) => p.platform)).toEqual([
@@ -261,6 +265,39 @@ describe("admin API (console)", () => {
     expect((await admin("DELETE", "/v1/admin/connections/nnope")).status).toBe(404);
     const anonymous = await fetch(`${current.url}/v1/admin/status`);
     expect(anonymous.status).toBe(401);
+  });
+
+  it("keeps onboarding complete outside the recent activity window", async () => {
+    current = await rig(async () => {});
+    const { mingle, agentId, admin } = current;
+    const connection = mingle.store.connections(agentId)[0] as { id: string };
+    const chat = mingle.store.upsertChat({ connectionId: connection.id, platformId: "history", kind: "dm" });
+    const sent = mingle.store.insertOutbound({ chatId: chat.id, body: "First answer", replyTo: null });
+    mingle.store.setOutboundResult(sent.id, "sent", "old-answer");
+    for (let i = 0; i < 31; i++) {
+      mingle.store.insertInbound({
+        chatId: chat.id,
+        platformId: `new-${i}`,
+        senderId: "u1",
+        senderName: "Owner",
+        body: "Later message",
+        attachments: [],
+        replyTo: null,
+        triggers: true,
+        createdAt: Date.now() + i + 1,
+      });
+    }
+    const activity = (await admin("GET", `/v1/admin/agents/${agentId}/activity?limit=30`)).json as {
+      direction: string;
+    }[];
+    expect(activity).toHaveLength(30);
+    expect(activity.every((m) => m.direction === "in")).toBe(true);
+    expect((await admin("GET", `/v1/admin/agents/${agentId}`)).json).toMatchObject({ hasReplied: true });
+    await mingle.removeConnection(connection.id);
+    expect((await admin("GET", `/v1/admin/agents/${agentId}`)).json).toMatchObject({
+      hasReplied: true,
+      connections: [],
+    });
   });
 });
 
