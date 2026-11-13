@@ -6,6 +6,7 @@ import type {
   ReactionState,
   SendResult,
 } from "../channels/channel.ts";
+import type { Failure } from "../harness/harness.ts";
 
 /**
  * What a person sees between sending a message and getting the answer:
@@ -29,7 +30,18 @@ const TEXT = {
     answeredBelow: "已回复，见下方消息。",
     unanswered: "这条消息没有得到回复。",
     stopped: "已叫停。",
-    failed: "处理时出错了，稍后再试。",
+    failed: "处理时出错了，请稍后再发一次。",
+    nothingToStop: "现在没有在处理的事。",
+    failures: {
+      auth: (h: string) => `${h} 没有登录，暂时回复不了。请在运行 Mingle 的电脑上登录 ${h}，然后再发一次。`,
+      quota: (h: string, until?: string) =>
+        `${h} 的用量额度用完了，暂时回复不了${until ? `，预计 ${until} 恢复` : ""}。`,
+      billing: (h: string) => `${h} 的账户需要充值或付费，暂时回复不了。`,
+      model: () => "当前选的模型用不了。请在 Mingle 里换一个模型，然后再发一次。",
+      busy: (h: string) => `${h} 那边暂时繁忙，请过一会儿再发一次。`,
+      tooLarge: () => "这次的内容太长，处理不了。请精简后再发。",
+      notInstalled: (h: string) => `这台电脑上找不到 ${h}，暂时回复不了。`,
+    },
     steps: {
       command: "运行命令",
       read: "查看文件",
@@ -49,7 +61,19 @@ const TEXT = {
     answeredBelow: "Answered below.",
     unanswered: "This message did not get a reply.",
     stopped: "Stopped.",
-    failed: "Something went wrong. Try again in a moment.",
+    failed: "Something went wrong. Send it again in a moment.",
+    nothingToStop: "Nothing to stop.",
+    failures: {
+      auth: (h: string) =>
+        `${h} is not signed in, so I can't reply. Sign in to ${h} on the computer running Mingle, then send this again.`,
+      quota: (h: string, until?: string) =>
+        `${h} has used up its usage limit${until ? ` until ${until}` : ""}, so I can't reply right now.`,
+      billing: (h: string) => `${h} needs a payment or more credits before I can reply.`,
+      model: () => "The selected model can't be used. Pick another model in Mingle, then send this again.",
+      busy: (h: string) => `${h} is busy right now. Send this again in a little while.`,
+      tooLarge: () => "This is too long to handle. Shorten it and send again.",
+      notInstalled: (h: string) => `${h} is not installed on this computer, so I can't reply.`,
+    },
     steps: {
       command: "Running a command",
       read: "Reading files",
@@ -64,6 +88,67 @@ const TEXT = {
 } as const;
 
 type StepKind = keyof (typeof TEXT)["en"]["steps"];
+
+/** Why a reply failed, as settle() receives it. */
+export interface FailureNote {
+  readonly failure: Failure;
+  /** Display name of the agent's harness ("Claude Code"). */
+  readonly harness: string;
+  readonly resetsAt?: number;
+}
+
+export function langFor(platform: Platform): Lang {
+  return CHINESE.includes(platform) ? "zh" : "en";
+}
+
+/** "Stopped." / "Nothing to stop." in the chat's language. */
+export function stopNote(platform: Platform, stopped: boolean): string {
+  const t = TEXT[langFor(platform)];
+  return stopped ? t.stopped : t.nothingToStop;
+}
+
+/** What to tell the person when the agent could not answer: what happened, and what helps. */
+export function failureText(lang: Lang, why: FailureNote | undefined, now = Date.now()): string {
+  const t = TEXT[lang];
+  if (!why) return t.failed;
+  const h = why.harness;
+  const f = t.failures;
+  switch (why.failure) {
+    case "auth":
+      return f.auth(h);
+    case "quota":
+      return f.quota(h, why.resetsAt && why.resetsAt > now ? resetTime(lang, why.resetsAt, now) : undefined);
+    case "billing":
+      return f.billing(h);
+    case "model_unavailable":
+      return f.model();
+    case "rate_limited":
+    case "overloaded":
+    case "provider":
+      return f.busy(h);
+    case "input_too_large":
+      return f.tooLarge();
+    case "not_installed":
+      return f.notInstalled(h);
+    default:
+      return t.failed;
+  }
+}
+
+function resetTime(lang: Lang, at: number, now: number): string {
+  const locale = lang === "zh" ? "zh-CN" : "en";
+  const time = new Date(at);
+  const sameDay = new Date(now).toDateString() === time.toDateString();
+  return new Intl.DateTimeFormat(locale, {
+    ...(sameDay ? {} : { month: "short", day: "numeric" }),
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(time);
+}
+
+/** A note sent as its own message at most this often per chat, so a burst of failures is one note. */
+const NOTE_EVERY_MS = 60_000;
 
 /** A harness tool name in plain words. Names differ per harness (Bash, shell, exec_command…). */
 export function stepKind(tool: string): StepKind {
@@ -96,6 +181,7 @@ interface Entry {
 
 export class LiveReplies {
   private readonly entries = new Map<string, Entry>();
+  private readonly notedAt = new Map<string, number>();
   private readonly log: (line: string) => void;
   private readonly now: () => number;
 
@@ -116,7 +202,7 @@ export class LiveReplies {
   }): void {
     const { connection, chat } = input;
     void connection.react(chat, input.platformMessageId, "processing");
-    const lang: Lang = CHINESE.includes(input.platform) ? "zh" : "en";
+    const lang = langFor(input.platform);
     const entry: Entry = {
       agentId: input.agentId,
       chat,
@@ -185,8 +271,11 @@ export class LiveReplies {
     }
   }
 
-  /** The message is settled some other way. Closes its live reply with a short note. */
-  settle(messageId: string, outcome: "answered" | "unanswered" | "stopped" | "failed"): void {
+  /**
+   * The message is settled some other way. Closes its live reply with a short note.
+   * A failure is always told: where no live reply can carry it, as a message of its own.
+   */
+  settle(messageId: string, outcome: "answered" | "unanswered" | "stopped" | "failed", why?: FailureNote): void {
     const entry = this.entries.get(messageId);
     if (!entry || entry.closed) return;
     this.close(entry, messageId);
@@ -200,8 +289,24 @@ export class LiveReplies {
           ? t.unanswered
           : outcome === "stopped"
             ? t.stopped
-            : t.failed;
-    void entry.live.then((live) => live?.finish(`*${note}*`)).catch(() => {});
+            : failureText(entry.lang, why, this.now());
+    void entry.live
+      .then(async (live) => {
+        const result = live ? await live.finish(`*${note}*`).catch(() => undefined) : undefined;
+        // No live reply, or it could not be finished (QQ's stream window, a refused frame):
+        // a failure still reaches the person, as its own message.
+        if (result?.kind !== "sent" && outcome === "failed") await this.sendNote(entry, note);
+      })
+      .catch((error) => this.log(`could not tell about a failed reply: ${(error as Error).message}`));
+  }
+
+  private async sendNote(entry: Entry, note: string): Promise<void> {
+    const key = `${entry.agentId}\u0000${entry.chat.platformId}`;
+    const last = this.notedAt.get(key);
+    if (last !== undefined && this.now() - last < NOTE_EVERY_MS) return;
+    this.notedAt.set(key, this.now());
+    const result = await entry.connection.send({ chat: entry.chat, text: note, replyTo: entry.platformMessageId });
+    if (result.kind !== "sent") this.log(`failure note was not sent (${result.kind})`);
   }
 
   /** Open replies of an agent, e.g. to settle them all when its turn fails. */

@@ -79,13 +79,20 @@ export function AgentPage({
   const busy = agent.status === "thinking" || agent.status === "working";
   const connect = () => onNavigate({ kind: "connect", slug: agent.slug });
   const unanswered = (activity ?? []).filter((m) => m.direction === "in" && m.state === "unanswered");
+  const failed = (activity ?? []).filter((m) => m.direction === "in" && m.state === "failed");
   const troubled = agent.connections.filter((c) => c.state === "error" || c.state === "awaiting_approval");
   const replied = (activity ?? []).some((m) => m.direction === "out");
   const setupDone = agent.connections.length > 0 && replied;
 
-  const hasNeeds = agent.connections.length > 0 || troubled.length > 0 || unanswered.length > 0;
+  const hasNeeds = agent.connections.length > 0 || troubled.length > 0 || unanswered.length > 0 || failed.length > 0;
   const needsYou = hasNeeds ? (
-    <NeedsYou agent={agent} unanswered={unanswered.length} troubled={troubled} onConnect={connect} />
+    <NeedsYou
+      agent={agent}
+      unanswered={unanswered.length}
+      failed={failed.length}
+      troubled={troubled}
+      onConnect={connect}
+    />
   ) : null;
 
   return (
@@ -148,11 +155,7 @@ export function AgentPage({
               />
             ) : null}
             {notice ? <p className="rise -mb-3 text-small text-ink2">{notice}</p> : null}
-            {agent.status === "error" && agent.statusDetail ? (
-              <Problem title={t("agent.errorTitle")} tone="red">
-                <span className="selectable font-mono text-caption wrap-anywhere">{agent.statusDetail}</span>
-              </Problem>
-            ) : null}
+            {agent.status === "error" ? <AgentError agent={agent} /> : null}
 
             {tab === "settings" ? (
               <>
@@ -239,21 +242,50 @@ function GettingStarted({ agent, heard, onConnect }: { agent: AgentView; heard: 
           {connected ? <Waiting>{t("start.waiting")}</Waiting> : <Waiting>{t("start.waitingConnection")}</Waiting>}
         </Step>
         <Step n={4} state={heard ? "now" : "later"} title={t("start.reply")}>
-          <Waiting>{t("start.replying", { name: agent.name })}</Waiting>
+          {agent.status === "error" ? (
+            <p className="text-small text-red">{t("start.replyFailed", { name: agent.name })}</p>
+          ) : (
+            <Waiting>{t("start.replying", { name: agent.name })}</Waiting>
+          )}
         </Step>
       </Steps>
     </section>
   );
 }
 
+/** Failure classes the console explains; anything else shows the generic text. */
+const FAILURES = ["auth", "quota", "billing", "model_unavailable", "busy", "input_too_large", "not_installed"] as const;
+
+function failureKey(failure: string | null): (typeof FAILURES)[number] | "unknown" {
+  if (failure === "rate_limited" || failure === "overloaded" || failure === "provider") return "busy";
+  return (FAILURES as readonly string[]).includes(failure ?? "") ? (failure as (typeof FAILURES)[number]) : "unknown";
+}
+
+/** Why the agent stopped, in plain words and with the next step; the harness's own words underneath. */
+function AgentError({ agent }: { agent: AgentView }) {
+  const { t } = useI18n();
+  const key = failureKey(agent.statusFailure);
+  const vars = { harness: agent.harnessName, name: agent.name };
+  return (
+    <Problem title={t(`failure.${key}.title` as MessageKey, vars)} tone="red">
+      <p>{t(`failure.${key}.body` as MessageKey, vars)}</p>
+      {agent.statusDetail ? (
+        <p className="selectable mt-1 font-mono text-caption text-ink3 wrap-anywhere">{agent.statusDetail}</p>
+      ) : null}
+    </Problem>
+  );
+}
+
 function NeedsYou({
   agent,
   unanswered,
+  failed,
   troubled,
   onConnect,
 }: {
   agent: AgentView;
   unanswered: number;
+  failed: number;
   troubled: ConnectionView[];
   onConnect: () => void;
 }) {
@@ -268,6 +300,13 @@ function NeedsYou({
         {c.state === "error" ? connectionDetail(t, c) : t("connection.approvalHint")}
       </Problem>
     )),
+    ...(failed > 0
+      ? [
+          <Problem key="failed" tone="red" title={t("needs.failed", { count: String(failed) })}>
+            {t("needs.failedBody", { name: agent.name })}
+          </Problem>,
+        ]
+      : []),
     ...(unanswered > 0
       ? [
           <Problem key="unanswered" title={t("needs.unanswered", { count: String(unanswered) })}>
@@ -648,6 +687,12 @@ function ActivityList({ items }: { items: Activity[] }) {
                 <p className="flex items-center gap-1.5 text-caption text-amber">
                   <StatusDot state="awaiting_approval" />
                   {t("agent.unanswered")}
+                </p>
+              ) : null}
+              {m.direction === "in" && m.state === "failed" ? (
+                <p className="flex items-center gap-1.5 text-caption text-red">
+                  <StatusDot state="error" />
+                  {t("agent.failed")}
                 </p>
               ) : null}
             </div>

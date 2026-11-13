@@ -6,6 +6,7 @@ import {
   type AvailableInstallation,
   defaultRuntimes,
   type Runtime,
+  RuntimeFailureError,
   runtimeBrandIcon,
   type Session,
 } from "@botiverse/oar";
@@ -44,9 +45,55 @@ export interface OpenOptions {
   readonly env: Readonly<Record<string, string>>;
 }
 
+/**
+ * Why a turn (or opening a session) failed, in classes a person can act on. OAR's
+ * failure classes, plus `not_installed` when the harness is missing altogether.
+ */
+export type Failure =
+  | "auth"
+  | "quota"
+  | "rate_limited"
+  | "billing"
+  | "model_unavailable"
+  | "input_too_large"
+  | "invalid_request"
+  | "overloaded"
+  | "provider"
+  | "runtime_exited"
+  | "limit_reached"
+  | "output_schema"
+  | "not_installed"
+  | "unknown";
+
+/** A failure to open a session or deliver to it, with its class. */
+export class HarnessError extends Error {
+  readonly failure: Failure;
+  constructor(failure: Failure, message: string) {
+    super(message);
+    this.name = "HarnessError";
+    this.failure = failure;
+  }
+}
+
+/** The class of any error thrown by the harness layer; `unknown` when it does not say. */
+export function failureOf(error: unknown): Failure {
+  if (error instanceof HarnessError) return error.failure;
+  if (error instanceof RuntimeFailureError) return error.failure;
+  return "unknown";
+}
+
+export interface TurnEnd {
+  readonly kind: string;
+  readonly reason?: string;
+  /** Set when `kind` is `failed`. */
+  readonly failure?: Failure;
+  /** For `quota`: when the limit resets (epoch ms), where the harness reports it. */
+  readonly resetsAt?: number;
+}
+
 export interface HarnessEvents {
   onTurnStarted(): void;
-  onTurnEnded(outcome: { readonly kind: string; readonly reason?: string }): void;
+  onTurnEnded(outcome: TurnEnd): void;
   /** Something visible happened inside a turn: reasoning, text, or a tool call. */
   onActivity(kind: "thinking" | "tool", detail?: string): void;
 }
@@ -64,6 +111,8 @@ export interface HarnessSession {
 
 export interface Harness {
   available(): Promise<HarnessInfo[]>;
+  /** The harness's display name ("Claude Code"), for messages to people. */
+  name?(id: string): string;
   /** What can go in `OpenOptions.model`. Asks the harness, so it can take seconds. */
   models?(id: string): Promise<ModelList>;
   open(options: OpenOptions, events: HarnessEvents): Promise<HarnessSession>;
@@ -81,7 +130,7 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
   async function installation(runtime: Runtime): Promise<AvailableInstallation> {
     const found = await runtime.installation?.();
     if (found?.kind !== "available") {
-      throw new Error(`${runtime.id} is not installed on this computer`);
+      throw new HarnessError("not_installed", `${runtime.id} is not installed on this computer`);
     }
     return found;
   }
@@ -111,6 +160,14 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
         });
       }
       return out;
+    },
+
+    name(id) {
+      try {
+        return source.require(id).brand?.name ?? id;
+      } catch {
+        return id;
+      }
     },
 
     async models(id) {
@@ -161,10 +218,14 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
             events.onTurnStarted();
             break;
           case "turn_ended": {
-            const outcome = event.outcome as { kind: string; reason?: string };
-            events.onTurnEnded(
-              outcome.reason ? { kind: outcome.kind, reason: outcome.reason } : { kind: outcome.kind },
-            );
+            const outcome = event.outcome as { kind: string; reason?: string; failure?: Failure; resetsAt?: string };
+            const resetsAt = outcome.resetsAt ? Date.parse(outcome.resetsAt) : Number.NaN;
+            events.onTurnEnded({
+              kind: outcome.kind,
+              ...(outcome.reason ? { reason: outcome.reason } : {}),
+              ...(outcome.kind === "failed" ? { failure: outcome.failure ?? "unknown" } : {}),
+              ...(resetsAt > Date.now() ? { resetsAt } : {}),
+            });
             break;
           }
           case "tool_call_started":
