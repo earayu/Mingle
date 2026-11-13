@@ -93,8 +93,6 @@ export function AgentPage({
   const unanswered = (activity ?? []).filter((m) => m.direction === "in" && m.state === "unanswered");
   const failed = (activity ?? []).filter((m) => m.direction === "in" && m.state === "failed");
   const troubled = agent.connections.filter((c) => c.state === "error" || c.state === "awaiting_approval");
-  const replied = (activity ?? []).some((m) => m.direction === "out");
-  const setupDone = agent.connections.length > 0 && replied;
 
   const hasNeeds = agent.connections.length > 0 || troubled.length > 0 || unanswered.length > 0 || failed.length > 0;
   const needsYou = hasNeeds ? (
@@ -202,8 +200,12 @@ export function AgentPage({
               </>
             ) : (
               <>
-                {activity !== null && !setupDone ? (
-                  <GettingStarted agent={agent} heard={(activity ?? []).length > 0} onConnect={connect} />
+                {!agent.hasReplied ? (
+                  <GettingStarted
+                    agent={agent}
+                    heard={(activity ?? []).some((m) => m.direction === "in")}
+                    onConnect={connect}
+                  />
                 ) : null}
                 {agent.connections.some((c) => c.state === "connected") ? <KeepOnline /> : null}
                 {/* Narrow windows have no right panel: what needs the person comes first. */}
@@ -258,8 +260,12 @@ function GettingStarted({ agent, heard, onConnect }: { agent: AgentView; heard: 
         <Step n={4} state={heard ? "now" : "later"} title={t("start.reply")}>
           {agent.status === "error" ? (
             <p className="text-small text-red">{t("start.replyFailed", { name: agent.name })}</p>
-          ) : (
+          ) : !connected ? (
+            <p className="text-small text-ink2">{t("start.replyDisconnected")}</p>
+          ) : agent.status === "thinking" || agent.status === "working" ? (
             <Waiting>{t("start.replying", { name: agent.name })}</Waiting>
+          ) : (
+            <p className="text-small text-ink2">{t("start.replyIdle", { name: agent.name })}</p>
           )}
         </Step>
       </Steps>

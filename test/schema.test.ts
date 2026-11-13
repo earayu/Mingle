@@ -1,8 +1,14 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
+import { Store } from "../src/store/store.ts";
 
 const schema = readFileSync(new URL("../src/store/migrations/001_init.sql", import.meta.url), "utf8");
+const migrations = ["002_owner.sql", "003_failure.sql", "004_onboarding.sql"].map((f) =>
+  readFileSync(new URL(`../src/store/migrations/${f}`, import.meta.url), "utf8"),
+);
 
 function open(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -46,5 +52,126 @@ describe("initial schema", () => {
     db.exec("DELETE FROM agents");
     expect(db.prepare("SELECT count(*) AS n FROM messages").get()?.n).toBe(0);
     expect(search(db, "ridge")).toEqual([]);
+  });
+});
+
+describe("onboarding completion", () => {
+  const migrate = (db: DatabaseSync) => {
+    for (const sql of migrations) db.exec(sql);
+  };
+  const hasReplied = (db: DatabaseSync, id: string) =>
+    db.prepare("SELECT has_replied FROM agents WHERE id = ?").get(id)?.has_replied === 1;
+
+  it("backfills the flag from a sent message on upgrade, however far back", () => {
+    const db = open();
+    try {
+      db.exec(`
+        INSERT INTO agents (id, slug, name, harness, created_at, updated_at) VALUES ('a_2', 'bea', 'Bea', 'claude', 1, 1);
+        INSERT INTO connections (id, agent_id, platform, state, created_at, updated_at) VALUES ('n_2', 'a_2', 'telegram', 'connected', 1, 1);
+        INSERT INTO chats (id, connection_id, platform_id, kind, created_at, updated_at) VALUES ('c9', 'n_2', '55', 'dm', 1, 1);
+        INSERT INTO messages (id, chat_id, direction, platform_id, body, state, created_at) VALUES ('m10', 'c1', 'out', 'o1', 'answer', 'sent', 0);
+        INSERT INTO messages (id, chat_id, direction, body, state, created_at) VALUES ('m20', 'c9', 'out', 'x', 'failed', 0);
+        INSERT INTO messages (id, chat_id, direction, body, state, created_at) VALUES ('m21', 'c9', 'out', 'y', 'pending', 0);
+        INSERT INTO messages (id, chat_id, direction, body, state, created_at) VALUES ('m22', 'c9', 'out', 'z', 'uncertain', 0);
+      `);
+      for (let i = 0; i < 31; i++) {
+        db.prepare(
+          "INSERT INTO messages (id, chat_id, direction, platform_id, body, state, created_at) VALUES (?, 'c1', 'in', ?, 'later', 'received', ?)",
+        ).run(`n${i}`, `np${i}`, i + 1);
+      }
+      migrate(db);
+      expect(hasReplied(db, "a_1")).toBe(true);
+      expect(hasReplied(db, "a_2")).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("sets the flag on a newly sent message and never clears it", () => {
+    const store = new Store(":memory:");
+    try {
+      const a1 = store.createAgent({ name: "Alex", slug: "alex", harness: "scripted" });
+      const a2 = store.createAgent({ name: "Bea", slug: "bea", harness: "scripted" });
+      const c1 = store.upsertChat({
+        connectionId: store.createConnection({ agentId: a1.id, platform: "telegram", secretRef: "s1" }).id,
+        platformId: "1",
+        kind: "dm",
+      });
+      const c2 = store.upsertChat({
+        connectionId: store.createConnection({ agentId: a2.id, platform: "telegram", secretRef: "s2" }).id,
+        platformId: "2",
+        kind: "dm",
+      });
+
+      const out = store.insertOutbound({ chatId: c1.id, body: "answer", replyTo: null });
+      expect(store.agent(a1.id)?.hasReplied).toBe(false);
+      store.setOutboundResult(out.id, "failed", null);
+      expect(store.agent(a1.id)?.hasReplied).toBe(false);
+      store.setOutboundResult(out.id, "uncertain", null);
+      expect(store.agent(a1.id)?.hasReplied).toBe(false);
+
+      // An inbound marked replied does not complete onboarding; only a sent outbound does.
+      const inbound = store.insertInbound({
+        chatId: c1.id,
+        platformId: "p1",
+        senderId: "u1",
+        senderName: "Owner",
+        body: "hi",
+        attachments: [],
+        replyTo: null,
+        triggers: true,
+        createdAt: Date.now(),
+      });
+      store.setInboundState([inbound?.id as string], "replied");
+      expect(store.agent(a1.id)?.hasReplied).toBe(false);
+
+      store.setOutboundResult(out.id, "sent", "tg-1");
+      expect(store.agent(a1.id)?.hasReplied).toBe(true);
+      expect(store.agent(a2.id)?.hasReplied).toBe(false);
+
+      // A direct out/sent insert hits the INSERT trigger for the other agent.
+      store.db.exec(
+        `INSERT INTO messages (id, chat_id, direction, body, state, created_at) VALUES ('mx', '${c2.id}', 'out', 'answer', 'sent', 0)`,
+      );
+      expect(store.agent(a2.id)?.hasReplied).toBe(true);
+
+      // Removing the connection (and its history) keeps the milestone; so do later failures.
+      store.deleteConnection(store.connections(a1.id)[0]?.id as string);
+      expect(store.agent(a1.id)?.hasReplied).toBe(true);
+      const again = store.insertOutbound({ chatId: c2.id, body: "late", replyTo: null });
+      store.setOutboundResult(again.id, "failed", null);
+      store.setAgentStatus(a2.id, "error", "x", "auth");
+      expect(store.agent(a2.id)?.hasReplied).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("persists the flag across restarts and connection removal", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mingle-schema-"));
+    const path = join(dir, "mingle.db");
+    try {
+      let store = new Store(path);
+      const agent = store.createAgent({ name: "Alex", slug: "alex", harness: "scripted" });
+      const connection = store.createConnection({ agentId: agent.id, platform: "telegram", secretRef: "s" });
+      const chat = store.upsertChat({ connectionId: connection.id, platformId: "1", kind: "dm" });
+      const out = store.insertOutbound({ chatId: chat.id, body: "answer", replyTo: null });
+      store.setOutboundResult(out.id, "sent", "tg-1");
+      store.close();
+
+      store = new Store(path);
+      expect(store.agent(agent.id)?.hasReplied).toBe(true);
+      store.deleteConnection(connection.id);
+      store.close();
+
+      store = new Store(path);
+      try {
+        expect(store.agent(agent.id)?.hasReplied).toBe(true);
+      } finally {
+        store.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
