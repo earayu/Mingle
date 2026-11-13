@@ -75,7 +75,16 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   app.get("/v1/agent/manual", (c) => {
     const agent = c.get("agent");
-    return c.text(renderManual(agent.name, readRole(mingle.homeDir(agent))));
+    // The same guide the session opened with, so the variable names match what it can read.
+    const names = mingle.options.harness.acceptsEnv?.(agent.harness) === false ? [] : store.envNames(agent.id);
+    return c.text(
+      renderManual(
+        agent.name,
+        readRole(mingle.homeDir(agent)),
+        process.platform,
+        names.map((v) => v.name),
+      ),
+    );
   });
 
   app.post("/v1/agent/messages/reply", async (c) => {
@@ -432,6 +441,23 @@ export function createApi(mingle: Mingle): Hono<Env> {
   app.put("/v1/admin/agents/:id/role", async (c) => {
     const { role } = await c.req.json<{ role: string }>();
     await mingle.setRole(c.req.param("id"), role ?? "");
+    return c.json({ ok: true });
+  });
+
+  /**
+   * The agent's environment variables (docs/spec.md 4.4). Write-only: the list has names and
+   * whether a value is stored, never a value; PUT takes a value and returns none.
+   */
+  app.get("/v1/admin/agents/:id/env", async (c) => c.json(await mingle.envList(c.req.param("id"))));
+
+  app.put("/v1/admin/agents/:id/env/:name", async (c) => {
+    const body = await c.req.json<{ value?: unknown } | null>().catch(() => null);
+    await mingle.setEnv(c.req.param("id"), c.req.param("name"), body?.value);
+    return c.json({ ok: true });
+  });
+
+  app.delete("/v1/admin/agents/:id/env/:name", async (c) => {
+    await mingle.deleteEnv(c.req.param("id"), c.req.param("name"));
     return c.json({ ok: true });
   });
 

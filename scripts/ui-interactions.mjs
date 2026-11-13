@@ -29,6 +29,8 @@ const LOCALES = {
     retryMsg: "Retry",
     ignore: "Ignore",
     ignored: "Ignored",
+    envTitle: "Environment variables",
+    envAdd: "Add",
   },
   "zh-CN": {
     storage: "zh-CN",
@@ -46,6 +48,8 @@ const LOCALES = {
     retryMsg: "重试",
     ignore: "忽略",
     ignored: "已忽略",
+    envTitle: "环境变量",
+    envAdd: "添加",
   },
 };
 
@@ -106,7 +110,7 @@ const INSTALL_MOCK = String.raw`(() => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function reviewInteractions({ url, token, slug, singleSlug, chrome, out }) {
+export async function reviewInteractions({ url, token, slug, singleSlug, envSlug, envSecret, chrome, out }) {
   const profile = mkdtempSync(join(tmpdir(), "mingle-cdp-"));
   const child = spawn(
     chrome,
@@ -477,6 +481,88 @@ export async function reviewInteractions({ url, token, slug, singleSlug, chrome,
       await call(() => document.activeElement?.blur?.());
     };
 
+    // --- environment variables: list, help, add with a normalized name, a refused name ---
+    const envSection = (title) =>
+      Boolean(
+        [...document.querySelectorAll("section h2")].find((h) => h.textContent.trim() === title)?.closest("section"),
+      );
+    const envCenter = (title, selector, text) => {
+      const section =
+        [...document.querySelectorAll("section h2")].find((h) => h.textContent.trim() === title)?.closest("section") ??
+        null;
+      const el = [...(section?.querySelectorAll(selector) ?? [])].find(
+        (e) => text === undefined || e.textContent.trim() === text,
+      );
+      if (!el) return null;
+      el.scrollIntoView({ block: "center" });
+      const r = el.getBoundingClientRect();
+      return r.width && r.height ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+    };
+    const hover = async (found) => {
+      if (!found) throw new Error("hover target not found");
+      await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: found.x, y: found.y });
+    };
+    const envScenario = async (localeName, labels, width) => {
+      const tag = `env ${localeName} ${width}`;
+      await goto(`/a/${envSlug}`, labels);
+      await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.settings));
+      await until(
+        "env rows",
+        (title) => {
+          const h = [...document.querySelectorAll("section h2")].find((x) => x.textContent.trim() === title);
+          return h?.closest("section")?.textContent.includes("DAILY_WEBHOOK_URL");
+        },
+        labels.envTitle,
+      );
+      await call((title) => {
+        const h = [...document.querySelectorAll("section h2")].find((x) => x.textContent.trim() === title);
+        h?.scrollIntoView({ block: "start" });
+      }, labels.envTitle);
+      assert(await call(pageFits), `${tag}: page overflows horizontally`);
+      assert(!(await call((v) => document.body.innerHTML.includes(v), envSecret)), `${tag}: a value is in the page`);
+      await shot(`${localeName}-${width}-env-list`);
+
+      // The "?" explains on hover, inside the window.
+      await hover(await call(envCenter, labels.envTitle, "h2 button"));
+      const tip = await until("help tooltip", () => {
+        const el = document.querySelector('[role="tooltip"]');
+        const r = el?.getBoundingClientRect();
+        return r?.width ? { left: r.left, right: r.right, vw: innerWidth } : null;
+      });
+      assert(tip.left >= 0 && tip.right <= tip.vw, `${tag}: tooltip off screen ${JSON.stringify(tip)}`);
+      await shot(`${localeName}-${width}-env-help`);
+      await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 2, y: 2 });
+      await until("tooltip closed", () => !document.querySelector('[role="tooltip"]'));
+
+      // Add: the typed name becomes a variable name.
+      await clickEl(await call(envCenter, labels.envTitle, "button", labels.envAdd));
+      await until("env form", () => document.activeElement?.tagName === "INPUT");
+      await send("Input.insertText", { text: "daily report-url" });
+      const typed = await until("normalized name", () => document.activeElement?.value === "DAILY_REPORT_URL");
+      assert(typed, `${tag}: name not normalized`);
+      await key("Tab", "Tab", 9);
+      await send("Input.insertText", { text: "https://example.test/hook" });
+      assert(await call(pageFits), `${tag}: form overflows horizontally`);
+      await shot(`${localeName}-${width}-env-form`);
+
+      // A reserved name is refused while typing, before anything is sent.
+      await call(() => {
+        const input = document.querySelector('form input[autocomplete="off"]');
+        input?.focus();
+        input?.select();
+      });
+      await send("Input.insertText", { text: "MINGLE_X" });
+      await until("reserved name error", () => !!document.querySelector('form [role="alert"]'));
+      assert(
+        await call(() => document.querySelector('form button[type="submit"]')?.disabled === true),
+        `${tag}: save enabled for a reserved name`,
+      );
+      await shot(`${localeName}-${width}-env-error`);
+      await key("Escape", "Escape", 27);
+      await until("form closed", () => !document.querySelector("form"));
+      assert(await call(envSection, labels.envTitle), `${tag}: section lost`);
+    };
+
     let passed = 0;
     for (const [localeName, labels] of Object.entries(LOCALES)) {
       for (const width of [1440, 560]) {
@@ -588,6 +674,7 @@ export async function reviewInteractions({ url, token, slug, singleSlug, chrome,
           (await call((more) => connTriggers(more).length, labels.more)) === 1,
           "single connection lost after keep",
         );
+        if (envSlug) await envScenario(localeName, labels, width);
         passed++;
         console.log(`interactions ${localeName} ${width}: passed`);
       }

@@ -25,6 +25,12 @@ export interface Agent {
   createdAt: number;
 }
 
+/** An agent's environment variable as stored: its name only. */
+export interface EnvName {
+  name: string;
+  updatedAt: number;
+}
+
 export interface Connection {
   id: string;
   agentId: string;
@@ -186,6 +192,27 @@ export class Store {
 
   deleteAgent(id: string): void {
     this.db.prepare("DELETE FROM agents WHERE id = ?").run(id);
+  }
+
+  // --------------------------------------------------------------- agent env
+
+  /** The names of an agent's environment variables, by name. Values are in the secret store. */
+  envNames(agentId: string): EnvName[] {
+    return (
+      this.db.prepare("SELECT name, updated_at FROM agent_env WHERE agent_id = ? ORDER BY name").all(agentId) as Row[]
+    ).map((r) => ({ name: String(r.name), updatedAt: Number(r.updated_at) }));
+  }
+
+  putEnvName(agentId: string, name: string): void {
+    this.db
+      .prepare(
+        "INSERT INTO agent_env (agent_id, name, updated_at) VALUES (?, ?, ?) ON CONFLICT (agent_id, name) DO UPDATE SET updated_at = excluded.updated_at",
+      )
+      .run(agentId, name, this.now());
+  }
+
+  deleteEnvName(agentId: string, name: string): boolean {
+    return this.db.prepare("DELETE FROM agent_env WHERE agent_id = ? AND name = ?").run(agentId, name).changes > 0;
   }
 
   // ------------------------------------------------------------- connections

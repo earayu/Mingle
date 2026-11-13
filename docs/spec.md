@@ -72,6 +72,7 @@ erDiagram
   CHAT ||--o{ MESSAGE : ""
   AGENT ||--o{ TASK : ""
   AGENT ||--o{ REMINDER : ""
+  AGENT ||--o{ ENV_VAR : "环境变量"
   AGENT ||--|| SESSION : "当前 harness 会话"
 ```
 
@@ -83,6 +84,7 @@ erDiagram
 | **Message（消息）** | 收到和发出的每条消息，带来源和平台消息 ID。 |
 | **Task（任务）** | Agent 正在跟踪的事项，记录来源聊天，用于完成后回报。 |
 | **Reminder（提醒）** | Agent 给自己设的定时唤醒，一次性或周期性。 |
+| **Env var（环境变量）** | owner 给某个 Agent 设的变量，例如日报 webhook 地址、API key。数据库只存名字，值只存在系统的凭据存储里，写入后不能再读出。见 4.9。 |
 | **Session（harness 会话）** | OAR 会话 ID。内部对象，可恢复、可压缩、可替换，用户不可见。 |
 
 **一个 Agent 在每个 IM 上是一个独立的机器人。** 这样它在群里有自己的名字和头像，扫码创建的流程也天然是"一次扫码一个机器人"。不做"一个机器人背后路由多个 Agent"。
@@ -160,6 +162,8 @@ Raft 的做法更重。从它的源码和 agent 提示词看：忙碌时只给 a
 2. `mingle` CLI 的操作指南：它怎么在 IM 里行动。源文件是 [`src/cli/manual.md`](../src/cli/manual.md)，`mingle manual` 打印的也是它，不会不一致。
 3. 提示它先读 `MEMORY.md`。
 
+操作指南末尾列出 owner 给它设的环境变量的名字（"Environment variables set for you: …"），从不写值；harness 收不到环境变量时不列（见 4.9）。
+
 这样主目录里不需要再放 `AGENTS.md` 之类的指令文件。每次打开会话都要重新提供这段内容，否则 harness 压缩上下文后会丢掉它。操作指南用英文写，Agent 按对方使用的语言回复。
 
 **接入前检查兼容性。** 安装了 harness 不代表它具备 Mingle 所需能力。发现时检查 OAR 声明是否支持追加角色／操作指南和传递会话环境；不满足的仍显示在列表中，但不可选择，并说明下一步。OAR 0.97.0 的声明没有覆盖 OpenCode 的版本差异，因此当前只允许已识别的 OpenCode 1.x，2.x 和无法识别的版本暂不可用。创建和修改大脑的 API 同样检查，不能靠绕过界面启用。
@@ -183,11 +187,23 @@ Raft 的做法更重。从它的源码和 agent 提示词看：忙碌时只给 a
 
 - **谁能使唤 Agent**：所在群里的所有人和所有私聊对象。私聊白名单放在后续版本。
 - **owner**：接入一个机器人后，第一个给它发私聊的人成为它在该 IM 上的 owner（已实现）。owner 可以用 `/stop` 中止当前工作，在冲突时拥有最终决定权，消息头里带 `owner` 标记。`/stop` 是 IM 里唯一的命令。
-- **Agent 能做什么**：自主执行，不逐次审批，因为它需要无人值守地工作。这也是 OAR 的默认行为：它关闭了各 harness 的交互式审批和沙箱。也就是说 Agent 能做的事等同于用户本人在终端里能做的事，控制台在创建 Agent 时明确提示。受限模式和把审批转发到 owner 私聊放在后续版本。
+- **Agent 能做什么**：自主执行，不逐次审批，因为它需要无人值守地工作。这也是 OAR 的默认行为：它关闭了各 harness 的交互式审批和沙箱。也就是说 Agent 能做的事等同于用户本人在终端里能做的事，控制台在创建 Agent 时明确提示。它还能读到 owner 给它设的环境变量（4.9），因此也可能在回复里说出这些值。受限模式和把审批转发到 owner 私聊放在后续版本。
 
 ### 4.8 状态
 
 控制台显示：空闲、思考中、工作中、离线、出错，以及当前任务、所在的群、最近活动。电脑休眠或关机时 Agent 离线，这一点在界面上如实展示。上手完成状态保存在 Agent 的 has_replied 标记中：首次成功发出消息后永久完成，升级时从已有成功发送记录回填，不受最近活动条数、重启或移除连接影响；未成功回复时，只有聊天软件已连接且 Agent 正在思考或工作才显示"正在回复"。
+
+### 4.9 环境变量
+
+owner 想让 Agent 用 webhook 地址、API key 这类密钥（"每天早上把日报发到这个 webhook"）时，不要写进 `ROLE.md`，而是在 Agent 的"设置 → 环境变量"里给它设变量。变量按 Agent 区分；全局变量暂不提供，需要时可以继续用 shell 环境（见 8.3）。
+
+- **存储**：值存入系统的凭据存储（9.2），键为 `env:<agent_id>:<名字>`，值以 JSON 字符串存放，多行内容（PEM 私钥）也能完整保存。SQLite 的 `agent_env` 只存名字和更新时间。删除 Agent 时一起删除。
+- **名字**：限定为 `^[A-Z_][A-Z0-9_]*$`，最长 128 个字符。`MINGLE_*` 是 Mingle 自己的，返回 `env_name_reserved`；harness 和 shell 依赖的系统变量（`PATH`、`HOME`、`SHELL`、`LANG`、`TMPDIR`、`NODE_OPTIONS`、`LC_*`、`LD_*`、`DYLD_*`，以及 Windows 的 `SYSTEMROOT`、`USERPROFILE` 等）返回 `env_name_system`；格式不对返回 `env_name_invalid`。值不能为空（`env_value_required`），最大 32 KB（`env_value_too_large`）。
+- **API**：`GET /v1/admin/agents/:id/env` 返回 `[{ name, updatedAt, missing }]`，`missing` 表示凭据存储里已经找不到这个值（例如用户在"钥匙串访问"里删掉了，或数据目录被拷到另一台电脑）；从不返回值。`PUT /v1/admin/agents/:id/env/:name`，参数 `{ value }`，新增或替换，只写不读。`DELETE /v1/admin/agents/:id/env/:name` 删除，不存在时返回 `env_not_found`。凭据存储写入失败时返回 `env_save_failed`，不带原始错误，因为原始错误里可能有值。
+- **运行时**：打开会话时从凭据存储读出变量，并进 harness 的 `env`，`MINGLE_*` 始终以 Mingle 的为准。值找不到的变量跳过，不阻断会话。改了变量后，和改角色、大脑一样**从下一条消息起生效**：Agent 空闲时立即用 `resume` 重开 harness 进程（OAR 的 `env` 作用于会话启动的进程，`resume` 会启动新进程，所以新值生效，对话不丢）；Agent 正在工作时不打断，本轮用旧值做完，结束后再重开。
+- **不接受环境变量的 harness**（目前是 Cursor，它的工具在 Mingle 进程里运行）：用户的变量不传，名字也不进指南，**值绝不写进提示词**，否则会进入 transcript 和模型厂商那边。控制台在环境变量一节标明"Cursor 读不到这些变量"；变量保留，换回其他 harness 后生效。
+- **不泄露**：API 响应、日志、活动流和错误信息里都没有值。OAR 也会在自己的记录和错误里遮掉看起来像凭据的变量，但模型仍可能在回复里说出它们，所以控制台提示只放愿意交给 Agent 的密钥。
+- **不做**：读取已保存的值、改名（删掉后新增）、`.env` 文件导入。
 
 ## 5. `mingle` CLI：Agent 的行动接口
 
@@ -453,12 +469,13 @@ flowchart TD
 | `messages` | 所属聊天、方向、发送者、内容、附件引用、平台消息 ID、时间、处理状态 |
 | `tasks` | 所属 Agent、标题、状态、来源聊天 |
 | `reminders` | 所属 Agent、内容、触发规则、下次触发时间 |
+| `agent_env` | 所属 Agent、变量名、更新时间。值不在这里，在凭据存储里（4.9） |
 
 `messages` 上建 FTS5 全文索引供 `mingle message search` 使用，分词器用 `trigram`，中文和英文都能搜（已实测）。三个字符以下的关键词退到 `LIKE`。
 
 ### 8.3 密钥与隐私
 
-- IM 凭据存入系统的凭据存储（见 9.2），数据库只存引用。API 响应和日志不回传任何密钥。
+- IM 凭据和 Agent 的环境变量值存入系统的凭据存储（见 9.2），数据库只存引用或名字。API 响应和日志不回传任何密钥。
 - harness 的登录态由 harness 自己管理，Mingle 不接触。想用 API Key（包括其他兼容服务）的人在 harness 里自己配：shell 环境变量或 harness 的配置文件。Mingle 不保存模型服务的 Key，也不做协议转换（MING-11 的结论：接通容易，但第三方兼容接口质量不一，逐家适配和验证的成本与"完成度优先"不符）。Mingle 只负责两件事：桌面应用读到 shell 里配的变量（见 9.1），以及"没有登录"的提示里说明可以改用 API Key，附官方文档链接。
 - **跨群记忆不隔离。** Agent 在私聊里得知的内容可能在群里被说出来。这是已接受的取舍，换来的是 4.1 的简单模型。`messages` 仍记录来源，将来需要隔离时有据可依。控制台在创建 Agent 时提示这一点。
 - 使用个人 harness 订阅为群内其他人提供服务是否符合各厂商条款，本版不处理。
@@ -612,6 +629,7 @@ docs/             文档
 | 控制台改版（参照 Pinky） | 完成（2026-11-13）：新的视觉和引导，见 `DESIGN.md`。首次打开是欢迎页和三步新建流程；harness 显示本机已装的、带官方图标，模型从 harness 实时读出来选（OAR `listModels`，结果缓存 5 分钟），不再手填；创建后直接进入连接聊天软件；Agent 页分"动态"和"设置"，未回复过消息时有"上手"四步卡片，右侧"需要你处理"汇总出错的连接、等待审核和没回复的消息；harness 和模型可随时更改（`PATCH /v1/admin/agents/:id`，换 harness 时开新会话）。桌面应用隐藏标题栏，红绿灯在侧栏品牌行，侧栏用窗口毛玻璃 |
 | 桌面应用端到端测试 | `desktop/automation_e2e.go`：带 `e2e` 标签构建的应用可由 `mygo-automation` 驱动。本轮用它在真实窗口里走完：欢迎 → 新建（模板、harness、模型）→ 选平台 → 飞书出码 → 返回 → 改模型 → 错误 token 提示 → 删除回到欢迎页，并修了途中发现的问题 |
 | 全部 OAR harness | 完成（2026-11-13）：OAR 的 12 个 harness 都列出，已装的可直接选。设置里有完整列表：没装的可以一键安装（运行官方安装命令，先给人看要跑什么），没登录的可以用 harness 自己的登录流程登录（链接或设备码，需要时在控制台里输入回填）。Cursor 的 SDK 是 Cursor 自己的包，Mingle 不随包分发，按需用 npm 装到数据目录的 `vendor/`。不接受追加系统提示的 harness（Kimi、DeepSeek Harness、CodeBuddy、Cursor）改为在新会话第一条消息里带上操作指南；不接受环境变量的（Cursor）在指南里写明调用 CLI 的完整命令。实测：Claude Code、Codex、OpenCode、Kimi 端到端回复；DeepSeek Harness 和 Cursor 在控制台里装好，分别需要 DeepSeek API key 和 Cursor 登录才能回复；Grok 这台机器上 OAR 的 ACP 初始化超时（直接跑 `grok -p` 正常），待查 |
+| 每个 Agent 的环境变量（MING-39） | 完成（2026-11-14）：见 4.9。值只存凭据存储，API 只写不读；打开会话时并进 harness 的 `env`，改动从下一条消息起生效，Agent 工作中不打断；Cursor 不传、不进提示词。测试覆盖凭据存储替身、保留名、`MINGLE_*` 不被覆盖、工作中改动、Cursor 路径和日志；用 OAR 的脚本化运行时端到端验证了 Agent 在 shell 里 `echo $FOO` 拿到值 |
 | 更多 harness、审批转发 | 未开始 |
 
 ## 12. 验证记录

@@ -18,7 +18,7 @@ import type {
 import { Mingle } from "../src/core/mingle.ts";
 import { resolvePaths } from "../src/core/paths.ts";
 import { type Harness, oarHarness } from "../src/harness/harness.ts";
-import { memorySecrets } from "../src/platform/secrets.ts";
+import { memorySecrets, type SecretStore } from "../src/platform/secrets.ts";
 
 export const CLI_ENTRY = fileURLToPath(new URL("../src/cli/main.ts", import.meta.url));
 
@@ -190,6 +190,9 @@ export async function rig(
     channels?: Partial<Record<Platform, Channel>>;
     /** Change what the harness reports, e.g. to make a failed turn look like a sign-in problem. */
     wrap?: (harness: Harness) => Harness;
+    secrets?: SecretStore;
+    /** Every line Mingle logs. */
+    log?: (line: string) => void;
   } = {},
 ): Promise<Rig> {
   const home = mkdtempSync(join(tmpdir(), "mingle-test-"));
@@ -224,7 +227,7 @@ export async function rig(
     paths: resolvePaths(home),
     harness: options.wrap ? options.wrap(harness) : harness,
     channels: { telegram: channel, ...options.channels },
-    secrets: memorySecrets(),
+    secrets: options.secrets ?? memorySecrets(),
     cliEntry: CLI_ENTRY,
     coalesceMs: options.coalesceMs ?? 150,
     reminderTickMs: 60_000,
@@ -232,6 +235,7 @@ export async function rig(
     reconnectDelaysMs: [30],
     // MINGLE_E2E_LOG=1 prints what Mingle logs, to see why a real harness did not answer.
     ...(process.env.MINGLE_E2E_LOG ? { log: (line: string) => console.log(`[mingle] ${line}`) } : {}),
+    ...(options.log ? { log: options.log } : {}),
   });
   const server = await listen(createApi(mingle), 0);
   await mingle.start(server.url);

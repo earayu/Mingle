@@ -5,6 +5,7 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
 ## Unreleased
 
+- Each agent can have its own environment variables, such as a webhook address or an API key, under Settings → Environment variables. Values stay in the system credential store and cannot be read back, only replaced or deleted. The agent reads them in its shell; a change applies from its next message. Cursor cannot receive them, and the console says so.
 - A chat app that cannot connect (for example, the network is not back yet after sleep) no longer stays offline for good: Mingle tries again by itself, waiting a little longer each time, and every bot that is offline has a "Reconnect" button. QQ no longer reports a network problem as revoked credentials.
 - Only problems you have to fix yourself (refused credentials, missing permissions) stop the retries, and the console says what to do.
 - Retrying a message while its bot is offline names that bot and says Mingle is reconnecting it; a retry with nothing left to do says so instead of claiming the chat app is offline. The message disappears after a few seconds.

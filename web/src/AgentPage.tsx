@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { AgentEnv } from "./AgentEnv.tsx";
 import type { Navigate } from "./App.tsx";
 import {
   type Activity,
@@ -214,6 +215,7 @@ export function AgentPage({
                 </section>
                 <RoleEditor agent={agent} onSaved={onChanged} />
                 <Brain agent={agent} onSaved={onChanged} />
+                <AgentEnv agent={agent} />
                 <Section title={t("agent.home")}>
                   <Group>
                     <GroupRow>
