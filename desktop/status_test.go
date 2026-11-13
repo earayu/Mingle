@@ -32,6 +32,9 @@ func TestAgentLine(t *testing.T) {
 		{agent("alex", "idle"), "还没有连接聊天软件"},
 		// One chat app connected is enough to be online.
 		{agent("alex", "thinking", conn("n1", "feishu", "error"), conn("n2", "telegram", "connected")), "思考中"},
+		// Paused says so, even with a bot online or none at all.
+		{agent("alex", "paused", conn("n1", "feishu", "connected")), "已暂停"},
+		{agent("alex", "paused"), "已暂停"},
 	}
 	for _, c := range cases {
 		if got := agentLine(c.a, zh); got != c.want {

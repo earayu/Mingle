@@ -26,6 +26,8 @@ import {
   HarnessIcon,
   MoreMenu,
   PageHeader,
+  PauseIcon,
+  PlayIcon,
   PlusIcon,
   Problem,
   relativeTime,
@@ -96,6 +98,21 @@ export function AgentPage({
   useEffect(() => setNotice(null), [tab]);
 
   const busy = agent.status === "thinking" || agent.status === "working";
+  const paused = agent.status === "paused";
+  const [switching, setSwitching] = useState(false);
+  const setPaused = async (pause: boolean) => {
+    setSwitching(true);
+    try {
+      await (pause ? api.pause(agent.id) : api.resume(agent.id));
+      setNotice(t(pause ? "agent.pausedNotice" : "agent.resumed", { name: agent.name }));
+    } catch (error) {
+      setNotice(errorText(t, error));
+    } finally {
+      setSwitching(false);
+    }
+    await onChanged();
+    refresh();
+  };
   const retry = async (ids: string[]) => {
     try {
       const { retried, offline } = await api.retry(agent.id, ids);
@@ -171,6 +188,7 @@ export function AgentPage({
             {busy ? (
               <Button
                 small
+                title={t("agent.stopHint")}
                 onClick={async () => {
                   try {
                     const { stopped } = await api.stop(agent.id);
@@ -201,6 +219,7 @@ export function AgentPage({
               />
             ) : null}
             {notice ? <p className="rise -mb-3 text-small text-ink2">{notice}</p> : null}
+            {paused ? <PausedCard name={agent.name} disabled={switching} onResume={() => setPaused(false)} /> : null}
             {agent.status === "error" ? <AgentError agent={agent} /> : null}
 
             {tab === "settings" ? (
@@ -216,6 +235,37 @@ export function AgentPage({
                 <RoleEditor agent={agent} onSaved={onChanged} />
                 <Brain agent={agent} onSaved={onChanged} />
                 <AgentEnv agent={agent} />
+                <Section title={t("agent.lifecycle")}>
+                  <Group>
+                    <GroupRow>
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span>
+                          {paused
+                            ? t("agent.pausedTitle", { name: agent.name })
+                            : t("agent.pauseTitle", { name: agent.name })}
+                        </span>
+                        <span className="text-caption text-ink2">
+                          {paused
+                            ? t("agent.pausedBody")
+                            : busy
+                              ? `${t("agent.pauseBody")} ${t("agent.pauseBusy")}`
+                              : t("agent.pauseBody")}
+                        </span>
+                      </span>
+                      {paused ? (
+                        <Button small disabled={switching} onClick={() => setPaused(false)}>
+                          <PlayIcon />
+                          {t("agent.resume")}
+                        </Button>
+                      ) : (
+                        <Button small disabled={switching} onClick={() => setPaused(true)}>
+                          <PauseIcon />
+                          {t("agent.pause")}
+                        </Button>
+                      )}
+                    </GroupRow>
+                  </Group>
+                </Section>
                 <Section title={t("agent.home")}>
                   <Group>
                     <GroupRow>
@@ -309,7 +359,9 @@ function GettingStarted({ agent, heard, onConnect }: { agent: AgentView; heard: 
           {connected ? <Waiting>{t("start.waiting")}</Waiting> : <Waiting>{t("start.waitingConnection")}</Waiting>}
         </Step>
         <Step n={4} state={heard ? "now" : "later"} title={t("start.reply")}>
-          {agent.status === "error" ? (
+          {agent.status === "paused" ? (
+            <p className="text-small text-ink2">{t("start.replyPaused", { name: agent.name })}</p>
+          ) : agent.status === "error" ? (
             <p className="text-small text-red">{t("start.replyFailed", { name: agent.name })}</p>
           ) : !connected ? (
             <p className="text-small text-ink2">{t("start.replyDisconnected")}</p>
@@ -320,6 +372,30 @@ function GettingStarted({ agent, heard, onConnect }: { agent: AgentView; heard: 
           )}
         </Step>
       </Steps>
+    </section>
+  );
+}
+
+/**
+ * A paused agent, on both tabs: what pausing means for the people who write to it, and the way
+ * back. Not a problem box: the owner chose this, nothing is broken.
+ */
+function PausedCard({ name, disabled, onResume }: { name: string; disabled: boolean; onResume: () => void }) {
+  const { t } = useI18n();
+  return (
+    <section
+      aria-label={t("agent.pausedTitle", { name })}
+      className="rise flex flex-col gap-3 rounded-card border border-line bg-bg2 px-4 py-3.5 sm:flex-row sm:items-start"
+    >
+      <PauseIcon className="mt-0.5 hidden text-ink2 sm:block" />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <h2 className="text-headline font-semibold wrap-anywhere">{t("agent.pausedTitle", { name })}</h2>
+        <p className="text-small text-ink2">{t("agent.pausedBody")}</p>
+      </div>
+      <Button variant="primary" className="self-start" disabled={disabled} onClick={onResume}>
+        <PlayIcon />
+        {t("agent.resume")}
+      </Button>
     </section>
   );
 }

@@ -42,6 +42,10 @@ func (c connectionSummary) notifyState() string {
 
 // online is whether people can reach the agent: one of its chat apps is connected.
 func (a agentSummary) online() bool {
+	// A paused agent answers nobody, whatever its bots' state (docs/spec.md 4.11).
+	if a.Status == "paused" {
+		return false
+	}
 	for _, c := range a.Connections {
 		if c.State == "connected" {
 			return true
@@ -102,6 +106,9 @@ func needs(s *summary, t texts) []need {
 
 // agentLine is what the menu says about one agent, under its name.
 func agentLine(a agentSummary, t texts) string {
+	if a.Status == "paused" {
+		return t.status("paused")
+	}
 	if len(a.Connections) == 0 {
 		return t.noChatApps
 	}

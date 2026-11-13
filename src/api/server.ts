@@ -462,6 +462,11 @@ export function createApi(mingle: Mingle): Hono<Env> {
   });
 
   app.post("/v1/admin/agents/:id/stop", async (c) => c.json({ stopped: await mingle.stopAgent(c.req.param("id")) }));
+  /** Pause and resume (docs/spec.md 4.11). Both are idempotent: `changed` is false when it already was. */
+  app.post("/v1/admin/agents/:id/pause", async (c) => c.json({ changed: await mingle.pauseAgent(c.req.param("id")) }));
+  app.post("/v1/admin/agents/:id/resume", async (c) =>
+    c.json({ changed: await mingle.resumeAgent(c.req.param("id")) }),
+  );
 
   /** Try again on messages the agent failed or did not answer: all of them, or `ids`. */
   app.post("/v1/admin/agents/:id/messages/retry", async (c) => {

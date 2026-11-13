@@ -16,6 +16,7 @@ import type { InboundState } from "../store/store.ts";
  *   send:    delivered, unanswered ──▶ replied
  *   retry:   failed, unanswered ──▶ received
  *   ignore:  failed, unanswered ──▶ ignored
+ *   pause:   received, delivered ──▶ ignored
  *
  * `replied` and `ignored` are final. `failed` and `unanswered` wait for the owner (retry or
  * ignore in the console) or for the agent to answer later; `received` and `delivered` move
@@ -35,7 +36,9 @@ export type InboundEvent =
   /** The owner asks the agent to try again: back to the inbox, nudge cleared. */
   | "retry"
   /** The owner dismisses it. */
-  | "ignore";
+  | "ignore"
+  /** The owner paused the agent: what it had not answered yet will not be answered (docs/spec.md 4.11). */
+  | "pause";
 
 export const INBOUND: Readonly<
   Record<InboundEvent, { readonly from: readonly InboundState[]; readonly to: InboundState }>
@@ -51,6 +54,8 @@ export const INBOUND: Readonly<
   send: { from: ["delivered", "unanswered"], to: "replied" },
   retry: { from: ["failed", "unanswered"], to: "received" },
   ignore: { from: ["failed", "unanswered"], to: "ignored" },
+  // Failed and unanswered messages stay for the owner to retry or ignore after resuming.
+  pause: { from: ["received", "delivered"], to: "ignored" },
 };
 
 export const FINAL_INBOUND: readonly InboundState[] = ["replied", "ignored"];

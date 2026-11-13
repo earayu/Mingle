@@ -45,7 +45,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return payload as T;
 }
 
-export type AgentStatus = "offline" | "idle" | "thinking" | "working" | "error";
+export type AgentStatus = "offline" | "idle" | "thinking" | "working" | "error" | "paused";
 export type Platform = "wechat" | "wecom" | "feishu" | "dingtalk" | "qq" | "slack" | "discord" | "telegram";
 
 export interface ConnectionView {
@@ -215,6 +215,9 @@ export const api = {
     call("PUT", `/v1/admin/agents/${id}/env/${encodeURIComponent(name)}`, { value }),
   deleteEnv: (id: string, name: string) => call("DELETE", `/v1/admin/agents/${id}/env/${encodeURIComponent(name)}`),
   stop: (id: string) => call<{ stopped: boolean }>("POST", `/v1/admin/agents/${id}/stop`),
+  /** Stop taking messages until resumed; ends the work in hand (docs/spec.md 4.11). */
+  pause: (id: string) => call<{ changed: boolean }>("POST", `/v1/admin/agents/${id}/pause`),
+  resume: (id: string) => call<{ changed: boolean }>("POST", `/v1/admin/agents/${id}/resume`),
   /** Try again on failed or unanswered messages: these, or all of them. */
   retry: (id: string, ids?: string[]) =>
     call<{ retried: string[]; offline: string[] }>("POST", `/v1/admin/agents/${id}/messages/retry`, ids ? { ids } : {}),

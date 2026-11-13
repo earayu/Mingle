@@ -133,8 +133,8 @@ func (t texts) restartToUpdate(version string) string {
 
 // status names an agent's state as the console does (docs/spec.md 4.8).
 func (t texts) status(status string) string {
-	zh := map[string]string{"idle": "空闲", "thinking": "思考中", "working": "工作中", "error": "出错", "offline": "离线"}
-	en := map[string]string{"idle": "Idle", "thinking": "Thinking", "working": "Working", "error": "Error", "offline": "Offline"}
+	zh := map[string]string{"idle": "空闲", "thinking": "思考中", "working": "工作中", "error": "出错", "offline": "离线", "paused": "已暂停"}
+	en := map[string]string{"idle": "Idle", "thinking": "Thinking", "working": "Working", "error": "Error", "offline": "Offline", "paused": "Paused"}
 	names := en
 	if t.zh {
 		names = zh
