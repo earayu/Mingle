@@ -1,38 +1,52 @@
 // Builds the website into site/dist: one static page per language, plus llms.txt.
 //
-//   node site/scripts/build.mjs        → site/dist
+//   node site/scripts/build.mjs --release latest-release.json   → site/dist
 //
-// Download links point at the release for package.json's version; rebuild after a release.
+// Download links come from a snapshot of the published "latest" GitHub release
+// (node scripts/releases.ts snapshot), never from package.json: the site can be
+// rebuilt or reviewed offline from the same frozen metadata.
 
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { parseArgs } from "node:util";
+import { assetURL, releaseVersion, validateRelease } from "../../scripts/releases.ts";
 import { copy } from "./copy.mjs";
+
+const { values } = parseArgs({ options: { release: { type: "string" }, out: { type: "string" } } });
+if (!values.release)
+  throw new Error("Usage: node site/scripts/build.mjs --release <snapshot.json> [--out <directory>]");
+const published = validateRelease(JSON.parse(readFileSync(resolve(values.release), "utf8")));
+const version = releaseVersion(published.tag_name);
+const releaseURL = published.html_url;
+const asset = (name) => assetURL(published, name);
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const SITE = join(ROOT, "site");
-const OUT = join(SITE, "dist");
+const OUT = values.out ? resolve(values.out) : join(SITE, "dist");
 const ORIGIN = "https://mingle.build";
 const REPO = "https://github.com/earayu/Mingle";
-const version = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version;
-const release = `${REPO}/releases/download/v${version}`;
 const latest = `${REPO}/releases/latest/download`;
 
 const downloads = {
   mac: [
-    ["Apple Silicon", `${release}/mingle-${version}-arm64.dmg`],
-    ["Intel", `${release}/mingle-${version}-amd64.dmg`],
+    ["Apple Silicon", asset(`mingle-${version}-arm64.dmg`)],
+    ["Intel", asset(`mingle-${version}-amd64.dmg`)],
   ],
   windows: [
-    ["x64", `${release}/mingle-setup-${version}-amd64.exe`],
-    ["ARM", `${release}/mingle-setup-${version}-arm64.exe`],
+    ["x64", asset(`mingle-setup-${version}-amd64.exe`)],
+    ["ARM", asset(`mingle-setup-${version}-arm64.exe`)],
   ],
   linux: [
-    [".deb x64", `${release}/mingle_${version}_amd64.deb`],
-    [".deb ARM", `${release}/mingle_${version}_arm64.deb`],
-    [".rpm x64", `${release}/mingle-${version}-1.x86_64.rpm`],
-    [".rpm ARM", `${release}/mingle-${version}-1.aarch64.rpm`],
+    [".deb x64", asset(`mingle_${version}_amd64.deb`)],
+    [".deb ARM", asset(`mingle_${version}_arm64.deb`)],
+    [".rpm x64", asset(`mingle-${version}-1.x86_64.rpm`)],
+    [".rpm ARM", asset(`mingle-${version}-1.aarch64.rpm`)],
   ],
 };
+// The terminal install commands deliberately follow "latest": the scripts
+// resolve the current release internally. Fail here if they were ever missing.
+asset("install.sh");
+asset("install.ps1");
 const installSh = `curl -fsSL ${latest}/install.sh | sh`;
 const installPs = `irm ${latest}/install.ps1 | iex`;
 const fromSource = `git clone ${REPO}.git && cd Mingle\npnpm install && pnpm build\nnode dist/cli/main.js start`;
@@ -284,7 +298,7 @@ ${Object.values(copy)
     <h2>${t.end.title}</h2>
     <p class="lead">${t.end.lead}</p>
     <div class="dls">${dl("mac")}${dl("windows")}${dl("linux")}</div>
-    <p class="note">${t.end.unsigned} <a href="${REPO}/releases">${t.end.allReleases} →</a></p>
+    <p class="note">${t.end.installation} <a href="${releaseURL}">${t.end.releaseNotes} →</a></p>
   </div>
 </section>
 </main>
@@ -292,7 +306,7 @@ ${Object.values(copy)
 <footer class="footer">
   <div class="wrap footer-inner">
     <div>© ${new Date().getFullYear()} Mingle · MIT</div>
-    <nav><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${REPO}/blob/main/CHANGELOG.md">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a>${other
+    <nav><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a>${other
       .map(([, v]) => `<a href="${v.path}" lang="${v.lang}">${v.langName}</a>`)
       .join("")}</nav>
     <p class="disclaimer">${t.footer.disclaimer}</p>
@@ -314,7 +328,7 @@ Key facts:
 
 - Website: ${ORIGIN}/ (English), ${ORIGIN}/zh/ (Chinese)
 - Source: ${REPO} (MIT)
-- Latest release: ${REPO}/releases/latest (v${version})
+- Latest release: ${releaseURL} (v${version})
 - Install on macOS or Linux: \`${installSh}\`
 - Install on Windows (PowerShell): \`${installPs}\`
 - Price: free. No account, no Mingle server, no telemetry.
@@ -353,7 +367,7 @@ Build from source (Node.js 24, pnpm): \`git clone ${REPO}.git && cd Mingle && pn
 
 - **Does my data go to a Mingle server?** No. There is none. Messages still pass through the chat app and your model provider.
 - **Do I need an API key?** No, if your harness is signed in with a subscription. An API key set for Claude Code or Codex also works.
-- **Is the app signed?** Not yet. On macOS, allow it in System Settings → Privacy & Security; on Windows, choose More info → Run anyway.
+- **Is the app signed?** See the [release notes](${releaseURL}) for this version's signing details and installation instructions.
 `;
 }
 
