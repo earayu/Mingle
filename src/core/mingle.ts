@@ -15,6 +15,7 @@ import type {
 import type { Harness, HarnessInfo } from "../harness/harness.ts";
 import type { SecretStore } from "../platform/secrets.ts";
 import { type Agent, type Connection, Store } from "../store/store.ts";
+import { Brains } from "./brains.ts";
 import { MingleError, notFound } from "./errors.ts";
 import { formatReminder } from "./format.ts";
 import { createHome, writeRole } from "./home.ts";
@@ -79,8 +80,10 @@ export class Mingle {
   private wakeTimer: NodeJS.Timeout | undefined;
   private resuming: Promise<void> | undefined;
   private readonly onboardings = new Map<string, OnboardingSession>();
+  /** Installs and sign-ins of harnesses, run for the console. */
+  readonly brains: Brains;
 
-  private readonly options: MingleOptions;
+  readonly options: MingleOptions;
 
   constructor(options: MingleOptions) {
     this.options = options;
@@ -90,6 +93,8 @@ export class Mingle {
     this.store = new Store(options.paths.db);
     this.replies = new LiveReplies((line) => this.log(line));
     this.outbox = new Outbox(this.store, (id) => this.live.get(id), options.retryDelaysMs, this.replies);
+    // A new install or sign-in can change which models a harness offers.
+    this.brains = new Brains(options.harness, () => this.modelCache.clear());
   }
 
   get cliPath(): string {
@@ -154,6 +159,7 @@ export class Mingle {
     clearInterval(this.reminderTimer);
     clearInterval(this.wakeTimer);
     await this.resuming?.catch(() => {});
+    this.brains.dispose();
     this.replies.dispose();
     for (const id of [...this.onboardings.keys()]) this.cancelOnboarding(id);
     await Promise.all([...this.live.values()].map((c) => c.close().catch(() => {})));

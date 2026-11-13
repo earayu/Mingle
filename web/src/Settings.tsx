@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api, type BrainStatus } from "./api.ts";
+import { BrainRow } from "./Brains.tsx";
 import { type LocalePreference, useI18n } from "./i18n.ts";
 import { type OnlineState, online, useOnline } from "./online.ts";
 import { Button, Group, GroupRow, PageHeader, Section, Segmented } from "./ui.tsx";
@@ -67,6 +69,7 @@ export function SettingsPage({ version }: { version: string }) {
               </Group>
             </Section>
           ) : null}
+          <Brains />
           <Section title={t("settings.about")}>
             <Group>
               <GroupRow>
@@ -194,5 +197,32 @@ function ToggleRow({
         />
       </label>
     </GroupRow>
+  );
+}
+
+/** Every harness Mingle can drive: what is installed, signed in, and a way to fix the rest. */
+function Brains() {
+  const { t } = useI18n();
+  const [brains, setBrains] = useState<BrainStatus[] | null>(null);
+  const load = () => {
+    api
+      .brains()
+      .then(setBrains)
+      .catch(() => setBrains([]));
+  };
+  useEffect(load, []);
+  return (
+    <Section title={t("settings.brains")}>
+      <p className="-mt-1 px-1 text-small text-ink2">{t("settings.brainsBody")}</p>
+      {brains === null ? null : (
+        <div className="overflow-hidden rounded-card border border-line bg-card">
+          <div className="divide-y divide-line">
+            {brains.map((b) => (
+              <BrainRow key={b.id} brain={b} onChanged={load} />
+            ))}
+          </div>
+        </div>
+      )}
+    </Section>
   );
 }

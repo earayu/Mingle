@@ -2,8 +2,14 @@
  * The only module that imports OAR. Everything else depends on these types,
  * so an OAR upgrade touches this file alone.
  */
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   type AvailableInstallation,
+  type CursorSdk,
+  createCursorRuntime,
   defaultRuntimes,
   type Runtime,
   RuntimeFailureError,
@@ -114,8 +120,57 @@ export interface HarnessSession {
   dispose(): Promise<void>;
 }
 
+/** Every harness OAR knows, installed or not, and what Mingle can do about the ones that are not. */
+export interface HarnessStatus extends HarnessInfo {
+  readonly installed: boolean;
+  /** Not installable here, in the runtime's own words (another platform, say). */
+  readonly unsupported?: string;
+  /** The runtime can install itself (`install`). */
+  readonly canInstall: boolean;
+  /** The runtime has its own sign-in (`login`). */
+  readonly canSignIn: boolean;
+}
+
+export type SignInState =
+  | { readonly kind: "signed_in"; readonly account?: string; readonly plan?: string }
+  | { readonly kind: "signed_out"; readonly detail?: string }
+  | { readonly kind: "unknown" };
+
+export type InstallPlanInfo =
+  | { readonly kind: "plan"; readonly steps: readonly string[]; readonly source: string }
+  | {
+      readonly kind: "unsupported";
+      readonly detail: string;
+      readonly steps?: readonly string[];
+      readonly source?: string;
+    };
+
+/** What a sign-in shows the person, and asks of them. */
+export interface SignInInteraction {
+  readonly signal: AbortSignal;
+  onEvent(
+    event:
+      | { readonly kind: "url"; readonly url: string; readonly instructions?: string }
+      | { readonly kind: "code"; readonly code: string; readonly url: string }
+      | { readonly kind: "info"; readonly message: string },
+  ): void;
+  /** The runtime needs something typed back (a pasted code, an API key). */
+  prompt(question: {
+    readonly message: string;
+    readonly secret: boolean;
+    /** A choice instead of free text; the answer is one option's id. */
+    readonly options?: readonly { readonly id: string; readonly label: string }[];
+  }): Promise<string>;
+}
+
 export interface Harness {
   available(): Promise<HarnessInfo[]>;
+  /** Every harness, installed or not. */
+  catalog?(): Promise<HarnessStatus[]>;
+  signInState?(id: string): Promise<SignInState>;
+  installPlan?(id: string): Promise<InstallPlanInfo>;
+  install?(id: string): Promise<{ ok: boolean; detail?: string }>;
+  signIn?(id: string, interaction: SignInInteraction): Promise<{ ok: boolean; detail?: string }>;
   /** The harness's display name ("Claude Code"), for messages to people. */
   name?(id: string): string;
   /** What can go in `OpenOptions.model`. Asks the harness, so it can take seconds. */
@@ -123,8 +178,21 @@ export interface Harness {
   open(options: OpenOptions, events: HarnessEvents): Promise<HarnessSession>;
 }
 
-/** Harnesses offered in the console, in display order. Others still work if requested by id. */
-const OFFERED = ["claude", "codex", "opencode", "pi", "cursor", "grok", "kimi", "qwen"];
+/** Display order: the best known first. Any other runtime OAR ships comes after these. */
+const ORDER = [
+  "claude",
+  "codex",
+  "cursor",
+  "opencode",
+  "kimi",
+  "grok",
+  "qwen",
+  "qoder",
+  "codebuddy",
+  "dsh",
+  "pi",
+  "antigravity",
+];
 
 export interface RuntimeSource {
   require(id: string): Runtime;
@@ -132,26 +200,13 @@ export interface RuntimeSource {
 }
 
 /**
- * Whether an installed harness can serve Mingle, from the runtime's own
- * declarations. Mingle needs `appendSystemPrompt` (role and operating guide)
- * and a non-empty `env` (API address and token), so a declared refusal of
- * either blocks it. OAR's declarations do not cover OpenCode's version
- * difference (1.x supports appended prompts, 2.x refuses them), so OpenCode
- * also gets a version check here.
+ * Whether an installed harness can serve Mingle. OAR's declarations do not cover
+ * OpenCode's version difference (1.x supports appended prompts, 2.x fails on them
+ * at open), so OpenCode gets a version check here.
  */
 function incompatibility(runtime: Runtime, install: AvailableInstallation): HarnessInfo["disabled"] {
-  if (runtime.refusedSessionOptions?.appendSystemPrompt !== undefined) {
-    return {
-      code: "harness_prompt_unsupported",
-      reason: "This harness cannot receive the agent's role and operating guide. Choose another harness.",
-    };
-  }
-  if (runtime.refusedSessionOptions?.env !== undefined) {
-    return {
-      code: "harness_env_unsupported",
-      reason: "This harness cannot receive the connection settings needed to reply in chat. Choose another harness.",
-    };
-  }
+  // A refused appended prompt or environment is no longer a blocker: `open` then carries the
+  // guide, and the CLI's settings, in the session's first message.
   if (runtime.id === "opencode") {
     const version = install.via === "executable" ? install.version?.trim() : undefined;
     // OAR 0.97 supports prompt injection on OpenCode 1.x only. Its public
@@ -171,7 +226,104 @@ function requireCompatible(runtime: Runtime, install: AvailableInstallation): vo
   if (issue) throw new MingleError(issue.code, issue.reason);
 }
 
-export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
+const CURSOR_SDK = "@cursor/sdk";
+const CURSOR_SDK_VERSION = "1.3.1";
+
+/**
+ * Cursor runs in process through its SDK, which is Cursor's own package under Cursor's terms:
+ * Mingle does not ship it. On the person's request Mingle installs it with npm into its own
+ * data folder, and loads it from there.
+ */
+export function cursorRuntime(vendorDir: string): Runtime {
+  const packageDir = join(vendorDir, "node_modules", ...CURSOR_SDK.split("/"));
+  const installed = () => existsSync(join(packageDir, "package.json"));
+  const version = () => {
+    try {
+      return (JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")) as { version?: string }).version;
+    } catch {
+      return undefined;
+    }
+  };
+  const base = createCursorRuntime({
+    sdk: async () => {
+      // The package's ESM entry: an import of its CommonJS `main` would hide the named exports.
+      const pkg = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")) as {
+        main?: string;
+        module?: string;
+        exports?: { ".": { import?: string; default?: string } };
+      };
+      const entry = pkg.exports?.["."]?.import ?? pkg.exports?.["."]?.default ?? pkg.module ?? pkg.main ?? "index.js";
+      return (await import(pathToFileURL(join(packageDir, entry)).href)) as CursorSdk;
+    },
+  });
+  const steps = [
+    "npm",
+    "install",
+    "--no-audit",
+    "--no-fund",
+    "--prefix",
+    vendorDir,
+    `${CURSOR_SDK}@${CURSOR_SDK_VERSION}`,
+  ];
+  const plan = {
+    kind: "plan" as const,
+    steps: [{ command: steps, display: steps.join(" ") }],
+    source: "https://www.npmjs.com/package/@cursor/sdk",
+    network: true as const,
+    privileges: false as const,
+  };
+  return {
+    ...base,
+    vendorVersion: version,
+    installation: async (options) => {
+      if (!installed()) return { kind: "not_found" };
+      // Cursor's own calls expect the SDK installation it reports itself.
+      return base.installation(options);
+    },
+    installPlan: async () => plan,
+    install: async (options) => {
+      if (installed()) return { kind: "already_installed", installation: { kind: "available", via: "bundled" } };
+      const output = await new Promise<{ code: number | null; text: string }>((resolve) => {
+        const child = spawn(steps[0] as string, steps.slice(1), {
+          stdio: ["ignore", "pipe", "pipe"],
+          shell: process.platform === "win32",
+        });
+        let text = "";
+        child.stdout.on("data", (d) => (text += d));
+        child.stderr.on("data", (d) => (text += d));
+        const timer = setTimeout(() => child.kill(), options?.timeoutMs ?? 10 * 60_000);
+        child.on("error", (e) => resolve({ code: null, text: `${text}${(e as Error).message}` }));
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          resolve({ code, text });
+        });
+      });
+      return installed()
+        ? { kind: "installed", installation: { kind: "available", via: "bundled" }, output: output.text }
+        : { kind: "failed", exitCode: output.code, output: output.text };
+    },
+  } as Runtime;
+}
+
+/** For a harness whose shell does not get Mingle's environment: the same values, written into the command. */
+function inlineEnvNote(env: Readonly<Record<string, string>>): string {
+  const quote = (v: string) => `'${v.replaceAll("'", "'\\''")}'`;
+  const prefix = Object.entries(env)
+    .filter(([k]) => k.startsWith("MINGLE_"))
+    .map(([k, v]) => `${k}=${quote(v)}`)
+    .join(" ");
+  return [
+    "## Calling the CLI from your shell",
+    "",
+    'Your shell does not have the MINGLE_ variables set. Wherever this guide writes `"$MINGLE_CLI"`, write this instead, all on the command\'s own line:',
+    "",
+    "```",
+    `${prefix} ${quote(env.MINGLE_CLI ?? "mingle")}`,
+    "```",
+  ].join("\n");
+}
+
+export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { vendorDir?: string } = {}): Harness {
   async function installation(runtime: Runtime): Promise<AvailableInstallation> {
     const found = await runtime.installation?.();
     if (found?.kind !== "available") {
@@ -180,45 +332,157 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
     return found;
   }
 
+  const cursor = options.vendorDir ? cursorRuntime(options.vendorDir) : undefined;
+  const lookup = (id: string): Runtime => (id === "cursor" && cursor ? cursor : source.require(id));
+  const ids = () => {
+    const known = new Set([...(source.list?.() ?? []).map((r) => r.id), ...(cursor ? ["cursor"] : [])]);
+    return [
+      ...ORDER.filter((id) => known.has(id) || (id !== "cursor" && safeRequire(id))),
+      ...[...known].filter((id) => !ORDER.includes(id)),
+    ];
+  };
+  const safeRequire = (id: string) => {
+    try {
+      return source.require(id);
+    } catch {
+      return undefined;
+    }
+  };
+  const info = (id: string, runtime: Runtime, found?: AvailableInstallation): HarnessInfo => {
+    // Harnesses print versions their own way ("2.1.322 (Claude Code)", "codex-cli 0.167.1"): keep the number.
+    const reported =
+      found?.via === "executable"
+        ? found.version
+        : (runtime as { vendorVersion?: () => string | undefined }).vendorVersion?.();
+    const version = /\d+(?:\.\d+)+/.exec(reported ?? "")?.[0];
+    const brand = runtime.brand;
+    const light = brand ? runtimeBrandIcon(brand, "light") : null;
+    const dark = brand ? runtimeBrandIcon(brand, "dark") : null;
+    return {
+      id,
+      name: brand?.name ?? id,
+      ...(version ? { version } : {}),
+      ...(light && dark ? { icon: { light, dark } } : {}),
+    };
+  };
+
   return {
     async available() {
+      return (await this.catalog?.())?.filter((h) => h.installed) ?? [];
+    },
+
+    async catalog() {
       // Each probe starts the harness's executable for its version; run them side by side.
-      const probes = OFFERED.map(async (id): Promise<HarnessInfo | undefined> => {
-        let runtime: Runtime;
-        try {
-          runtime = source.require(id);
-        } catch {
-          return undefined;
-        }
-        const found = await runtime.installation?.().catch(() => undefined);
-        if (found?.kind !== "available") return undefined;
-        // Harnesses print versions their own way ("2.1.322 (Claude Code)", "codex-cli 0.167.1"): keep the number.
-        const version = found.via === "executable" ? /\d+(?:\.\d+)+/.exec(found.version ?? "")?.[0] : undefined;
-        const brand = runtime.brand;
-        const light = brand ? runtimeBrandIcon(brand, "light") : null;
-        const dark = brand ? runtimeBrandIcon(brand, "dark") : null;
-        const disabled = incompatibility(runtime, found);
+      return Promise.all(
+        ids().map(async (id): Promise<HarnessStatus> => {
+          const runtime = lookup(id);
+          const found = await runtime.installation?.().catch(() => undefined);
+          const available = found?.kind === "available" ? found : undefined;
+          const disabled = available ? incompatibility(runtime, available) : undefined;
+          return {
+            ...info(id, runtime, available),
+            ...(disabled ? { disabled } : {}),
+            installed: Boolean(available),
+            ...(found?.kind === "unsupported" ? { unsupported: found.reason } : {}),
+            canInstall: Boolean(runtime.install),
+            canSignIn: Boolean(runtime.login),
+          };
+        }),
+      );
+    },
+
+    async signInState(id) {
+      const runtime = lookup(id);
+      if (!runtime.authStatus) return { kind: "unknown" };
+      const status = await runtime
+        .authStatus(await installation(runtime), { timeoutMs: 15_000 })
+        .catch(() => undefined);
+      if (status?.kind === "logged_in") {
+        const who = status.account?.email ?? status.account?.method;
         return {
-          id,
-          name: brand?.name ?? id,
-          ...(version ? { version } : {}),
-          ...(light && dark ? { icon: { light, dark } } : {}),
-          ...(disabled ? { disabled } : {}),
+          kind: "signed_in",
+          ...(who ? { account: who } : {}),
+          ...(status.account?.plan ? { plan: status.account.plan } : {}),
         };
+      }
+      if (status?.kind === "logged_out")
+        return { kind: "signed_out", ...(status.detail ? { detail: status.detail } : {}) };
+      return { kind: "unknown" };
+    },
+
+    async installPlan(id) {
+      const runtime = lookup(id);
+      if (!runtime.installPlan) return { kind: "unsupported", detail: "no installer" };
+      const plan = await runtime.installPlan(
+        runtime.installLines?.length ? { line: runtime.installLines[0]?.line as string } : {},
+      );
+      if (plan.kind === "plan") return { kind: "plan", steps: plan.steps.map((s) => s.display), source: plan.source };
+      return {
+        kind: "unsupported",
+        detail: plan.detail ?? plan.reason,
+        ...(plan.steps ? { steps: plan.steps.map((s) => s.display) } : {}),
+        ...(plan.source ? { source: plan.source } : {}),
+      };
+    },
+
+    async install(id) {
+      const runtime = lookup(id);
+      if (!runtime.install) return { ok: false, detail: "no installer" };
+      const result = await runtime.install({
+        timeoutMs: 10 * 60_000,
+        ...(runtime.installLines?.length ? { line: runtime.installLines[0]?.line as string } : {}),
       });
-      return (await Promise.all(probes)).filter((h): h is HarnessInfo => h !== undefined);
+      if (result.kind === "installed" || result.kind === "already_installed") return { ok: true };
+      if (result.kind === "failed") return { ok: false, detail: result.output.trim().split("\n").slice(-6).join("\n") };
+      return { ok: false, detail: result.detail ?? result.reason };
+    },
+
+    async signIn(id, interaction) {
+      const runtime = lookup(id);
+      if (!runtime.login) return { ok: false, detail: "no sign-in" };
+      const result = await runtime.login(
+        await installation(runtime),
+        {
+          signal: interaction.signal,
+          onEvent: (event) => {
+            if (event.kind === "auth_url")
+              interaction.onEvent({
+                kind: "url",
+                url: event.url,
+                ...(event.instructions ? { instructions: event.instructions } : {}),
+              });
+            else if (event.kind === "device_code")
+              interaction.onEvent({ kind: "code", code: event.userCode, url: event.verificationUri });
+            else interaction.onEvent({ kind: "info", message: event.message });
+          },
+          prompt: async (question) => {
+            if (question.kind === "select")
+              return interaction.prompt({
+                message: question.message,
+                secret: false,
+                options: question.options.map((o) => ({ id: o.id, label: o.label })),
+              });
+            return interaction.prompt({ message: question.message, secret: question.kind !== "text" });
+          },
+        },
+        // The console shows the link itself: the person opens it there, on this computer or another.
+        { openBrowser: false, timeoutMs: 10 * 60_000 },
+      );
+      if (result.kind === "logged_in") return { ok: true };
+      if (result.kind === "cancelled") return { ok: false, detail: "cancelled" };
+      return { ok: false, detail: result.detail ?? result.reason };
     },
 
     name(id) {
       try {
-        return source.require(id).brand?.name ?? id;
+        return lookup(id).brand?.name ?? id;
       } catch {
         return id;
       }
     },
 
     async models(id) {
-      const runtime = source.require(id);
+      const runtime = lookup(id);
       const install = await installation(runtime);
       requireCompatible(runtime, install);
       if (!runtime.listModels) return { kind: "unsupported" };
@@ -237,13 +501,23 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
     },
 
     async open(options, events) {
-      const runtime = source.require(options.harness);
+      const runtime = lookup(options.harness);
       const install = await installation(runtime);
       requireCompatible(runtime, install);
+      // Some harnesses take no appended system prompt (Kimi, DeepSeek Harness, CodeBuddy, Cursor)
+      // or no environment for their shell (Cursor, which runs in this process). The guide then
+      // rides on the first message of a new session, and tells the agent how to call the CLI
+      // without the environment.
+      const refused = runtime.refusedSessionOptions ?? {};
+      const canAppend = !("appendSystemPrompt" in refused);
+      const canEnv = !("env" in refused);
+      const instructions = canEnv
+        ? options.appendSystemPrompt
+        : `${options.appendSystemPrompt}\n${inlineEnvNote(options.env)}`;
       const base = {
         cwd: options.cwd,
-        appendSystemPrompt: options.appendSystemPrompt,
-        env: options.env,
+        ...(canAppend ? { appendSystemPrompt: instructions } : {}),
+        ...(canEnv ? { env: options.env } : {}),
         ...(options.model ? { model: options.model } : {}),
       };
       let session: Session;
@@ -299,11 +573,14 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
         }
       });
 
+      // A resumed session has the guide in its history already.
+      let primer = canAppend || resumed ? "" : `${instructions.trim()}\n\n---\n\n`;
       return {
         id: session.id,
         resumed,
         async deliver(text, inputId) {
-          const result = await session.deliver(text, { inputId, origin: { kind: "user", source: "mingle" } });
+          const result = await session.deliver(primer + text, { inputId, origin: { kind: "user", source: "mingle" } });
+          if (result.landed !== "rejected") primer = "";
           return result.landed === "rejected"
             ? { outcome: "rejected", reason: `${result.code}: ${result.reason}` }
             : { outcome: result.landed };

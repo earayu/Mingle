@@ -581,6 +581,7 @@ docs/             文档
 | 签名与公证 | 流程已写进 CI，需要维护者提供 Developer ID 证书和 Apple 账号的 secret；没有时是 ad hoc 签名 |
 | 控制台改版（参照 Pinky） | 完成（2026-11-13）：新的视觉和引导，见 `DESIGN.md`。首次打开是欢迎页和三步新建流程；harness 显示本机已装的、带官方图标，模型从 harness 实时读出来选（OAR `listModels`，结果缓存 5 分钟），不再手填；创建后直接进入连接聊天软件；Agent 页分"动态"和"设置"，未回复过消息时有"上手"四步卡片，右侧"需要你处理"汇总出错的连接、等待审核和没回复的消息；harness 和模型可随时更改（`PATCH /v1/admin/agents/:id`，换 harness 时开新会话）。桌面应用隐藏标题栏，红绿灯在侧栏品牌行，侧栏用窗口毛玻璃 |
 | 桌面应用端到端测试 | `desktop/automation_e2e.go`：带 `e2e` 标签构建的应用可由 `mygo-automation` 驱动。本轮用它在真实窗口里走完：欢迎 → 新建（模板、harness、模型）→ 选平台 → 飞书出码 → 返回 → 改模型 → 错误 token 提示 → 删除回到欢迎页，并修了途中发现的问题 |
+| 全部 OAR harness | 完成（2026-11-13）：OAR 的 12 个 harness 都列出，已装的可直接选。设置里有完整列表：没装的可以一键安装（运行官方安装命令，先给人看要跑什么），没登录的可以用 harness 自己的登录流程登录（链接或设备码，需要时在控制台里输入回填）。Cursor 的 SDK 是 Cursor 自己的包，Mingle 不随包分发，按需用 npm 装到数据目录的 `vendor/`。不接受追加系统提示的 harness（Kimi、DeepSeek Harness、CodeBuddy、Cursor）改为在新会话第一条消息里带上操作指南；不接受环境变量的（Cursor）在指南里写明调用 CLI 的完整命令。实测：Claude Code、Codex、OpenCode、Kimi 端到端回复；DeepSeek Harness 和 Cursor 在控制台里装好，分别需要 DeepSeek API key 和 Cursor 登录才能回复；Grok 这台机器上 OAR 的 ACP 初始化超时（直接跑 `grok -p` 正常），待查 |
 | 更多 harness、审批转发 | 未开始 |
 
 ## 12. 验证记录
