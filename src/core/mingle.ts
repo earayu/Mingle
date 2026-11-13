@@ -540,6 +540,15 @@ export class Mingle {
   ): Promise<Connection> {
     const existing = this.store.connections().find((c) => c.platform === platform && c.botId === event.bot.id);
     if (existing) {
+      // Binding a bot again can hand out new credentials and revoke the old ones (QQ issues a
+      // fresh AppSecret on every scan), so the connection that already has this bot keeps
+      // working only if it takes the new ones. Scanning again for the same agent is then a
+      // successful rebind; for another agent it still fails, but leaves the first one intact.
+      if (existing.secretRef) {
+        await this.options.secrets.set(existing.secretRef, JSON.stringify(event.credentials));
+        await this.reconnect(existing.id, event.credentials);
+      }
+      if (existing.agentId === agentId) return this.store.connection(existing.id) as Connection;
       throw new MingleError(
         "bot_in_use",
         `this bot is already connected to ${this.store.agent(existing.agentId)?.name ?? "another agent"}`,

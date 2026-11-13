@@ -51,12 +51,22 @@ export class FakeChannel implements Channel {
   private events: ChannelEvents | undefined;
   private seq = 1000;
 
+  /** What binding the bot hands out; QQ issues a new secret on every scan. */
+  onboardCredentials: Record<string, string> = { token: "fake" };
+  /** The credentials of the latest connect attempt. */
+  lastCredentials: unknown;
+
   async *onboard() {
-    yield { kind: "succeeded" as const, credentials: { token: "fake" }, bot: { id: "bot1", name: "@alex_bot" } };
+    yield {
+      kind: "succeeded" as const,
+      credentials: this.onboardCredentials,
+      bot: { id: "bot1", name: "@alex_bot" },
+    };
   }
 
-  async connect(_credentials: unknown, events: ChannelEvents): Promise<ChannelConnection> {
+  async connect(credentials: unknown, events: ChannelEvents): Promise<ChannelConnection> {
     this.connects++;
+    this.lastCredentials = credentials;
     if (this.connectFailures > 0) {
       this.connectFailures--;
       throw new Error("fixture network down");
