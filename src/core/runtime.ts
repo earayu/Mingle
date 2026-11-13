@@ -70,12 +70,16 @@ export class AgentRuntime {
     return this.running;
   }
 
-  /** Resume pending work after a restart. */
-  start(): void {
+  /**
+   * Resume pending work after a restart. `after`: wait for it before opening, e.g. for the
+   * previous session of this agent to close, so there are never two.
+   */
+  start(after?: Promise<void>): void {
     this.setStatus("idle");
     // Open the session now, not on the first message: startup problems (login,
     // a refused option) surface before anyone chats. No input is delivered here.
     this.chain = this.chain
+      .then(() => after)
       .then(async () => {
         if (this.disposed) return;
         await this.ensureSession();

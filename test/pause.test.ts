@@ -102,6 +102,22 @@ describe("pausing an agent", () => {
     await until(() => channel.sent.filter((m) => m.text.includes("paused")).length === 2);
   });
 
+  it("survives quick toggling and keeps a single session", async () => {
+    current = await rig(async (t) => {
+      for (const id of messageIds(t.input))
+        await runCli(t.options.env as Record<string, string>, ["message", "reply", id], "ok");
+    });
+    const { channel, mingle, agentId, admin } = current;
+    for (let i = 0; i < 3; i++) {
+      await admin("POST", `/v1/admin/agents/${agentId}/pause`);
+      await admin("POST", `/v1/admin/agents/${agentId}/resume`);
+    }
+    expect(mingle.isPaused(agentId)).toBe(false);
+    channel.receive({ text: "still there?", chat: dm });
+    await until(() => channel.sent.some((m) => m.text === "ok"));
+    expect(current.turns).toHaveLength(1);
+  });
+
   it("stays paused across a restart", async () => {
     current = await rig(async () => {});
     const { mingle, agentId, admin } = current;

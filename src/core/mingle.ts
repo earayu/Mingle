@@ -402,13 +402,11 @@ export class Mingle {
   /** Resume a paused agent: open its session again and fire the reminders that came due meanwhile. */
   async resumeAgent(idOrSlug: string): Promise<boolean> {
     const agent = this.agent(idOrSlug);
-    if (!this.paused.has(agent.id)) return false;
-    // Never two sessions of one agent: the paused one finishes closing first.
-    await this.closing.get(agent.id);
     if (!this.paused.delete(agent.id)) return false;
     for (const chat of this.store.agentChats(agent.id)) this.pauseNoted.delete(chat.id);
     this.store.setAgentStatus(agent.id, "offline");
-    this.addRuntime(agent).start();
+    // Never two sessions of one agent: the new one opens once the paused one has closed.
+    this.addRuntime(agent).start(this.closing.get(agent.id));
     this.fireReminders();
     this.log(`${agent.name} resumed`);
     return true;
