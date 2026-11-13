@@ -636,6 +636,14 @@ export class Mingle {
     return retried;
   }
 
+  /** Dismiss selected failed or unanswered inbound messages without waking the agent or sending a reply. */
+  ignoreMessages(idOrSlug: string, ids: readonly string[]): string[] {
+    const agent = this.agent(idOrSlug);
+    const ignored = this.store.retryable(agent.id, ids).map((message) => message.id);
+    this.store.setInboundState(ignored, "ignored");
+    return ignored;
+  }
+
   // --------------------------------------------------------------- reminders
 
   fireReminders(now = Date.now()): void {
