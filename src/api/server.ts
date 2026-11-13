@@ -264,6 +264,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
       bot: n.botName,
       state: n.state,
       detail: n.stateDetail,
+      retryAt: mingle.retryAt(n.id),
       owner: n.ownerId !== null,
       invite: inviteUrl(n.platform, n.botId, n.botName),
     })),
@@ -296,7 +297,14 @@ export function createApi(mingle: Mingle): Hono<Env> {
           name: agent.name,
           status: agent.status,
           task: store.tasks(agent.id, false).find((t) => t.status === "in_progress")?.title ?? null,
-          connections: connections.map((n) => ({ id: n.id, platform: n.platform, bot: n.botName, state: n.state })),
+          // `retrying`: offline but Mingle tries again by itself, so it is "down", not something to fix.
+          connections: connections.map((n) => ({
+            id: n.id,
+            platform: n.platform,
+            bot: n.botName,
+            state: n.state,
+            retrying: mingle.retryAt(n.id) !== null,
+          })),
           failed: given.filter((m) => m.state === "failed").length,
           unanswered: given.filter((m) => m.state === "unanswered").length,
         };
@@ -432,7 +440,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
   /** Try again on messages the agent failed or did not answer: all of them, or `ids`. */
   app.post("/v1/admin/agents/:id/messages/retry", async (c) => {
     const body = await c.req.json<{ ids?: string[] }>().catch(() => ({}) as { ids?: string[] });
-    return c.json({ retried: mingle.retryMessages(c.req.param("id"), body.ids) });
+    return c.json(mingle.retryMessages(c.req.param("id"), body.ids));
   });
 
   /** Mark failed or unanswered messages as ignored: kept in activity, no longer needing the owner. */
@@ -492,6 +500,14 @@ export function createApi(mingle: Mingle): Hono<Env> {
   app.delete("/v1/admin/onboarding/:id", (c) => {
     mingle.cancelOnboarding(c.req.param("id"));
     return c.json({ ok: true });
+  });
+
+  // Try an offline bot again now, rather than at its next automatic attempt.
+  app.post("/v1/admin/connections/:id/reconnect", async (c) => {
+    if (!store.connection(c.req.param("id"))) throw notFound("connection", c.req.param("id"));
+    await mingle.reconnect(c.req.param("id"));
+    const connection = store.connection(c.req.param("id"));
+    return c.json({ state: connection?.state ?? null, detail: connection?.stateDetail ?? null });
   });
 
   app.delete("/v1/admin/connections/:id", async (c) => {

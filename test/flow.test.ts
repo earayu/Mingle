@@ -2,7 +2,7 @@ import { scriptedRuntime } from "@botiverse/oar/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Harness, HarnessSession } from "../src/harness/harness.ts";
 import { oarHarness } from "../src/harness/harness.ts";
-import { messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
+import { type FakeChannel, messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
 
 /**
  * End to end: fake chat app → Mingle → OAR scripted harness → real `mingle` CLI
@@ -536,7 +536,7 @@ describe("eager session startup", () => {
     expect(deliveries).toHaveLength(0);
     const retried = await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: [stored?.id] });
     expect(retried.status).toBe(200);
-    expect(retried.json).toEqual({ retried: [stored?.id] });
+    expect(retried.json).toEqual({ retried: [stored?.id], offline: [] });
     await until(() => deliveries.length === 1);
     expect(deliveries[0]).toContain("retained input");
     expect(deliveries[0]).toContain("[mingle] Retry:");
@@ -575,6 +575,71 @@ describe("waking from sleep", () => {
 
     channel.receive({ text: "still there?" });
     await until(() => channel.sent.length === 1);
+  });
+
+  it("keeps trying when the network is not back yet", async () => {
+    current = await rig(async () => {});
+    const { channel, mingle } = current;
+    const id = mingle.store.connections()[0]?.id as string;
+    channel.connectFailures = 2;
+    await mingle.resume("test");
+    // Offline, but with a time for the next try: never offline with nothing to do.
+    expect(mingle.store.connection(id)).toMatchObject({ state: "error", stateDetail: "network" });
+    expect(mingle.retryAt(id)).toBeGreaterThan(0);
+    expect(mingle.isLive(id)).toBe(false);
+    await until(() => mingle.store.connection(id)?.state === "connected");
+    expect(mingle.isLive(id)).toBe(true);
+    expect(mingle.retryAt(id)).toBeNull();
+    expect(channel.connects).toBe(4);
+  });
+
+  it("starts over when the adapter gives up, and waits for the owner on refused credentials", async () => {
+    current = await rig(async () => {});
+    const { channel, mingle, admin } = current;
+    const id = mingle.store.connections()[0]?.id as string;
+    channel.report({ kind: "error", code: "unknown" });
+    expect(mingle.isLive(id)).toBe(false);
+    await until(() => mingle.store.connection(id)?.state === "connected");
+    expect(channel.connects).toBe(2);
+
+    channel.report({ kind: "error", code: "credentials_revoked" });
+    expect(mingle.store.connection(id)).toMatchObject({ state: "error", stateDetail: "credentials_revoked" });
+    expect(mingle.retryAt(id)).toBeNull();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(channel.connects).toBe(2);
+
+    // The owner presses "Reconnect".
+    const reconnected = await admin("POST", `/v1/admin/connections/${id}/reconnect`);
+    expect(reconnected.json).toEqual({ state: "connected", detail: null });
+    expect(channel.connects).toBe(3);
+    const view = (await admin("GET", `/v1/admin/agents/${current.agentId}`)).json as {
+      connections: { retryAt: number | null }[];
+    };
+    expect(view.connections[0]?.retryAt).toBeNull();
+  });
+
+  it("names the offline bot when a retry cannot run", async () => {
+    current = await rig(async () => {});
+    const { channel, mingle, agentId, admin } = current;
+    const id = mingle.store.connections()[0]?.id as string;
+    const inbound = channel.receive({ text: "anyone?" });
+    const chat = await until(() => mingle.store.agentChats(agentId)[0]?.id);
+    await until(() => mingle.store.messageByPlatformId(chat, inbound.platformId)?.state === "unanswered");
+    const message = mingle.store.messageByPlatformId(chat, inbound.platformId)?.id as string;
+    channel.connectFailures = 100;
+    channel.report({ kind: "error", code: "network" });
+    const retried = await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: [message] });
+    expect(retried.json).toEqual({ retried: [], offline: [id] });
+  });
+
+  it("ignores reports from a connection already replaced", async () => {
+    current = await rig(async () => {});
+    const { channel, mingle } = current;
+    const id = mingle.store.connections()[0]?.id as string;
+    const old = (channel as unknown as { events: Parameters<FakeChannel["connect"]>[1] }).events;
+    await mingle.reconnect(id);
+    old.onState({ kind: "error", code: "credentials_revoked" });
+    expect(mingle.store.connection(id)?.state).toBe("connected");
   });
 
   it("leaves a connection removed meanwhile alone", async () => {

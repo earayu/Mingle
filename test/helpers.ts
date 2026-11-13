@@ -44,6 +44,8 @@ export class FakeChannel implements Channel {
   /** How many times a bot connected, and how many of those connections were closed. */
   connects = 0;
   closes = 0;
+  /** The next this many connect attempts throw, as when the network is down. */
+  connectFailures = 0;
   private events: ChannelEvents | undefined;
   private seq = 1000;
 
@@ -52,8 +54,12 @@ export class FakeChannel implements Channel {
   }
 
   async connect(_credentials: unknown, events: ChannelEvents): Promise<ChannelConnection> {
-    this.events = events;
     this.connects++;
+    if (this.connectFailures > 0) {
+      this.connectFailures--;
+      throw new Error("fixture network down");
+    }
+    this.events = events;
     return {
       bot: { id: "bot1", name: "@alex_bot" },
       capabilities: () => ({
@@ -106,6 +112,11 @@ export class FakeChannel implements Channel {
         this.closes++;
       },
     };
+  }
+
+  /** Report a state of the live connection, as the platform adapter would. */
+  report(state: Parameters<ChannelEvents["onState"]>[0]): void {
+    this.events?.onState(state);
   }
 
   /** Deliver a message as if it arrived from the platform. */
@@ -218,6 +229,7 @@ export async function rig(
     coalesceMs: options.coalesceMs ?? 150,
     reminderTickMs: 60_000,
     retryDelaysMs: [10],
+    reconnectDelaysMs: [30],
     // MINGLE_E2E_LOG=1 prints what Mingle logs, to see why a real harness did not answer.
     ...(process.env.MINGLE_E2E_LOG ? { log: (line: string) => console.log(`[mingle] ${line}`) } : {}),
   });

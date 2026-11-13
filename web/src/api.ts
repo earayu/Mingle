@@ -54,6 +54,8 @@ export interface ConnectionView {
   bot: string | null;
   state: "awaiting_credentials" | "awaiting_approval" | "connected" | "reconnecting" | "error";
   detail: string | null;
+  /** When Mingle tries an offline bot again by itself; null when it waits for the person or is connected. */
+  retryAt: number | null;
   owner: boolean;
   /** Where to add the bot to a server, for platforms where that is a separate step. */
   invite: string | null;
@@ -201,7 +203,7 @@ export const api = {
   stop: (id: string) => call<{ stopped: boolean }>("POST", `/v1/admin/agents/${id}/stop`),
   /** Try again on failed or unanswered messages: these, or all of them. */
   retry: (id: string, ids?: string[]) =>
-    call<{ retried: string[] }>("POST", `/v1/admin/agents/${id}/messages/retry`, ids ? { ids } : {}),
+    call<{ retried: string[]; offline: string[] }>("POST", `/v1/admin/agents/${id}/messages/retry`, ids ? { ids } : {}),
   /** Dismiss these failed or unanswered messages without sending anything. */
   ignore: (id: string, ids: string[]) =>
     call<{ ignored: string[] }>("POST", `/v1/admin/agents/${id}/messages/ignore`, { ids }),
@@ -212,6 +214,8 @@ export const api = {
   connect: (id: string, platform: Platform, credentials: Record<string, string>) =>
     call<{ id: string }>("POST", `/v1/admin/agents/${id}/connections`, { platform, credentials }),
   disconnect: (connectionId: string) => call("DELETE", `/v1/admin/connections/${connectionId}`),
+  /** Try an offline bot again now. */
+  reconnect: (connectionId: string) => call("POST", `/v1/admin/connections/${connectionId}/reconnect`),
   startOnboarding: (id: string, platform: Platform) =>
     call<{ id: string }>("POST", `/v1/admin/agents/${id}/onboarding`, { platform }),
   onboarding: (id: string) => call<OnboardingState>("GET", `/v1/admin/onboarding/${id}`),

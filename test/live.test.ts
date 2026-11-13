@@ -237,7 +237,7 @@ describe("retrying messages", () => {
     state.broken = false;
     const { json } = await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, {});
     const id = mingle.store.chatMessages(chat, 10)[0]?.id as string;
-    expect(json).toEqual({ retried: [id] });
+    expect(json).toEqual({ retried: [id], offline: [] });
 
     // A new live reply opens on the same message and becomes the answer.
     await until(() => channel.lives[1]?.final);
@@ -265,6 +265,7 @@ describe("retrying messages", () => {
     state.ignore = false;
     expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: [id] })).json).toEqual({
       retried: [id],
+      offline: [],
     });
     await until(() => mingle.store.message(id)?.state === "replied");
     expect(channel.sent.map((m) => m.text)).toEqual(["Sorry for the wait: yes."]);
@@ -273,6 +274,7 @@ describe("retrying messages", () => {
     const before = turns.length;
     expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: [id] })).json).toEqual({
       retried: [],
+      offline: [],
     });
     await sleep(400);
     expect(turns).toHaveLength(before);
@@ -334,6 +336,7 @@ describe("ignoring messages", () => {
       expect(summary.agents.find((a) => a.id === agentId)).toMatchObject({ failed: 0, unanswered: 0 });
       expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: [id] })).json).toEqual({
         retried: [],
+        offline: [],
       });
 
       // Nothing was delivered, sent or reacted to: ignoring only edits local records.

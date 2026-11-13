@@ -51,8 +51,12 @@ const en = {
   "connection.detail.credentials_revoked": "The credentials no longer work. Remove this bot and connect it again.",
   "connection.detail.permission_missing":
     "The bot is missing a permission. Check the app's permissions on the platform.",
-  "connection.detail.network": "Cannot reach the chat app. Mingle keeps retrying.",
-  "connection.detail.unknown": "The connection stopped. Remove this bot and connect it again.",
+  "connection.detail.network": "Cannot reach the chat app. Mingle tries again by itself.",
+  "connection.detail.unknown": "The connection dropped. Mingle tries again by itself.",
+  "connection.detail.credentials_missing":
+    "This bot's credentials are no longer on this computer. Remove it and connect it again.",
+  "connection.reconnect": "Reconnect",
+  "connection.none": "No chat app yet. Connect one so people can talk to it.",
   "chat.dm": "Direct message",
   "chat.group": "Group",
   "task.todo": "To do",
@@ -257,7 +261,9 @@ const en = {
   "needs.retryFirst": "Fix the problem above first, or it fails again.",
   "agent.retry": "Retry",
   "agent.retrying": "{name} is trying {count} again and answers in the chat.",
-  "agent.retryOffline": "Nothing to retry while the chat app is offline.",
+  "agent.retryOffline":
+    "{bot} is offline, so nothing was retried. Mingle is reconnecting it; retry once it is connected.",
+  "agent.retryNothing": "Nothing to retry: these messages were already handled.",
   "agent.ignore": "Ignore",
   "agent.ignored": "Ignored",
   "agent.ignoredNotice": "Ignored {count} message(s). The messages are kept in activity.",
@@ -406,8 +412,11 @@ const zh: Record<MessageKey, string> = {
   "connection.approvalHint": "管理员通过后 Mingle 会自动连上，可以关闭这个页面。",
   "connection.detail.credentials_revoked": "凭据已失效。移除这个机器人后重新连接。",
   "connection.detail.permission_missing": "机器人缺少权限，请在平台上检查应用权限。",
-  "connection.detail.network": "连不上聊天软件，Mingle 会持续重试。",
-  "connection.detail.unknown": "连接已中断。移除这个机器人后重新连接。",
+  "connection.detail.network": "连不上聊天软件，Mingle 会自动重试。",
+  "connection.detail.unknown": "连接断开了，Mingle 会自动重试。",
+  "connection.detail.credentials_missing": "这台电脑上找不到这个机器人的凭据。移除后重新连接。",
+  "connection.reconnect": "重新连接",
+  "connection.none": "还没有接入聊天软件。接入后大家就能和它聊天。",
   "chat.dm": "私聊",
   "chat.group": "群聊",
   "task.todo": "待办",
@@ -600,7 +609,8 @@ const zh: Record<MessageKey, string> = {
   "needs.retryFirst": "先解决上面的问题，否则还会失败。",
   "agent.retry": "重试",
   "agent.retrying": "{name} 正在重新处理 {count} 条消息，会在聊天里回复。",
-  "agent.retryOffline": "聊天软件离线，暂时没法重试。",
+  "agent.retryOffline": "{bot} 离线，这次没有重试。Mingle 正在自动重连，连上后再点重试。",
+  "agent.retryNothing": "没有需要重试的消息，它们已经处理过了。",
   "agent.ignore": "忽略",
   "agent.ignored": "已忽略",
   "agent.ignoredNotice": "已忽略 {count} 条消息，消息仍保留在动态里。",
@@ -788,7 +798,9 @@ export const useI18n = () => useContext(I18n);
 export function translator(locale: Locale): Translate {
   const catalog = catalogs[locale];
   return (key, vars) => {
-    let text = catalog[key] ?? en[key];
+    // A key built at runtime (`connection.detail.${code}`) may not exist: answer with the key,
+    // so callers can tell and fall back, rather than rendering nothing.
+    let text = catalog[key] ?? en[key] ?? key;
     for (const [k, v] of Object.entries(vars ?? {})) text = text.replace(`{${k}}`, v);
     return text;
   };

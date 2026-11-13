@@ -27,6 +27,17 @@ type connectionSummary struct {
 	ID       string `json:"id"`
 	Platform string `json:"platform"`
 	State    string `json:"state"`
+	// Retrying is an offline connection Mingle tries again by itself (docs/spec.md 6.4).
+	Retrying bool `json:"retrying"`
+}
+
+// notifyState is the state notifications go by: offline while Mingle retries on its own
+// counts as reconnecting, so each automatic attempt does not notify "failed" again.
+func (c connectionSummary) notifyState() string {
+	if c.State == "error" && c.Retrying {
+		return "reconnecting"
+	}
+	return c.State
 }
 
 // online is whether people can reach the agent: one of its chat apps is connected.
@@ -199,7 +210,8 @@ func (w *watcher) next(s *summary, now time.Time, t texts) []note {
 		for _, c := range a.Connections {
 			seen[c.ID] = true
 			was, known := before[c.ID]
-			if c.State == "reconnecting" {
+			state := c.notifyState()
+			if state == "reconnecting" {
 				if _, ok := w.down[c.ID]; !ok {
 					w.down[c.ID] = now
 				}
@@ -211,13 +223,13 @@ func (w *watcher) next(s *summary, now time.Time, t texts) []note {
 				delete(w.down, c.ID)
 				delete(w.told, c.ID)
 			}
-			if first || !known || was.State == c.State {
+			if first || !known || was.notifyState() == state {
 				continue
 			}
 			switch {
-			case c.State == "error":
+			case state == "error":
 				out = append(out, note{"error:" + c.ID, a.Slug, t.errorTitle(a.Name, c.Platform), t.errorBody})
-			case c.State == "connected" && was.State == "awaiting_approval":
+			case state == "connected" && was.State == "awaiting_approval":
 				out = append(out, note{"approved:" + c.ID, a.Slug, t.approvedTitle(c.Platform), t.approvedBody(a.Name, c.Platform)})
 			}
 		}
