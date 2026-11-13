@@ -93,11 +93,11 @@ function fakeLark() {
   };
 }
 
-function fakeApi(options: { activated: () => boolean; deny?: boolean }): FeishuApi {
+function fakeApi(options: { activated: () => boolean; deny?: boolean; hold?: Promise<void> }): FeishuApi {
   return {
     async register({ onQRCodeReady }) {
       onQRCodeReady({ url: "https://open.feishu.cn/page/launcher?user_code=ABCD", expireIn: 600 });
-      await new Promise((r) => setTimeout(r, 20));
+      await (options.hold ?? new Promise((r) => setTimeout(r, 20)));
       if (options.deny) throw Object.assign(new Error("denied"), { code: "access_denied" });
       return { appId: "cli_1", appSecret: "secret", ownerId: "ou_owner", domain: "feishu" };
     },
@@ -305,10 +305,14 @@ describe("QR onboarding through the console API", () => {
   it("shows the QR, then lands on a connection owned by the scanner and waiting for approval", async () => {
     let active = false;
     const lark = fakeLark();
+    let releaseScan = () => {};
+    const scanHold = new Promise<void>((resolve) => {
+      releaseScan = resolve;
+    });
     current = await rig(async () => {}, {
       channels: {
         feishu: feishuChannel({
-          api: fakeApi({ activated: () => active }),
+          api: fakeApi({ activated: () => active, hold: scanHold }),
           approvalPollMs: 20,
           createChannel: () => lark.channel,
         }),
@@ -338,6 +342,7 @@ describe("QR onboarding through the console API", () => {
     });
     expect(qr.state).toBe("qr");
     expect(qr.qrSvg).toMatch(/^<svg/);
+    releaseScan();
 
     const result = await eventually(async () => {
       const state = (await admin("GET", `/v1/admin/onboarding/${id}`)).json as {
