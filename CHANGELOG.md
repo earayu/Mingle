@@ -5,6 +5,13 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
 ## Unreleased
 
+## 0.1.4
+
+- A connection's "…" menu is no longer clipped by the card around it, and opens upward when there is no room below.
+- "Manage" in the side panel scrolls to the chat apps section and puts it in focus, even when the settings tab is already open.
+- The getting-started checklist keeps its last step done once the agent has sent its first reply — restarts, updates and removed connections no longer bring it back. Until then, "answering…" only shows while the chat app is connected and the agent is actually working; otherwise it says what to try next.
+- Choosing light or dark by hand now looks identical to following the system, sidebar material included, and the desktop app's window controls follow the chosen mode.
+
 ## 0.1.3
 
 - Settings open and brain changes save without the second-long wait: Mingle finds the installed harnesses once at startup, checks them side by side, and refreshes the list in the background.
