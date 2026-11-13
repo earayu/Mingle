@@ -343,6 +343,21 @@ stateDiagram-v2
 
 "等待管理员审核"是一等状态。控制台明确告诉用户正在等谁、等什么，并在通过后自动继续。
 
+### 6.5 暂不支持的平台
+
+2026-11-14 评估过以下平台（MING-36），决定暂不支持，有明确需求时再议。
+
+| 平台 | 官方机器人通道 | 不支持的原因 |
+|---|---|---|
+| LINE | Messaging API，收消息只有 webhook（没有轮询或长连接） | 需要公网 HTTPS 地址，与"没有服务端、只走出站连接"冲突 |
+| WhatsApp | Cloud API，收消息只有 webhook，要求公网 HTTPS 和有效证书 | 同上；另需 WhatsApp Business 号码，有 24 小时客服窗口限制 |
+| KakaoTalk | Kakao i Open Builder 技能服务器（webhook），5 秒内回复或 5 分钟内一次性回调 | 同上；需要 Kakao 商业频道，机器人基本不能主动发消息，提醒和回报做不了 |
+| iMessage | 只有 Apple Messages for Business，须经苹果认可的服务商，且不批准只有机器人的服务 | 个人无法获得。操控本机"信息"App 会以用户自己的 Apple ID 说话，违反"只走官方机器人通道" |
+
+以后若要做，可行的方向是：webhook 平台在 127.0.0.1 的独立端口接收，公网地址由用户自备的隧道（Cloudflare Tunnel、Tailscale Funnel、ngrok）提供，先 LINE 后 WhatsApp。这需要先修改第 1.4 节和 `AGENTS.md` 的约束。iMessage 和 KakaoTalk 无论如何体验都差，不建议做。
+
+适配器插件机制（让第三方以外部模块实现 `Channel`）同样暂不做：八个适配器多数尚未真机验证，`Channel` 接口还会变；插件是任意代码，会接触 Keychain 里的 IM 凭据，需要先有权限和信任模型。在此之前保持 `Channel` 接口不出现平台名称，内部适配器只经 `src/channels/registry.ts` 注册。以后开放插件时，把注册表扩展到外部模块，并把固定的 `Platform` 联合类型改为可扩展。
+
 ## 7. 整体架构
 
 ```mermaid
