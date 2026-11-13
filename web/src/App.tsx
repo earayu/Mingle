@@ -119,6 +119,16 @@ function Shell() {
 
   usePolling(refresh, 2000, Boolean(token));
 
+  // A new agent goes into the list right away, so routing to its page does not race the next
+  // status poll and fall back to the first agent.
+  const created = useCallback(
+    async (agent: AgentView) => {
+      setAgents((list) => (list && !list.some((a) => a.id === agent.id) ? [...list, agent] : list));
+      await refresh();
+    },
+    [refresh],
+  );
+
   if (problem === "unauthorized") return <Unauthorized />;
 
   const slug = view.kind === "agent" || view.kind === "connect" ? view.slug : undefined;
@@ -128,7 +138,7 @@ function Shell() {
   if (agents !== null) {
     if (view.kind === "settings") page = <SettingsPage version={version} />;
     else if (view.kind === "new")
-      page = <NewAgent first={agents.length === 0} onNavigate={navigate} onCreated={refresh} />;
+      page = <NewAgent first={agents.length === 0} onNavigate={navigate} onCreated={created} />;
     else if (view.kind === "connect" && current)
       page = <ConnectPage agent={current} platform={view.platform} onNavigate={navigate} onChanged={refresh} />;
     else if (current) page = <AgentPage agent={current} onNavigate={navigate} onChanged={refresh} />;
