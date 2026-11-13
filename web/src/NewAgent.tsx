@@ -204,6 +204,7 @@ export function BrainPicker({
             role="radio"
             aria-checked={h.id === harness}
             disabled={Boolean(h.disabled)}
+            title={h.disabled ? errorText(t, { code: h.disabled.code, next: h.disabled.reason }) : undefined}
             onClick={() => onHarness(h.id)}
             className="flex min-w-0 items-center gap-3 rounded-control border border-line2 bg-bg px-3 py-2.5 text-left transition-colors duration-[120ms] enabled:hover:bg-bg2 aria-checked:border-accent aria-checked:bg-accent-tint aria-checked:ring-1 aria-checked:ring-accent disabled:cursor-not-allowed disabled:bg-bg2 disabled:text-ink2"
           >
@@ -211,11 +212,8 @@ export function BrainPicker({
             <span className="flex min-w-0 flex-col">
               <span className="truncate font-medium">{h.name}</span>
               {h.version ? <span className="truncate text-caption text-ink3">{h.version}</span> : null}
-              {h.disabled ? (
-                <span className="whitespace-normal wrap-anywhere text-caption text-ink2">
-                  {t("brain.incompatible")} · {errorText(t, { code: h.disabled.code, next: h.disabled.reason })}
-                </span>
-              ) : null}
+              {/* The reason is on hover: a brain nobody picked should not fill the page with text. */}
+              {h.disabled ? <span className="truncate text-caption text-ink2">{t("brain.incompatible")}</span> : null}
             </span>
           </button>
         ))}

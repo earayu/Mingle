@@ -85,14 +85,28 @@ export function AgentPage({
   }, [agent.id]);
   usePolling(refresh, 2500);
 
+  // A notice answers one click; it must not outlive what it describes.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 8000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a notice belongs to the tab it was shown on
+  useEffect(() => setNotice(null), [tab]);
+
   const busy = agent.status === "thinking" || agent.status === "working";
   const retry = async (ids: string[]) => {
     try {
-      const { retried } = await api.retry(agent.id, ids);
+      const { retried, offline } = await api.retry(agent.id, ids);
+      const bots = agent.connections
+        .filter((c) => offline.includes(c.id))
+        .map((c) => c.bot ?? t(`platform.${c.platform}` as MessageKey));
       setNotice(
         retried.length > 0
           ? t("agent.retrying", { count: String(retried.length), name: agent.name })
-          : t("agent.retryOffline"),
+          : bots.length > 0
+            ? t("agent.retryOffline", { bot: bots.join(", ") })
+            : t("agent.retryNothing"),
       );
     } catch (error) {
       setNotice(errorText(t, error));
@@ -104,7 +118,13 @@ export function AgentPage({
   const failed = (activity ?? []).filter((m) => m.direction === "in" && m.state === "failed");
   const troubled = agent.connections.filter((c) => c.state === "error" || c.state === "awaiting_approval");
 
-  const hasNeeds = agent.connections.length > 0 || troubled.length > 0 || unanswered.length > 0 || failed.length > 0;
+  // With no bot left, the side panel is where to add one again (the getting-started card is gone by then).
+  const hasNeeds =
+    agent.connections.length > 0 ||
+    agent.hasReplied ||
+    troubled.length > 0 ||
+    unanswered.length > 0 ||
+    failed.length > 0;
   const needsYou = hasNeeds ? (
     <NeedsYou
       agent={agent}
@@ -137,8 +157,12 @@ export function AgentPage({
               <Button
                 small
                 onClick={async () => {
-                  const { stopped } = await api.stop(agent.id);
-                  setNotice(t(stopped ? "agent.stopped" : "agent.idleNothing"));
+                  try {
+                    const { stopped } = await api.stop(agent.id);
+                    setNotice(t(stopped ? "agent.stopped" : "agent.idleNothing"));
+                  } catch (error) {
+                    setNotice(errorText(t, error));
+                  }
                 }}
               >
                 {t("agent.stop")}
@@ -374,7 +398,16 @@ function NeedsYou({
         tone={c.state === "error" ? "red" : "amber"}
         title={`${c.bot ?? t(`platform.${c.platform}` as MessageKey)} · ${t(`connection.${c.state}` as MessageKey)}`}
       >
-        {c.state === "error" ? connectionDetail(t, c) : t("connection.approvalHint")}
+        {c.state === "error" ? (
+          <>
+            {connectionDetail(t, c)}
+            <div className="mt-2">
+              <ReconnectButton connection={c} />
+            </div>
+          </>
+        ) : (
+          t("connection.approvalHint")
+        )}
       </Problem>
     )),
     ...(failed.length > 0
@@ -394,6 +427,18 @@ function NeedsYou({
         ]
       : []),
   ];
+  // No bot left (the last one removed): nobody can reach the agent, so that comes first.
+  if (agent.connections.length === 0 && agent.hasReplied) {
+    items.unshift(
+      <Problem key="no-bot" title={t("connection.none")}>
+        <div className="mt-1">
+          <Button small onClick={onConnect}>
+            {t("start.connectAction")}
+          </Button>
+        </div>
+      </Problem>,
+    );
+  }
   if (agent.connections.length === 0 && items.length === 0) return null;
   return (
     <Section title={t("needs.title")}>
@@ -404,11 +449,6 @@ function NeedsYou({
           <StatusDot state="connected" /> {t("needs.none")}
         </p>
       )}
-      {agent.connections.length === 0 ? (
-        <Button className="self-start" onClick={onConnect}>
-          {t("start.connectAction")}
-        </Button>
-      ) : null}
     </Section>
   );
 }
@@ -441,6 +481,27 @@ function ChatAppsSummary({ agent, onManage }: { agent: AgentView; onManage: () =
 function connectionDetail(t: ReturnType<typeof useI18n>["t"], c: ConnectionView): string {
   const key = `connection.detail.${c.detail}` as MessageKey;
   return t(key) !== key ? t(key) : t("connection.detail.unknown");
+}
+
+/** Try an offline bot again now. Offered on every error: waiting for the automatic retry is never the only way. */
+function ReconnectButton({ connection }: { connection: ConnectionView }) {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      small
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        await api
+          .reconnect(connection.id)
+          .catch(() => {})
+          .finally(() => setBusy(false));
+      }}
+    >
+      {t("connection.reconnect")}
+    </Button>
+  );
 }
 
 function Work({ work }: { work: { tasks: Task[]; reminders: Reminder[] } }) {
@@ -497,7 +558,7 @@ function Connections({
   onChanged: () => void;
 }) {
   const { t } = useI18n();
-  if (agent.connections.length === 0) return null;
+  // Always shown, even with no bot: removing the last one must not remove the way to add one.
   return (
     <Section
       title={t("agent.chatApps")}
@@ -507,11 +568,20 @@ function Connections({
         </Button>
       }
     >
-      <Group>
-        {agent.connections.map((c) => (
-          <ConnectionRow key={c.id} connection={c} onChanged={onChanged} />
-        ))}
-      </Group>
+      {agent.connections.length === 0 ? (
+        <div className="flex flex-col items-start gap-3 rounded-card border border-line bg-card px-4 py-3.5">
+          <p className="text-small text-ink2">{t("connection.none")}</p>
+          <Button variant="primary" small onClick={onConnect}>
+            {t("start.connectAction")}
+          </Button>
+        </div>
+      ) : (
+        <Group>
+          {agent.connections.map((c) => (
+            <ConnectionRow key={c.id} connection={c} onChanged={onChanged} />
+          ))}
+        </Group>
+      )}
     </Section>
   );
 }
@@ -519,8 +589,15 @@ function Connections({
 function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; onChanged: () => void }) {
   const { t } = useI18n();
   const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
   const platform = t(`platform.${connection.platform}` as MessageKey);
-  const hint = connection.state === "connected" && !connection.owner ? t("connection.noOwner") : null;
+  const hint =
+    connection.state === "error"
+      ? connectionDetail(t, connection)
+      : connection.state === "connected" && !connection.owner
+        ? t("connection.noOwner")
+        : null;
   return (
     <GroupRow className="flex-wrap">
       <PlatformIcon platform={connection.platform} size={32} />
@@ -541,9 +618,19 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
           <Button
             small
             variant="danger"
+            disabled={removing}
             onClick={async () => {
-              await api.disconnect(connection.id);
-              onChanged();
+              setRemoving(true);
+              setFailure(null);
+              try {
+                await api.disconnect(connection.id);
+                onChanged();
+              } catch (error) {
+                setFailure(errorText(t, error));
+                setConfirming(false);
+              } finally {
+                setRemoving(false);
+              }
             }}
           >
             {t("connection.removeYes")}
@@ -554,6 +641,7 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
         </span>
       ) : (
         <span className="flex shrink-0 items-center gap-1">
+          {connection.state === "error" ? <ReconnectButton connection={connection} /> : null}
           {connection.invite ? (
             <a
               href={connection.invite}
@@ -570,7 +658,10 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
           />
         </span>
       )}
-      {hint ? <p className="w-full pl-11 text-caption text-ink3">{hint}</p> : null}
+      {failure ? <p className="w-full pl-11 text-caption text-red">{failure}</p> : null}
+      {hint ? (
+        <p className={`w-full pl-11 text-caption ${connection.state === "error" ? "text-red" : "text-ink3"}`}>{hint}</p>
+      ) : null}
     </GroupRow>
   );
 }
@@ -580,13 +671,21 @@ function RoleEditor({ agent, onSaved }: { agent: AgentView; onSaved: () => void 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(agent.role);
   const [saved, setSaved] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
     if (!editing) setDraft(agent.role);
   }, [agent.role, editing]);
 
   async function save() {
-    await api.setRole(agent.id, draft);
+    setFailure(null);
+    try {
+      await api.setRole(agent.id, draft);
+    } catch (error) {
+      // Keep the editor open with the draft, so nothing typed is lost.
+      setFailure(errorText(t, error));
+      return;
+    }
     setEditing(false);
     setSaved(true);
     onSaved();
@@ -627,6 +726,7 @@ function RoleEditor({ agent, onSaved }: { agent: AgentView; onSaved: () => void 
           {agent.role.trim() ? agent.role.trim() : <span className="text-ink3">{t("agent.roleEmpty")}</span>}
         </div>
       )}
+      {failure ? <p className="px-1 text-small text-red">{failure}</p> : null}
       {saved ? <p className="px-1 text-small text-ink2">{t("agent.roleSaved")}</p> : null}
     </Section>
   );
@@ -659,13 +759,12 @@ function Brain({ agent, onSaved }: { agent: AgentView; onSaved: () => void }) {
   }
 
   const current = harnesses?.find((h) => h.id === agent.harness);
-  // Why a listed harness cannot be chosen: current or alternative, name and reason.
-  const blockers = (harnesses ?? [])
-    .filter((h) => h.disabled)
-    .map(
-      (h) =>
-        `${h.name}${h.version ? ` ${h.version}` : ""}: ${errorText(t, { code: h.disabled?.code, next: h.disabled?.reason })}`,
-    );
+  const why = (h: Harness) =>
+    h.disabled
+      ? `${h.name}${h.version ? ` ${h.version}` : ""}: ${errorText(t, { code: h.disabled.code, next: h.disabled.reason })}`
+      : "";
+  // Only the harness this agent uses is explained here; others say why on hover.
+  const blocker = current?.disabled ? why(current) : null;
   const missingCurrent = harnesses && !current ? agent.harness : null;
   return (
     <Section title={t("create.brain")}>
@@ -681,7 +780,7 @@ function Brain({ agent, onSaved }: { agent: AgentView; onSaved: () => void }) {
             onChange={(e) => save({ harness: e.target.value, model: null })}
           >
             {(harnesses ?? []).map((h) => (
-              <option key={h.id} value={h.id} disabled={Boolean(h.disabled)}>
+              <option key={h.id} value={h.id} disabled={Boolean(h.disabled)} title={why(h) || undefined}>
                 {h.disabled ? `${h.name} · ${t("brain.incompatible")}` : h.name}
               </option>
             ))}
@@ -705,11 +804,7 @@ function Brain({ agent, onSaved }: { agent: AgentView; onSaved: () => void }) {
           {missingCurrent}: {t("error.harness_unavailable")}
         </p>
       ) : null}
-      {blockers.map((line) => (
-        <p key={line} className="px-1 text-small wrap-anywhere text-ink2">
-          {line}
-        </p>
-      ))}
+      {blocker ? <p className="px-1 text-small wrap-anywhere text-red">{blocker}</p> : null}
       {error ? <p className="px-1 text-small text-red">{error}</p> : null}
       {state === "saved" ? <p className="px-1 text-small text-ink2">{t("agent.brainSaved")}</p> : null}
     </Section>
@@ -727,6 +822,7 @@ function DeleteConfirm({
 }) {
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
   return (
     <div className="rise flex flex-col gap-3 rounded-card border border-red-line bg-red-tint px-4 py-3.5">
       <div className="flex flex-col gap-0.5">
@@ -740,7 +836,14 @@ function DeleteConfirm({
           disabled={busy}
           onClick={async () => {
             setBusy(true);
-            await api.remove(agent.id);
+            setFailure(null);
+            try {
+              await api.remove(agent.id);
+            } catch (error) {
+              setFailure(errorText(t, error));
+              setBusy(false);
+              return;
+            }
             await onDeleted();
           }}
         >
@@ -750,6 +853,7 @@ function DeleteConfirm({
           {t("agent.deleteNo")}
         </Button>
       </div>
+      {failure ? <p className="text-small text-red">{failure}</p> : null}
     </div>
   );
 }

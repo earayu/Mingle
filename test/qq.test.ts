@@ -132,3 +132,29 @@ describe("qq connection", () => {
     await connection.close();
   });
 });
+
+describe("qq start failures", () => {
+  it("tells refused credentials from an unreachable QQ", async () => {
+    const { startFailure } = await import("../src/channels/qq/qq.ts");
+    expect(startFailure(new Error("Network error getting access_token: fetch failed"))).toBe("network");
+    expect(startFailure(new Error("Token fetch failed: HTTP 502 — bad gateway"))).toBe("network");
+    expect(startFailure(new Error("Token fetch failed: HTTP 401 — invalid appsecret"))).toBe("credentials_revoked");
+    expect(startFailure(new Error('Failed to get access_token: {"code":100016}'))).toBe("credentials_revoked");
+  });
+
+  it("does not call a network failure revoked credentials", async () => {
+    const states: unknown[] = [];
+    const { bot } = fakeBot();
+    bot.start = async () => {
+      throw new Error("Network error getting access_token: getaddrinfo ENOTFOUND bots.qq.com");
+    };
+    const channel = qqChannel({ createBot: () => bot, readyTimeoutMs: 50 });
+    await expect(
+      channel.connect(
+        { appId: "a", appSecret: "s" },
+        { onMessage() {}, onState: (s) => states.push(s), onMembership() {} },
+      ),
+    ).rejects.toThrow(/Network error/);
+    expect(states).toEqual([]);
+  });
+});

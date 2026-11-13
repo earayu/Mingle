@@ -5,6 +5,15 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
 ## Unreleased
 
+- A chat app that cannot connect (for example, the network is not back yet after sleep) no longer stays offline for good: Mingle tries again by itself, waiting a little longer each time, and every bot that is offline has a "Reconnect" button. QQ no longer reports a network problem as revoked credentials.
+- Only problems you have to fix yourself (refused credentials, missing permissions) stop the retries, and the console says what to do.
+- Retrying a message while its bot is offline names that bot and says Mingle is reconnecting it; a retry with nothing left to do says so instead of claiming the chat app is offline. The message disappears after a few seconds.
+- After removing an agent's last bot, the settings and the side panel still offer to connect one.
+- The brain settings only explain the harness the agent uses; why another harness is not compatible shows on hover.
+- Connection errors with an unrecognized cause show a message again instead of an empty box.
+- Saving the role, removing a bot or an agent, and stopping now report a failure instead of leaving the button stuck.
+- Desktop notifications treat a bot Mingle is retrying as disconnected (one notice after five minutes), not as a new failure on every attempt.
+
 ## 0.1.4
 
 - A connection's "…" menu is no longer clipped by the card around it, and opens upward when there is no room below.

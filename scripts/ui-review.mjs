@@ -63,6 +63,8 @@ try {
   const busyAgent = await admin("POST", "/v1/admin/agents", { name: "Scout", harness, role: "" });
   const offAgent = await admin("POST", "/v1/admin/agents", { name: "Milo", harness, role: "" });
   const doneAgent = await admin("POST", "/v1/admin/agents", { name: "Riley", harness, role: "" });
+  // Answered before, then its last bot was removed: the way to add one must still be there.
+  const lonelyAgent = await admin("POST", "/v1/admin/agents", { name: "Quinn", harness, role: "" });
 
   // Seed chats and history straight into the database.
   const db = new DatabaseSync(join(home, "mingle.db"));
@@ -218,6 +220,7 @@ try {
   insert("UPDATE agents SET status = 'thinking', status_detail = 'Reading the route notes' WHERE id = ?", busyAgent.id);
   insert("UPDATE agents SET status = 'idle' WHERE id = ?", offAgent.id);
   insert("UPDATE agents SET status = 'idle' WHERE id = ?", doneAgent.id);
+  insert("UPDATE agents SET status = 'idle', has_replied = 1 WHERE id = ?", lonelyAgent.id);
   db.close();
 
   const pages = [
@@ -236,6 +239,7 @@ try {
     ["onboard-busy", `/a/${busyAgent.slug}`],
     ["onboard-offline", `/a/${offAgent.slug}`],
     ["onboard-done", `/a/${doneAgent.slug}`],
+    ["no-bot", `/a/${lonelyAgent.slug}`],
   ];
   // DOM assertions on the dumped page, per page name. zh = the zh-CN locale run.
   const checks = {
@@ -268,6 +272,11 @@ try {
       );
       assert.ok(!dom.includes(zh ? "正在回复" : "got it and is answering"), "disconnected agent shows replying");
       assert.ok(!dom.includes('class="spin'), "inactive agent shows a spinner");
+      // Offline is never a dead end: a way to reconnect is right there.
+      assert.ok(dom.includes(zh ? "重新连接" : "Reconnect"), "offline bot has no reconnect action");
+    },
+    "no-bot": (dom, zh) => {
+      assert.ok(dom.includes(zh ? "连接聊天软件" : "Connect a chat app"), "agent without a bot has no way to add one");
     },
     // Answered long ago, then 31 newer inbound pushed the reply out of the activity window.
     "onboard-done": (dom, zh) => {

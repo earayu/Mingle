@@ -143,6 +143,24 @@ func TestWatcherNotifiesOnlyWhatNeedsTheOwner(t *testing.T) {
 	if got := step(at("connected", "reconnecting", 4)); got != nil {
 		t.Fatalf("down again: %v", got)
 	}
+
+	// Offline while Mingle retries by itself flips between error and reconnecting: that is
+	// being down, told once after five minutes, never "failed" on every attempt.
+	step(at("connected", "connected", 4))
+	retrying := func(state string) *summary {
+		s := at("connected", state, 4)
+		s.Agents[0].Connections[1].Retrying = state == "error"
+		return s
+	}
+	for i := 0; i < 5; i++ {
+		if got := step(retrying([]string{"error", "reconnecting"}[i%2])); got != nil {
+			t.Fatalf("retry cycle %d: %v", i, got)
+		}
+		now = now.Add(time.Minute)
+	}
+	if got := step(retrying("error")); !reflect.DeepEqual(got, []string{"down:n2 Alex: Telegram disconnected for 5 minutes"}) {
+		t.Fatalf("retrying 5 minutes: %v", got)
+	}
 }
 
 func TestQuitDetail(t *testing.T) {

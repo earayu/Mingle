@@ -20,6 +20,7 @@ import { MingleError, notFound } from "./errors.ts";
 import { formatReminder } from "./format.ts";
 import { createHome, writeRole } from "./home.ts";
 import { slugify } from "./ids.ts";
+import { BACKOFF_MS, type LinkEvent, type LinkState, step, stored } from "./link.ts";
 import { LiveReplies, stopNote } from "./live.ts";
 import { Outbox } from "./outbox.ts";
 import type { Paths } from "./paths.ts";
@@ -51,6 +52,13 @@ function onboardingError(platform: Platform, code: OnboardingFailure): MingleErr
   );
 }
 
+interface Link {
+  state: LinkState;
+  /** Which connect attempt is current; bumped by every new attempt and by removal. */
+  gen: number;
+  timer?: NodeJS.Timeout | undefined;
+}
+
 export interface MingleOptions {
   readonly paths: Paths;
   readonly harness: Harness;
@@ -63,6 +71,8 @@ export interface MingleOptions {
   /** How often to look for a jump of the clock, the sign that the computer slept. */
   readonly wakeCheckMs?: number;
   readonly retryDelaysMs?: readonly number[];
+  /** Waits between automatic reconnect attempts of a bot that went offline. */
+  readonly reconnectDelaysMs?: readonly number[];
   readonly log?: (line: string) => void;
 }
 
@@ -75,6 +85,8 @@ export class Mingle {
   private apiUrl = "";
   private readonly runtimes = new Map<string, AgentRuntime>();
   private readonly live = new Map<string, ChannelConnection>();
+  /** Each bot's place in its connection state machine (`link.ts`). */
+  private readonly links = new Map<string, Link>();
   private readonly tokens = new Map<string, string>();
   private reminderTimer: NodeJS.Timeout | undefined;
   private wakeTimer: NodeJS.Timeout | undefined;
@@ -109,7 +121,7 @@ export class Mingle {
     // Warm the harness list so the console's first look at it does not wait on the probe.
     void this.probeHarnesses().catch(() => {});
     for (const agent of this.store.agents()) this.addRuntime(agent).start();
-    await Promise.all(this.store.connections().map((c) => this.reconnect(c)));
+    await Promise.all(this.store.connections().map((c) => this.reconnect(c.id)));
     const tick = this.options.reminderTickMs ?? 10_000;
     this.reminderTimer = setInterval(() => this.fireReminders(), tick);
     // Timers do not run while the computer sleeps: a tick that comes far later than due means it
@@ -131,23 +143,7 @@ export class Mingle {
   resume(reason: string): Promise<void> {
     this.resuming ??= (async () => {
       this.log(`${reason}: reconnecting the chat apps`);
-      await Promise.all(
-        this.store.connections().map(async (connection) => {
-          if (!connection.secretRef) return; // nothing to reconnect with
-          const live = this.live.get(connection.id);
-          this.live.delete(connection.id);
-          await live?.close().catch(() => {});
-          if (this.store.connection(connection.id)) await this.reconnect(connection);
-          // Removed while it reconnected: leave it gone.
-          if (!this.store.connection(connection.id)) {
-            await this.live
-              .get(connection.id)
-              ?.close()
-              .catch(() => {});
-            this.live.delete(connection.id);
-          }
-        }),
-      );
+      await Promise.all(this.store.connections().map((connection) => this.reconnect(connection.id)));
       this.fireReminders();
     })().finally(() => {
       this.resuming = undefined;
@@ -162,6 +158,11 @@ export class Mingle {
     this.brains.dispose();
     this.replies.dispose();
     for (const id of [...this.onboardings.keys()]) this.cancelOnboarding(id);
+    for (const link of this.links.values()) {
+      clearTimeout(link.timer);
+      link.gen++;
+    }
+    this.links.clear();
     await Promise.all([...this.live.values()].map((c) => c.close().catch(() => {})));
     this.live.clear();
     await Promise.all([...this.runtimes.values()].map((r) => r.dispose()));
@@ -428,7 +429,7 @@ export class Mingle {
       botName: event.bot.name,
       ...(event.ownerId ? { ownerId: event.ownerId } : {}),
     });
-    await this.connect(this.store.connection(connection.id) as Connection, event.credentials);
+    await this.reconnect(connection.id, event.credentials);
     if (event.ownerId) void this.greetOwner(connection.id, event.ownerId);
     return this.store.connection(connection.id) as Connection;
   }
@@ -449,11 +450,8 @@ export class Mingle {
   async removeConnection(connectionId: string): Promise<void> {
     const connection = this.store.connection(connectionId);
     if (!connection) return;
-    await this.live
-      .get(connectionId)
-      ?.close()
-      .catch(() => {});
-    this.live.delete(connectionId);
+    this.drive(connectionId, { kind: "remove" });
+    this.links.delete(connectionId);
     if (connection.secretRef) await this.options.secrets.delete(connection.secretRef);
     this.store.deleteConnection(connectionId);
   }
@@ -466,53 +464,105 @@ export class Mingle {
     return this.live.get(connectionId);
   }
 
-  private async reconnect(connection: Connection): Promise<void> {
-    if (!connection.secretRef) return;
-    const raw = await this.options.secrets.get(connection.secretRef);
-    if (!raw) {
-      this.store.updateConnection(connection.id, {
-        state: "error",
-        stateDetail: "credentials missing from the keychain",
+  /** When an offline bot tries again by itself, or null when it does not (connected, or waiting for the person). */
+  retryAt(connectionId: string): number | null {
+    const state = this.links.get(connectionId)?.state;
+    return state?.kind === "waiting" ? state.retryAt : null;
+  }
+
+  /**
+   * Connect a bot again now: at start, after sleep, or when the person asks. Closes what is
+   * there and starts a fresh attempt; resolves when that attempt ends, whichever way.
+   */
+  async reconnect(connectionId: string, credentials?: Credentials): Promise<void> {
+    const connection = this.store.connection(connectionId);
+    if (!connection?.secretRef) return; // nothing to connect with yet
+    if (!this.links.has(connectionId))
+      this.links.set(connectionId, { state: { kind: "connecting", attempt: 0 }, gen: 0 });
+    await this.drive(connectionId, { kind: "connect" }, undefined, credentials);
+  }
+
+  /**
+   * Feed one event to a bot's state machine, persist where it lands, and carry out its
+   * effect. `gen` ties an event to the attempt it came from: events of an attempt that was
+   * replaced (reconnected, removed) are dropped, so a late report cannot undo a newer state.
+   */
+  private drive(id: string, event: LinkEvent, gen?: number, credentials?: Credentials): Promise<void> {
+    const link = this.links.get(id);
+    if (!link || (gen !== undefined && gen !== link.gen)) return Promise.resolve();
+    const { state, effect } = step(link.state, event, Date.now(), this.options.reconnectDelaysMs ?? BACKOFF_MS);
+    link.state = state;
+    if (state.kind !== "removed") this.store.updateConnection(id, stored(state));
+    if (effect === "none") return Promise.resolve();
+    clearTimeout(link.timer);
+    link.timer = undefined;
+    this.closeLive(id);
+    if (effect === "retry_later" && state.kind === "waiting") {
+      this.log(
+        `connection ${id} is offline (${state.code}); trying again in ${Math.round((state.retryAt - Date.now()) / 1000)}s`,
+      );
+      link.timer = setTimeout(() => void this.drive(id, { kind: "timer" }), Math.max(0, state.retryAt - Date.now()));
+      link.timer.unref?.();
+    } else if (effect === "close" && state.kind === "stopped") {
+      this.log(`connection ${id} stopped (${state.code}); waiting for the owner`);
+    }
+    if (effect !== "connect") return Promise.resolve();
+    link.gen++;
+    return this.attempt(id, link.gen, credentials);
+  }
+
+  private closeLive(id: string): void {
+    const live = this.live.get(id);
+    this.live.delete(id);
+    void live?.close().catch(() => {});
+  }
+
+  /** One connect attempt. Its outcome goes back into the state machine as `opened` or `failed`. */
+  private async attempt(id: string, gen: number, given?: Credentials): Promise<void> {
+    const connection = this.store.connection(id);
+    if (!connection) return;
+    let reported: Extract<ConnectionState, { kind: "error" }>["code"] | undefined;
+    let live: ChannelConnection;
+    try {
+      const credentials = given ?? (await this.credentials(connection));
+      if (!credentials) {
+        await this.drive(id, { kind: "failed", code: "credentials_missing" }, gen);
+        return;
+      }
+      live = await this.channel(connection.platform).connect(credentials, {
+        onMessage: (message) => {
+          if (this.links.get(id)?.gen === gen) this.receive(id, message);
+        },
+        onState: (state) => {
+          if (state.kind === "error") reported = state.code;
+          void this.drive(id, { kind: "reported", state }, gen);
+        },
+        onMembership: (change) => {
+          if (this.links.get(id)?.gen === gen) this.onMembership(id, change);
+        },
       });
+    } catch (error) {
+      this.log(`${connection.platform} connection ${id} could not connect: ${(error as Error).message}`);
+      await this.drive(id, { kind: "failed", ...(reported ? { code: reported } : {}) }, gen);
       return;
     }
-    try {
-      await this.connect(connection, JSON.parse(raw) as Credentials);
-    } catch (error) {
-      this.store.updateConnection(connection.id, { state: "error", stateDetail: (error as Error).message });
+    if (this.links.get(id)?.gen !== gen) {
+      await live.close().catch(() => {});
+      return;
     }
+    this.live.set(id, live);
+    this.store.updateConnection(id, { botId: live.bot.id, botName: live.bot.name });
+    await this.drive(id, { kind: "opened" }, gen);
   }
 
-  private async connect(connection: Connection, credentials: Credentials): Promise<void> {
-    const channel = this.channel(connection.platform);
-    this.store.updateConnection(connection.id, { state: "reconnecting", stateDetail: null });
-    // An adapter may report a state while connecting (for example, waiting for an admin); keep it.
-    let reported = false;
-    const live = await channel.connect(credentials, {
-      onMessage: (message) => this.receive(connection.id, message),
-      onState: (state) => {
-        reported = true;
-        this.onState(connection.id, state);
-      },
-      onMembership: (change) => this.onMembership(connection.id, change),
-    });
-    this.live.set(connection.id, live);
-    this.store.updateConnection(connection.id, { botId: live.bot.id, botName: live.bot.name });
-    if (!reported) this.store.updateConnection(connection.id, { state: "connected" });
-  }
-
-  private onState(connectionId: string, state: ConnectionState): void {
-    const map = {
-      connecting: "reconnecting",
-      reconnecting: "reconnecting",
-      connected: "connected",
-      awaiting_approval: "awaiting_approval",
-      error: "error",
-    } as const;
-    this.store.updateConnection(connectionId, {
-      state: map[state.kind],
-      stateDetail: state.kind === "error" ? state.code : null,
-    });
+  private async credentials(connection: Connection): Promise<Credentials | undefined> {
+    const raw = connection.secretRef ? await this.options.secrets.get(connection.secretRef) : undefined;
+    if (!raw) return undefined;
+    try {
+      return JSON.parse(raw) as Credentials;
+    } catch {
+      return undefined;
+    }
   }
 
   private onMembership(connectionId: string, change: { chat: ChatRef; joined: boolean }): void {
@@ -606,18 +656,24 @@ export class Mingle {
   /**
    * The owner asks the agent to try again on messages it failed or did not answer
    * (all of them, or `ids`). Only messages whose chat app is online are retried: the
-   * agent could not reply to the others anyway. Returns the IDs retried.
+   * agent could not reply to the others anyway. Returns the IDs retried, and the connections
+   * that were offline, so the console can say which bot to reconnect.
    */
-  retryMessages(idOrSlug: string, ids?: readonly string[]): string[] {
+  retryMessages(idOrSlug: string, ids?: readonly string[]): { retried: string[]; offline: string[] } {
     const agent = this.agent(idOrSlug);
     const runtime = this.runtimes.get(agent.id);
-    if (!runtime) return [];
+    if (!runtime) return { retried: [], offline: [] };
     const retried: string[] = [];
+    const offline = new Set<string>();
     for (const message of this.store.retryable(agent.id, ids)) {
       const chat = this.store.chat(message.chatId);
       const connection = chat && this.store.connection(chat.connectionId);
       const live = connection && this.live.get(connection.id);
-      if (!chat || !connection || !live) continue;
+      if (!chat || !connection) continue;
+      if (!live) {
+        offline.add(connection.id);
+        continue;
+      }
       retried.push(message.id);
       if (message.platformId) {
         this.replies.open({
@@ -633,7 +689,7 @@ export class Mingle {
     }
     this.store.requeue(retried);
     runtime.retry(retried);
-    return retried;
+    return { retried, offline: [...offline] };
   }
 
   // --------------------------------------------------------------- reminders

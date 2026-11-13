@@ -61,7 +61,7 @@ export interface QqInbound {
 /** The parts of QQBot used here. Injected so tests run offline. */
 export interface QqBotLike {
   on(event: "message", handler: (ctx: unknown, msg: QqInbound) => void): unknown;
-  on(event: "ready" | "error", handler: (arg: unknown) => void): unknown;
+  on(event: "ready" | "resumed" | "error", handler: (arg: unknown) => void): unknown;
   start(signal?: AbortSignal): Promise<void>;
   stop(): void;
   sendText(target: ReplyTarget, content: string): Promise<{ id?: string }>;
@@ -191,21 +191,39 @@ export function qqChannel(options: QqOptions = {}): Channel {
         events.onMessage(inbound);
       });
       bot.on("error", () => events.onState({ kind: "reconnecting", attempt: 1 }));
+      bot.on("resumed", () => events.onState({ kind: "connected" }));
 
-      // start() fails fast on bad credentials, then keeps running until stopped.
+      // start() fails fast when it cannot get a token, then keeps running until stopped.
+      let started = false;
       const ready = new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, options.readyTimeoutMs ?? 10_000);
+        const timer = setTimeout(() => {
+          started = true;
+          resolve();
+        }, options.readyTimeoutMs ?? 10_000);
         bot.on("ready", () => {
           clearTimeout(timer);
+          if (started) events.onState({ kind: "connected" });
+          started = true;
           resolve();
         });
-        bot.start(stop.signal).catch((error) => {
-          clearTimeout(timer);
-          if (!stop.signal.aborted) {
-            events.onState({ kind: "error", code: "credentials_revoked" });
-            reject(error);
-          }
-        });
+        bot
+          .start(stop.signal)
+          .then(() => {
+            // The gateway gave up on its own (a fatal close): Mingle starts it over.
+            if (!stop.signal.aborted) events.onState({ kind: "error", code: "unknown" });
+          })
+          .catch((error) => {
+            clearTimeout(timer);
+            if (stop.signal.aborted) return;
+            const code = startFailure(error);
+            if (started) events.onState({ kind: "error", code });
+            else {
+              // Only refused credentials are final; anything else (offline after sleep, a QQ
+              // outage) passes, and Mingle tries again by itself.
+              if (code === "credentials_revoked") events.onState({ kind: "error", code });
+              reject(error);
+            }
+          });
       });
       await ready;
 
@@ -343,4 +361,17 @@ export function toInbound(msg: QqInbound): InboundMessage | undefined {
     addressedToBot: true,
     sentAt: Number.isNaN(Date.parse(msg.timestamp)) ? Date.now() : Date.parse(msg.timestamp),
   };
+}
+
+/**
+ * Why qqbot-nodejs could not start. Its token fetch throws "Network error getting
+ * access_token" when QQ cannot be reached and "Token fetch failed: HTTP <status>" when it
+ * answered with an error; only a 4xx or a token-less answer means the App ID or secret is wrong.
+ */
+export function startFailure(error: unknown): "credentials_revoked" | "network" {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/^Token fetch failed: HTTP 4\d\d/.test(message) || /^Failed to get access_token/.test(message)) {
+    return "credentials_revoked";
+  }
+  return "network";
 }
