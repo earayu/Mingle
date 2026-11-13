@@ -66,6 +66,15 @@ export class AgentRuntime {
   /** Resume pending work after a restart. */
   start(): void {
     this.setStatus("idle");
+    // Open the session now, not on the first message: startup problems (login,
+    // a refused option) surface before anyone chats. No input is delivered here.
+    this.chain = this.chain
+      .then(async () => {
+        if (this.disposed) return;
+        await this.ensureSession();
+        this.setStatus("idle");
+      })
+      .catch((error) => this.fail(error));
     for (const message of this.deps.store.undelivered(this.agentId)) this.enqueueMessage(message.id);
   }
 
@@ -95,12 +104,22 @@ export class AgentRuntime {
     return true;
   }
 
-  /** Drop the session so the next message opens one with fresh settings (role or harness changed). */
+  /** Reopen the session with fresh settings (role or harness changed), serialized with delivery. */
   async restart(): Promise<void> {
-    const session = this.session;
-    this.session = undefined;
-    this.running = false;
-    await session?.dispose().catch(() => {});
+    this.chain = this.chain
+      .then(async () => {
+        const session = this.session;
+        this.session = undefined;
+        this.running = false;
+        await session?.dispose().catch(() => {});
+        if (this.disposed) return;
+        await this.ensureSession();
+        this.setStatus("idle");
+        // Messages that arrived while the brain was broken still need delivering.
+        if (this.pending.length > 0) this.flushSoon();
+      })
+      .catch((error) => this.fail(error));
+    await this.chain;
   }
 
   async dispose(): Promise<void> {
@@ -234,6 +253,11 @@ export class AgentRuntime {
         },
       },
     );
+    if (this.disposed) {
+      // Stopped or deleted while the open was in flight: drop it, don't keep it.
+      await session.dispose();
+      throw new Error("agent runtime disposed");
+    }
     if (agent.sessionId && !session.resumed) {
       this.deps.log?.(`${this.agentId}: session ${agent.sessionId} was gone; opened ${session.id}`);
     }
@@ -289,6 +313,7 @@ export class AgentRuntime {
   }
 
   private fail(error: unknown): void {
+    if (this.disposed) return; // A stopped or deleted agent stays offline, not error.
     const message = error instanceof Error ? error.message : String(error);
     this.deps.log?.(`${this.agentId}: ${message}`);
     // Reopen (resuming the same conversation) on the next input.

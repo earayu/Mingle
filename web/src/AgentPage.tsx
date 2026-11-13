@@ -9,7 +9,7 @@ import {
   type Reminder,
   type Task,
 } from "./api.ts";
-import { errorText, type MessageKey, useI18n } from "./i18n.ts";
+import { errorText, type MessageKey, statusDetailText, useI18n } from "./i18n.ts";
 import { ModelPicker } from "./NewAgent.tsx";
 import { PlatformIcon } from "./platforms.tsx";
 import {
@@ -279,6 +279,16 @@ function failureKey(failure: string | null): (typeof FAILURES)[number] | "unknow
 /** Why the agent stopped, in plain words and with the next step; the harness's own words underneath. */
 function AgentError({ agent }: { agent: AgentView }) {
   const { t } = useI18n();
+  if (agent.statusDetail) {
+    const detail = statusDetailText(t, agent.statusDetail);
+    if (detail !== agent.statusDetail) {
+      return (
+        <Problem title={t("failure.unknown.title" as MessageKey, { name: agent.name })} tone="red">
+          <span className="selectable wrap-anywhere">{detail}</span>
+        </Problem>
+      );
+    }
+  }
   const key = failureKey(agent.statusFailure);
   const vars = { harness: agent.harnessName, name: agent.name };
   return (
@@ -607,6 +617,14 @@ function Brain({ agent, onSaved }: { agent: AgentView; onSaved: () => void }) {
   }
 
   const current = harnesses?.find((h) => h.id === agent.harness);
+  // Why a listed harness cannot be chosen: current or alternative, name and reason.
+  const blockers = (harnesses ?? [])
+    .filter((h) => h.disabled)
+    .map(
+      (h) =>
+        `${h.name}${h.version ? ` ${h.version}` : ""}: ${errorText(t, { code: h.disabled?.code, next: h.disabled?.reason })}`,
+    );
+  const missingCurrent = harnesses && !current ? agent.harness : null;
   return (
     <Section title={t("create.brain")}>
       <Group>
@@ -621,23 +639,35 @@ function Brain({ agent, onSaved }: { agent: AgentView; onSaved: () => void }) {
             onChange={(e) => save({ harness: e.target.value, model: null })}
           >
             {(harnesses ?? []).map((h) => (
-              <option key={h.id} value={h.id}>
-                {h.name}
+              <option key={h.id} value={h.id} disabled={Boolean(h.disabled)}>
+                {h.disabled ? `${h.name} · ${t("brain.incompatible")}` : h.name}
               </option>
             ))}
             {harnesses && !current ? <option value={agent.harness}>{agent.harness}</option> : null}
           </Select>
         </GroupRow>
-        <GroupRow>
-          <span className="min-w-0 flex-1">{t("create.model")}</span>
-          <ModelPicker
-            inline
-            harness={agent.harness}
-            value={agent.model ?? ""}
-            onChange={(id) => save({ model: id || null })}
-          />
-        </GroupRow>
+        {current && !current.disabled ? (
+          <GroupRow>
+            <span className="min-w-0 flex-1">{t("create.model")}</span>
+            <ModelPicker
+              inline
+              harness={agent.harness}
+              value={agent.model ?? ""}
+              onChange={(id) => save({ model: id || null })}
+            />
+          </GroupRow>
+        ) : null}
       </Group>
+      {missingCurrent ? (
+        <p className="px-1 text-small text-red">
+          {missingCurrent}: {t("error.harness_unavailable")}
+        </p>
+      ) : null}
+      {blockers.map((line) => (
+        <p key={line} className="px-1 text-small wrap-anywhere text-ink2">
+          {line}
+        </p>
+      ))}
       {error ? <p className="px-1 text-small text-red">{error}</p> : null}
       {state === "saved" ? <p className="px-1 text-small text-ink2">{t("agent.brainSaved")}</p> : null}
     </Section>

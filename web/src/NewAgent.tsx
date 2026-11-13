@@ -42,13 +42,15 @@ export function NewAgent({
       .harnesses()
       .then((list) => {
         setHarnesses(list);
-        setHarness((current) => current || list[0]?.id || "");
+        setHarness((current) => current || list.find((h) => !h.disabled)?.id || "");
       })
       .catch(() => setHarnesses([]));
   }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    const selected = harnesses?.find((h) => h.id === harness);
+    if (!name.trim() || !selected || selected.disabled || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -63,6 +65,7 @@ export function NewAgent({
   }
 
   const named = name.trim().length > 0;
+  const chosen = harnesses?.find((h) => h.id === harness);
   const form = (
     <form onSubmit={submit} className="flex flex-col gap-8">
       <Steps>
@@ -115,7 +118,7 @@ export function NewAgent({
         <p className="text-small text-ink2">{t("create.notice")}</p>
         {error ? <p className="text-small text-red">{error}</p> : null}
         <div className="flex items-center gap-2">
-          <Button type="submit" variant="primary" disabled={busy || !named || !harness}>
+          <Button type="submit" variant="primary" disabled={busy || !named || !chosen || Boolean(chosen.disabled)}>
             {busy ? t("new.creating") : t("new.create")}
           </Button>
           <Button variant="ghost" onClick={() => onNavigate({ kind: "home" })}>
@@ -196,8 +199,10 @@ export function BrainPicker({
       </Problem>
     );
   }
+  const selected = harnesses.find((h) => h.id === harness);
   return (
     <div className="flex flex-col gap-3">
+      {!harnesses.some((h) => !h.disabled) ? <Problem title={t("brain.noneCompatible")} /> : null}
       <div role="radiogroup" aria-label={t("create.brain")} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {harnesses.map((h) => (
           // biome-ignore lint/a11y/useSemanticElements: a styled choice; a native radio cannot take this look
@@ -206,18 +211,24 @@ export function BrainPicker({
             type="button"
             role="radio"
             aria-checked={h.id === harness}
+            disabled={Boolean(h.disabled)}
             onClick={() => onHarness(h.id)}
-            className="flex min-w-0 items-center gap-3 rounded-control border border-line2 bg-bg px-3 py-2.5 text-left transition-colors duration-[120ms] hover:bg-bg2 aria-checked:border-accent aria-checked:bg-accent-tint aria-checked:ring-1 aria-checked:ring-accent"
+            className="flex min-w-0 items-center gap-3 rounded-control border border-line2 bg-bg px-3 py-2.5 text-left transition-colors duration-[120ms] enabled:hover:bg-bg2 aria-checked:border-accent aria-checked:bg-accent-tint aria-checked:ring-1 aria-checked:ring-accent disabled:cursor-not-allowed disabled:bg-bg2 disabled:text-ink2"
           >
             <HarnessIcon harness={h} size={28} />
             <span className="flex min-w-0 flex-col">
               <span className="truncate font-medium">{h.name}</span>
               {h.version ? <span className="truncate text-caption text-ink3">{h.version}</span> : null}
+              {h.disabled ? (
+                <span className="whitespace-normal wrap-anywhere text-caption text-ink2">
+                  {t("brain.incompatible")} · {errorText(t, { code: h.disabled.code, next: h.disabled.reason })}
+                </span>
+              ) : null}
             </span>
           </button>
         ))}
       </div>
-      {harness ? <ModelPicker harness={harness} value={model} onChange={onModel} /> : null}
+      {selected && !selected.disabled ? <ModelPicker harness={harness} value={model} onChange={onModel} /> : null}
     </div>
   );
 }

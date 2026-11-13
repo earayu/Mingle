@@ -166,6 +166,8 @@ export async function rig(
     harness?: string;
     model?: string | null;
     real?: boolean;
+    /** Fully replaces the harness adapter (e.g. a wrapper around a runtime). */
+    harnessAdapter?: Harness;
     coalesceMs?: number;
     live?: boolean;
     channels?: Partial<Record<Platform, Channel>>;
@@ -190,9 +192,20 @@ export async function rig(
       await turn(t);
     },
   });
+  const innerHarness = options.harnessAdapter ?? (options.real ? oarHarness() : oarHarness({ require: () => runtime }));
+  // The agent's harness id is not in OAR's offered list; list it so the admin API can check it.
+  const agentHarness = options.harness ?? "scripted";
+  const harness: Harness = {
+    ...innerHarness,
+    available: async () => {
+      const list = await innerHarness.available();
+      if (options.real || options.harnessAdapter || list.some((h) => h.id === agentHarness)) return list;
+      return [...list, { id: agentHarness, name: agentHarness }];
+    },
+  };
   const mingle = new Mingle({
     paths: resolvePaths(home),
-    harness: (options.wrap ?? ((h) => h))(options.real ? oarHarness() : oarHarness({ require: () => runtime })),
+    harness: options.wrap ? options.wrap(harness) : harness,
     channels: { telegram: channel, ...options.channels },
     secrets: memorySecrets(),
     cliEntry: CLI_ENTRY,

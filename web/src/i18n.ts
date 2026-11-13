@@ -158,6 +158,13 @@ const en = {
   "error.onboarding_network": "Could not reach the chat app. Check the network and try again.",
   "error.bot_in_use": "This bot is already connected to another agent.",
   "error.harness_unavailable": "That harness is not installed on this computer.",
+  "error.harness_prompt_unsupported":
+    "This harness cannot receive the agent's role and operating guide. Choose another harness.",
+  "error.harness_env_unsupported":
+    "This harness cannot receive the connection settings needed to reply in chat. Choose another harness.",
+  "error.harness_opencode_version":
+    "This OpenCode version is not compatible with Mingle. Use OpenCode 1.x or choose another harness.",
+  "error.harness_incompatible": "This harness cannot apply the settings Mingle needs. Choose another harness.",
   "error.name_required": "Give the agent a name.",
   "platform.wechat": "WeChat",
   "platform.wecom": "WeCom",
@@ -210,6 +217,9 @@ const en = {
   "brain.defaultHint": "The harness's own default, which follows its settings.",
   "brain.signedOut": "This harness is not signed in",
   "brain.signedOutBody": "Sign in to it in a terminal once, then choose it again.",
+  "brain.incompatible": "Not compatible",
+  "brain.noneCompatible":
+    "No compatible harness is available. See the reasons below, or install and sign in to another harness.",
   "apiKey.claude":
     "Or use an API key: set ANTHROPIC_API_KEY, or ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN for another Anthropic-compatible service, in your shell profile or Claude Code's settings.json.",
   "apiKey.codex":
@@ -462,6 +472,10 @@ const zh: Record<MessageKey, string> = {
   "error.onboarding_network": "连不上聊天软件，请检查网络后重试。",
   "error.bot_in_use": "这个机器人已经接入了另一个 Agent。",
   "error.harness_unavailable": "这台电脑上没有安装这个 harness。",
+  "error.harness_prompt_unsupported": "这个大脑暂时无法接收 Agent 的角色和操作指南，请选择其他大脑。",
+  "error.harness_env_unsupported": "这个大脑暂时无法接收回复聊天所需的连接设置，请选择其他大脑。",
+  "error.harness_opencode_version": "这个 OpenCode 版本暂不兼容 Mingle。请使用 OpenCode 1.x，或选择其他大脑。",
+  "error.harness_incompatible": "这个大脑暂时无法应用 Mingle 所需的设置，请选择其他大脑。",
   "error.name_required": "请给 Agent 起个名字。",
   "platform.wechat": "微信",
   "platform.wecom": "企业微信",
@@ -510,6 +524,8 @@ const zh: Record<MessageKey, string> = {
   "brain.defaultHint": "跟随 harness 自己的默认设置。",
   "brain.signedOut": "这个 harness 还没登录",
   "brain.signedOutBody": "在终端里登录一次，然后重新选择它。",
+  "brain.incompatible": "暂不兼容",
+  "brain.noneCompatible": "当前没有可用的大脑。请查看下方原因，或安装并登录其他大脑。",
   "apiKey.claude":
     "也可以用 API Key：在 shell 配置文件或 Claude Code 的 settings.json 里设置 ANTHROPIC_API_KEY；用其他兼容 Anthropic 的服务时，设置 ANTHROPIC_BASE_URL 和 ANTHROPIC_AUTH_TOKEN。",
   "apiKey.codex":
@@ -623,6 +639,18 @@ export function errorText(t: Translate, error: unknown): string {
     if ("next" in error && error.next) return String(error.next);
   }
   return String(error);
+}
+
+/**
+ * A stored status detail, often a MingleError's `code: next` text: translate a
+ * known code (replacing the persisted English explanation). Anything
+ * unrecognized shows verbatim.
+ */
+export function statusDetailText(t: Translate, detail: string): string {
+  const code = detail.split(":", 1)[0] ?? "";
+  const key = `error.${code}` as MessageKey;
+  if (key in en) return t(key);
+  return detail;
 }
 
 export type Translate = (key: MessageKey, vars?: Record<string, string>) => string;

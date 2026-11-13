@@ -331,15 +331,16 @@ export function createApi(mingle: Mingle): Hono<Env> {
     return c.json({ ok: true });
   });
 
+  /** The installed harness, or the reason it cannot serve an agent. */
+  const requireHarness = async (id: string) => {
+    const found = (await mingle.availableHarnesses()).find((h) => h.id === id);
+    if (!found) throw new MingleError("harness_unavailable", `${id} is not installed here`);
+    if (found.disabled) throw new MingleError(found.disabled.code, found.disabled.reason);
+  };
+
   app.post("/v1/admin/agents", async (c) => {
     const body = await c.req.json<{ name: string; role?: string; harness: string; model?: string }>();
-    const harnesses = await mingle.availableHarnesses();
-    if (!harnesses.some((h) => h.id === body.harness)) {
-      throw new MingleError(
-        "harness_unavailable",
-        `${body.harness} is not installed here. Available: ${harnesses.map((h) => h.id).join(", ") || "none"}`,
-      );
-    }
+    await requireHarness(body.harness);
     return c.json(
       agentView(
         mingle.createAgent({
@@ -356,11 +357,9 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   app.patch("/v1/admin/agents/:id", async (c) => {
     const body = await c.req.json<{ name?: string; harness?: string; model?: string | null }>();
-    if (body.harness !== undefined) {
-      const harnesses = await mingle.availableHarnesses();
-      if (!harnesses.some((h) => h.id === body.harness)) {
-        throw new MingleError("harness_unavailable", `${body.harness} is not installed here`);
-      }
+    // A model-only change still opens the session on the current harness.
+    if (body.harness !== undefined || body.model !== undefined) {
+      await requireHarness(body.harness ?? mingle.agent(c.req.param("id")).harness);
     }
     return c.json(agentView(await mingle.updateAgent(c.req.param("id"), body)));
   });
