@@ -59,7 +59,7 @@ func newDaemon(resources, logs string) *daemon {
 		exe = ".exe"
 	}
 	d.node = filepath.Join(resources, "node", "bin", "node"+exe)
-	d.entry = filepath.Join(resources, "mingle", "dist", "cli", "main.js")
+	d.entry = filepath.Join(resources, "core", "dist", "cli", "main.js")
 	if _, err := os.Stat(d.entry); err != nil {
 		d.entry = filepath.Join(resources, "..", "..", "dist", "cli", "main.js")
 	}

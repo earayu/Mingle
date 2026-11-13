@@ -1,6 +1,6 @@
 // Stages what the desktop app ships before `go tool mygo build`, in mygo's platform
 // resource directories, which each app merges into its resources:
-//   resources/<os>/mingle/            Mingle's build and its production dependencies,
+//   resources/<os>/core/              Mingle's build and its production dependencies,
 //                                     with only that system's native prebuilds
 //   resources/<os>-<arch>/node/       the Node.js runtime, pinned and checksummed
 //
@@ -46,7 +46,7 @@ const run = (cmd, args, cwd = root) =>
 
 // Start clean: a stale directory of another layout would ship twice and fail the build.
 for (const entry of readdirSync(resources)) {
-  if (entry === "mingle" || /^(darwin|linux|windows)(-|$)/.test(entry)) {
+  if (entry === "mingle" || entry === "core" || /^(darwin|linux|windows)(-|$)/.test(entry)) {
     rmSync(join(resources, entry), { recursive: true, force: true });
   }
 }
@@ -69,7 +69,8 @@ rmSync(join(base, "pnpm-lock.yaml"));
 rmSync(join(base, "pnpm-workspace.yaml"));
 
 for (const system of systems) {
-  const stage = join(resources, system, "mingle");
+  // Not "mingle": on Linux the app's executable has that name, in the same directory.
+  const stage = join(resources, system, "core");
   mkdirSync(dirname(stage), { recursive: true });
   cpSync(base, stage, { recursive: true });
   // Native prebuilds for other systems are dead weight, and unsigned code to macOS.

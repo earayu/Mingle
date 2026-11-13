@@ -1,5 +1,6 @@
 # Staged by scripts/prepare.mjs
 resources/mingle/
+resources/core/
 resources/darwin/
 resources/darwin-*/
 resources/linux/
