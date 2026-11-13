@@ -16,7 +16,10 @@
       "!desktop/resources/linux*",
       "!desktop/resources/windows*",
       "!desktop/.cache",
-      "!desktop/.mygo"
+      "!desktop/.mygo",
+      "!site/dist",
+      "!site/icons",
+      "!.site-review"
     ]
   },
   "formatter": {

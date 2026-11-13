@@ -1,0 +1,17 @@
+// The website as a Worker that only serves static assets: node site/scripts/build.mjs, then
+// npx wrangler deploy -c site/wrangler.jsonc (see site/README.md).
+{
+  "name": "mingle-build",
+  "compatibility_date": "2026-11-10",
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    { "pattern": "mingle.build", "custom_domain": true },
+    { "pattern": "www.mingle.build", "custom_domain": true }
+  ],
+  "workers_dev": true,
+  "observability": { "enabled": false }
+}
