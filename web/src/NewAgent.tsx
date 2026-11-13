@@ -1,6 +1,6 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { Navigate } from "./App.tsx";
-import { api, type BrainStatus, type ModelList } from "./api.ts";
+import { type AgentView, api, type BrainStatus, type ModelList } from "./api.ts";
 import { BrainRow, SignInBrain, useSignIn } from "./Brains.tsx";
 import { errorText, type MessageKey, useI18n } from "./i18n.ts";
 import {
@@ -27,7 +27,7 @@ export function NewAgent({
 }: {
   first: boolean;
   onNavigate: Navigate;
-  onCreated: () => void;
+  onCreated: (agent: AgentView) => Promise<void>;
 }) {
   const { t } = useI18n();
   const [name, setName] = useState("");
@@ -57,7 +57,8 @@ export function NewAgent({
     setError(null);
     try {
       const agent = await api.createAgent({ name: name.trim(), role, harness, ...(model ? { model } : {}) });
-      onCreated();
+      // The shell must know the new agent before we route to it, or it treats the slug as gone.
+      await onCreated(agent);
       // Straight on to the next step: putting it in a chat app.
       onNavigate({ kind: "connect", slug: agent.slug }, { replace: true });
     } catch (e) {
