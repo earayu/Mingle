@@ -17,7 +17,7 @@ import type {
 } from "../src/channels/channel.ts";
 import { Mingle } from "../src/core/mingle.ts";
 import { resolvePaths } from "../src/core/paths.ts";
-import { oarHarness } from "../src/harness/harness.ts";
+import { type Harness, oarHarness } from "../src/harness/harness.ts";
 import { memorySecrets } from "../src/platform/secrets.ts";
 
 export const CLI_ENTRY = fileURLToPath(new URL("../src/cli/main.ts", import.meta.url));
@@ -39,6 +39,8 @@ export class FakeChannel implements Channel {
   }[] = [];
   /** Off by default so most tests see plain replies; the live-reply tests turn it on. */
   liveEnabled = false;
+  /** Live replies refuse their final content, as QQ's stream does past its window. */
+  finishFails = false;
   private events: ChannelEvents | undefined;
   private seq = 1000;
 
@@ -85,6 +87,7 @@ export class FakeChannel implements Channel {
                   record.updates.push(markdown);
                 },
                 finish: async (markdown: string) => {
+                  if (this.finishFails) return { kind: "failed" as const, code: "unknown" as const, retryable: false };
                   record.final = markdown;
                   return { kind: "sent" as const, platformId };
                 },
@@ -165,6 +168,8 @@ export async function rig(
     coalesceMs?: number;
     live?: boolean;
     channels?: Partial<Record<Platform, Channel>>;
+    /** Change what the harness reports, e.g. to make a failed turn look like a sign-in problem. */
+    wrap?: (harness: Harness) => Harness;
   } = {},
 ): Promise<Rig> {
   const home = mkdtempSync(join(tmpdir(), "mingle-test-"));
@@ -186,7 +191,7 @@ export async function rig(
   });
   const mingle = new Mingle({
     paths: resolvePaths(home),
-    harness: options.real ? oarHarness() : oarHarness({ require: () => runtime }),
+    harness: (options.wrap ?? ((h) => h))(options.real ? oarHarness() : oarHarness({ require: () => runtime })),
     channels: { telegram: channel, ...options.channels },
     secrets: memorySecrets(),
     cliEntry: CLI_ENTRY,

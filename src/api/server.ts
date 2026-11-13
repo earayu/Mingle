@@ -254,6 +254,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   const agentView = (agent: Agent) => ({
     ...agent,
+    harnessName: mingle.harnessName(agent.id),
     home: mingle.homeDir(agent),
     role: readRole(mingle.homeDir(agent)),
     connections: store.connections(agent.id).map((n) => ({

@@ -67,6 +67,10 @@ export interface AgentView {
   model: string | null;
   status: AgentStatus;
   statusDetail: string | null;
+  /** With status "error": auth, quota, billing, model_unavailable, ... or null when unknown. */
+  statusFailure: string | null;
+  /** The harness's display name ("Claude Code"). */
+  harnessName: string;
   home: string;
   role: string;
   connections: ConnectionView[];

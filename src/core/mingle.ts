@@ -19,7 +19,7 @@ import { MingleError, notFound } from "./errors.ts";
 import { formatReminder } from "./format.ts";
 import { createHome, writeRole } from "./home.ts";
 import { slugify } from "./ids.ts";
-import { LiveReplies } from "./live.ts";
+import { LiveReplies, stopNote } from "./live.ts";
 import { Outbox } from "./outbox.ts";
 import type { Paths } from "./paths.ts";
 import { AgentRuntime } from "./runtime.ts";
@@ -228,13 +228,20 @@ export class Mingle {
       env: () => ({ MINGLE_API: this.apiUrl, MINGLE_TOKEN: token, MINGLE_CLI: this.cliPath }),
       ...(this.options.coalesceMs !== undefined ? { coalesceMs: this.options.coalesceMs } : {}),
       onActivity: (kind, detail) => this.replies.activity(agent.id, kind, detail),
-      onSettled: (ids, outcome) => {
-        for (const id of ids) this.replies.settle(id, outcome);
+      onSettled: (ids, outcome, why) => {
+        const note = why && { ...why, harness: this.harnessName(agent.id) };
+        for (const id of ids) this.replies.settle(id, outcome, note);
       },
       log: (line) => this.log(line),
     });
     this.runtimes.set(agent.id, runtime);
     return runtime;
+  }
+
+  /** The agent's harness by its display name, for messages to people. */
+  harnessName(agentId: string): string {
+    const harness = this.store.agent(agentId)?.harness ?? "";
+    return this.options.harness.name?.(harness) ?? harness;
   }
 
   // ------------------------------------------------------------- connections
@@ -491,7 +498,7 @@ export class Mingle {
           this.outbox
             .send(connection.agentId, {
               chatId: chat.id,
-              text: stopped ? "Stopped." : "Nothing to stop.",
+              text: stopNote(connection.platform, stopped),
               replyTo: message.id,
             })
             .catch((error) => this.log(`stop reply failed: ${(error as Error).message}`)),

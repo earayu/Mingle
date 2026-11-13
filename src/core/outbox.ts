@@ -132,7 +132,10 @@ export class Outbox {
       ? [quoted.id]
       : this.store
           .chatMessages(chatId, 200)
-          .filter((m) => m.direction === "in" && (m.state === "delivered" || m.state === "unanswered"))
+          .filter(
+            (m) =>
+              m.direction === "in" && (m.state === "delivered" || m.state === "unanswered" || m.state === "failed"),
+          )
           .map((m) => m.id);
     const answerable = ids.filter((id) => {
       const state = this.store.message(id)?.state;
