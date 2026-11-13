@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { type Locale, useI18n } from "./i18n.ts";
-import { Group, GroupRow, PageHeader, Section, Segmented } from "./ui.tsx";
+import { Button, Group, GroupRow, PageHeader, Section, Segmented } from "./ui.tsx";
+import { type UpdateState, updates, useUpdates } from "./updates.ts";
 
 export type Theme = "system" | "light" | "dark";
 
@@ -18,6 +19,7 @@ export function applyTheme(theme: Theme): void {
 export function SettingsPage({ version }: { version: string }) {
   const { t, locale, setLocale } = useI18n();
   const [theme, setTheme] = useState<Theme>(savedTheme);
+  const update = useUpdates();
   return (
     <>
       <PageHeader title={t("settings.title")} />
@@ -61,6 +63,7 @@ export function SettingsPage({ version }: { version: string }) {
                 <span className="flex-1">{t("settings.version")}</span>
                 <span className="selectable text-ink2">{version}</span>
               </GroupRow>
+              {update ? <UpdateRows update={update} /> : null}
               <GroupRow>
                 <span className="flex flex-col gap-0.5">
                   <span>{t("settings.privacy")}</span>
@@ -71,6 +74,57 @@ export function SettingsPage({ version }: { version: string }) {
           </Section>
         </div>
       </div>
+    </>
+  );
+}
+
+/** The desktop app's updates, under the version. */
+function UpdateRows({ update }: { update: UpdateState }) {
+  const { t } = useI18n();
+  const version = update.available ?? "";
+  let status = t("update.latest");
+  let action = <Button onClick={() => updates.check()}>{t("update.check")}</Button>;
+  if (!update.supported) status = t("update.unsupported");
+  else if (update.ready) {
+    status = t("update.ready", { version });
+    action = (
+      <Button variant="primary" onClick={() => updates.restart()}>
+        {t("update.restartNow")}
+      </Button>
+    );
+  } else if (version) {
+    status = t(update.automaticDownloads ? "update.downloading" : "update.available", { version });
+    action = (
+      <Button onClick={() => updates.check()}>
+        {update.automaticDownloads ? t("update.progress") : t("update.installNow")}
+      </Button>
+    );
+  }
+  return (
+    <>
+      <GroupRow>
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span>{t("update.title")}</span>
+          <span className="text-small text-ink2">{status}</span>
+        </span>
+        {action}
+      </GroupRow>
+      {update.supported ? (
+        <GroupRow>
+          <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span>{t("update.automatic")}</span>
+              <span className="text-small text-ink2">{t("update.automaticHint")}</span>
+            </span>
+            <input
+              type="checkbox"
+              className="size-4 shrink-0 accent-[var(--accent-btn)]"
+              checked={update.automaticDownloads}
+              onChange={(e) => updates.setAutomaticDownloads(e.target.checked)}
+            />
+          </label>
+        </GroupRow>
+      ) : null}
     </>
   );
 }

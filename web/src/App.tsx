@@ -6,7 +6,8 @@ import { detectLocale, I18n, type Locale, translator, useI18n } from "./i18n.ts"
 import iconUrl from "./icon.svg";
 import { NewAgent } from "./NewAgent.tsx";
 import { applyTheme, SettingsPage, savedTheme } from "./Settings.tsx";
-import { Avatar, Button, Eyebrow, PlusIcon, SettingsIcon, StatusDot } from "./ui.tsx";
+import { Avatar, Button, Eyebrow, PlusIcon, SettingsIcon, StatusDot, UpdateIcon } from "./ui.tsx";
+import { updates, useUpdates } from "./updates.ts";
 import { Welcome } from "./Welcome.tsx";
 
 export type View =
@@ -203,8 +204,12 @@ function Sidebar({
   onNavigate: Navigate;
 }) {
   const { t } = useI18n();
+  const update = useUpdates();
   const row =
     "flex w-full items-center gap-2.5 rounded-control px-2.5 text-left transition-colors duration-[120ms] hover:bg-black/5 dark:hover:bg-white/5 aria-[current=page]:bg-sel";
+  // Only what needs the user: an update that is ready, or one they install themselves.
+  // An update downloading in the background shows nothing until it is ready.
+  const offer = update?.available && (update.ready || !update.automaticDownloads) ? update : null;
   return (
     <div className="flex min-w-0 flex-1 flex-col px-2 pb-3">
       {/* The brand row: in the desktop app it sits right of the traffic lights and moves the window. */}
@@ -252,6 +257,19 @@ function Sidebar({
       </nav>
       <div className="flex-1" />
       <div className="flex flex-col gap-0.5 border-t border-line pt-2">
+        {offer ? (
+          <button
+            type="button"
+            title={t(offer.ready ? "update.ready" : "update.available", { version: offer.available ?? "" })}
+            onClick={() => (offer.ready ? updates.restart() : updates.check())}
+            className="flex h-8 w-full items-center gap-2.5 rounded-control bg-accent-tint px-2.5 text-left font-medium text-accent transition-[filter] duration-[120ms] hover:brightness-95 dark:hover:brightness-125"
+          >
+            <UpdateIcon className="mx-1.5" />
+            <span className="min-w-0 flex-1 truncate">
+              {offer.ready ? t("update.restart") : t("update.install", { version: offer.available ?? "" })}
+            </span>
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => onNavigate({ kind: "settings" })}
