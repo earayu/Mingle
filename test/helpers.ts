@@ -125,7 +125,8 @@ export function runCli(
     const child = execFile(
       env.MINGLE_CLI as string,
       args,
-      { env: { ...process.env, ...env } },
+      // Windows runs a .cmd only through a shell, as a harness does.
+      { env: { ...process.env, ...env }, shell: process.platform === "win32" },
       (error, stdout, stderr) => {
         resolve({ code: error ? Number((error as { code?: number }).code ?? 1) : 0, stdout, stderr });
       },
