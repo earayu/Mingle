@@ -66,18 +66,14 @@ export function AgentPage({
       .catch(() => {});
   }, [agent.id]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: clear the old agent's activity on switch
-  useEffect(() => {
-    setActivity(null);
-  }, [agent.id]);
-  usePolling(refresh, 2500);
-
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset when switching to another agent
   useEffect(() => {
+    setActivity(null);
     setConfirmDelete(false);
     setNotice(null);
     setTab("activity");
   }, [agent.id]);
+  usePolling(refresh, 2500);
 
   const busy = agent.status === "thinking" || agent.status === "working";
   const retry = async (ids: string[]) => {

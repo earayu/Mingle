@@ -7,6 +7,8 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
 - Settings open and brain changes save without the second-long wait: Mingle finds the installed harnesses once at startup, checks them side by side, and refreshes the list in the background.
 - The console stops polling while its window is hidden, and catches up as soon as it is shown again.
+- The agent list separates chat apps with commas in English and names each app once, even with several bots in it.
+- The note under a pasted token no longer says "this Mac's Keychain" on Windows and Linux.
 
 ## 0.1.2
 

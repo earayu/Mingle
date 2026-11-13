@@ -8,3 +8,4 @@ web/dist/
 .ui-review/
 site/dist/
 .site-review/
+coverage/

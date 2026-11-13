@@ -5,6 +5,7 @@
       "!dist",
       "!web/dist",
       "!.ui-review",
+      "!coverage",
       "!spikes",
       "!node_modules",
       "!**/*.md",
