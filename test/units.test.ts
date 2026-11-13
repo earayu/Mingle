@@ -1,4 +1,8 @@
-import { delimiter } from "node:path";
+import { execFile } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { toInbound } from "../src/channels/telegram/telegram.ts";
 import { formatMessage } from "../src/core/format.ts";
@@ -210,5 +214,42 @@ describe("language preference", () => {
   it("switching back to system resolves the current list", () => {
     const preference = localePreference(null);
     expect(resolveLocale(preference, ["en-GB"])).toBe("en");
+  });
+});
+
+describe("package smoke", () => {
+  it.skipIf(process.platform === "win32")("smokes a tarball in a fresh extraction directory", async () => {
+    const run = promisify(execFile);
+    const work = mkdtempSync(join(tmpdir(), "mingle-package-test-"));
+    try {
+      const app = join(work, "app");
+      mkdirSync(join(app, "bin"), { recursive: true });
+      mkdirSync(join(app, "dist", "cli"), { recursive: true });
+      symlinkSync(process.execPath, join(app, "bin", "node"));
+      writeFileSync(
+        join(app, "dist", "cli", "main.js"),
+        `if (process.argv.includes("--version")) {
+  console.log("0.0.0");
+} else {
+  const { createServer } = require("node:http");
+  const server = createServer((req, res) => {
+    res.writeHead(req.url === "/v1/health" ? 200 : 404);
+    res.end("ok");
+  });
+  server.listen(Number(process.argv[process.argv.indexOf("--port") + 1]), "127.0.0.1");
+  process.stdin.on("end", () => server.close());
+  process.stdin.resume();
+}
+`,
+      );
+      const artifact = join(work, "fixture.tar.gz");
+      await run("tar", ["-czf", artifact, "-C", app, "."]);
+      const { stdout } = await run(process.execPath, ["scripts/package-smoke.mjs", artifact], { timeout: 20_000 });
+      expect(stdout).toContain("--version: 0.0.0");
+      expect(stdout).toContain("start: /v1/health ok");
+      expect(stdout).toContain("  ok");
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
   });
 });
