@@ -6,6 +6,7 @@ import { I18n, translator, useI18n, useLocaleSettings } from "./i18n.ts";
 import iconUrl from "./icon.svg";
 import { NewAgent } from "./NewAgent.tsx";
 import { onNavigateRequest } from "./online.ts";
+import { usePolling } from "./poll.ts";
 import { applyTheme, SettingsPage, savedTheme } from "./Settings.tsx";
 import { Avatar, Button, Eyebrow, PlusIcon, SettingsIcon, StatusDot, UpdateIcon } from "./ui.tsx";
 import { updates, useUpdates } from "./updates.ts";
@@ -117,12 +118,7 @@ function Shell() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!token) return;
-    refresh();
-    const timer = setInterval(refresh, 2000);
-    return () => clearInterval(timer);
-  }, [token, refresh]);
+  usePolling(refresh, 2000, Boolean(token));
 
   if (problem === "unauthorized") return <Unauthorized />;
 

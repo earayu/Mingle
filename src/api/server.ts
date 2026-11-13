@@ -13,6 +13,7 @@ import { readRole } from "../core/home.ts";
 import { renderManual } from "../core/manual.ts";
 import type { Mingle } from "../core/mingle.ts";
 import { nextFire, parseDuration } from "../core/schedule.ts";
+import type { HarnessInfo } from "../harness/harness.ts";
 import type { Agent, Message, TaskStatus } from "../store/store.ts";
 import { VERSION } from "../version.ts";
 
@@ -357,7 +358,10 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   /** The installed harness, or the reason it cannot serve an agent. */
   const requireHarness = async (id: string) => {
-    const found = (await mingle.availableHarnesses()).find((h) => h.id === id);
+    const listed = (list: readonly HarnessInfo[]) => list.find((h) => h.id === id);
+    // The list is cached; look again before refusing, in case it was just installed or updated.
+    let found = listed(await mingle.availableHarnesses());
+    if (!found || found.disabled) found = listed(await mingle.availableHarnesses(true));
     if (!found) throw new MingleError("harness_unavailable", `${id} is not installed here`);
     if (found.disabled) throw new MingleError(found.disabled.code, found.disabled.reason);
   };
