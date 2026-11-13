@@ -56,7 +56,6 @@ const en = {
   "connection.detail.credentials_missing":
     "This bot's credentials are no longer on this computer. Remove it and connect it again.",
   "connection.reconnect": "Reconnect",
-  "connection.connectAgain": "Remove it, then add it again with the + button above.",
   "connection.none": "No chat app yet. Connect one so people can talk to it.",
   "chat.dm": "Direct message",
   "chat.group": "Group",
@@ -411,7 +410,6 @@ const zh: Record<MessageKey, string> = {
   "connection.detail.unknown": "连接断开了，Mingle 会自动重试。",
   "connection.detail.credentials_missing": "这台电脑上找不到这个机器人的凭据。移除后重新连接。",
   "connection.reconnect": "重新连接",
-  "connection.connectAgain": "移除它，再用上方的“添加”重新连接。",
   "connection.none": "还没有接入聊天软件。接入后大家就能和它聊天。",
   "chat.dm": "私聊",
   "chat.group": "群聊",
