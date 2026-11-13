@@ -450,6 +450,12 @@ export const SettingsIcon = (p: { className?: string }) => (
     <path d="M8 1.5v1.6M8 12.9v1.6M14.5 8h-1.6M3.1 8H1.5M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1M12.6 12.6l-1.1-1.1M4.5 4.5 3.4 3.4" />
   </Icon>
 );
+export const UpdateIcon = (p: { className?: string }) => (
+  <Icon {...p}>
+    <circle cx="8" cy="8" r="6.5" />
+    <path d="M8 11V5M5.5 7.5 8 5l2.5 2.5" />
+  </Icon>
+);
 export const CheckIcon = (p: { className?: string }) => (
   <Icon {...p} size={14}>
     <path d="M3.5 8.5 6.5 11.5 12.5 4.5" strokeWidth="2" />

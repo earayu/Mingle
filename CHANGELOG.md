@@ -10,6 +10,7 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 - The desktop app picks up the environment from your login shell, not just PATH: an API key, base URL or proxy you set for Claude Code or Codex in `~/.zshrc` now works when Mingle is opened from Finder too.
 - "Not signed in" now also says how to use an API key instead, for Claude Code and Codex, with a link to their docs.
 - Retry a message the agent failed or did not answer, from "Needs you" or next to the message in the activity list. The agent answers in the chat and knows the answer is late.
+- The desktop app downloads updates in the background and installs them on its own. When one is ready, "Restart to update" shows at the bottom of the sidebar; Settings shows the update status, checks for updates, and turns automatic downloads off.
 
 ## 0.1.0
 
