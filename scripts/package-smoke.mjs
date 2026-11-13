@@ -8,7 +8,7 @@
 // Supported: .dmg (needs macOS), .tar.gz and .deb (Linux), .exe (Windows —
 // installs silently to %LOCALAPPDATA%\Programs\Mingle; run on Windows, x64).
 import { execFile, spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { parseArgs, promisify } from "node:util";
@@ -46,6 +46,7 @@ function locate(root) {
 async function unpack(artifact, work) {
   if (artifact.endsWith(".tar.gz")) {
     const dir = join(work, "tar");
+    mkdirSync(dir, { recursive: true });
     await run("tar", ["-xzf", artifact, "-C", dir]);
     return dir;
   }
