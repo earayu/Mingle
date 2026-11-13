@@ -241,6 +241,23 @@ describe("admin API (console)", () => {
     const status = (await admin("GET", "/v1/admin/status")).json as { agents: { name: string; role: string }[] };
     expect(status.agents[0]).toMatchObject({ name: "Alex", role: expect.stringContaining("hikes") });
 
+    const summary = (await admin("GET", "/v1/admin/summary")).json as {
+      agents: { name: string; status: string; task: string | null; connections: { state: string }[] }[];
+    };
+    expect(summary.agents).toEqual([
+      expect.objectContaining({
+        name: "Alex",
+        task: null, // created as todo, not yet in progress
+        connections: [expect.objectContaining({ platform: "telegram", state: "connected" })],
+        failed: 0,
+        unanswered: 0,
+      }),
+    ]);
+    const task = current.mingle.store.tasks(agentId, false)[0];
+    current.mingle.store.setTaskStatus(agentId, task?.id as string, "in_progress");
+    const working = (await admin("GET", "/v1/admin/summary")).json as typeof summary;
+    expect(working.agents[0]?.task).toBe("Compare the routes");
+
     expect((await admin("DELETE", "/v1/admin/connections/nnope")).status).toBe(404);
     const anonymous = await fetch(`${current.url}/v1/admin/status`);
     expect(anonymous.status).toBe(401);
@@ -464,5 +481,36 @@ describe("eager session startup", () => {
     expect(disposed).toBe(1); // The late session was dropped inside open(), not kept.
     expect(mingle.store.agent(agentId)?.sessionId).toBeNull();
     expect(mingle.store.agent(agentId)?.status).toBe("offline");
+  });
+});
+
+describe("waking from sleep", () => {
+  it("reconnects every chat app and keeps answering", async () => {
+    current = await rig(async (t) => {
+      for (const id of messageIds(t.input))
+        await runCli(t.options.env as Record<string, string>, ["message", "reply", id], "back");
+    });
+    const { channel, mingle } = current;
+    expect(channel.connects).toBe(1);
+
+    await mingle.resume("test");
+    expect(channel.closes).toBe(1);
+    expect(channel.connects).toBe(2);
+    expect(mingle.store.connections()[0]?.state).toBe("connected");
+
+    channel.receive({ text: "still there?" });
+    await until(() => channel.sent.length === 1);
+  });
+
+  it("leaves a connection removed meanwhile alone", async () => {
+    current = await rig(async () => {});
+    const { channel, mingle } = current;
+    const id = mingle.store.connections()[0]?.id as string;
+    const resumed = mingle.resume("test");
+    await mingle.removeConnection(id);
+    await resumed;
+    expect(mingle.store.connections()).toEqual([]);
+    expect(mingle.isLive(id)).toBe(false);
+    expect(channel.closes).toBe(channel.connects);
   });
 });

@@ -1,9 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/egoist/mygo"
@@ -90,24 +87,9 @@ func (u *Updates) broadcast() { _ = UpdatesChanged.Broadcast(u.State()) }
 // runs, so that updates come without asking: the update window and the console
 // can turn them off, and that choice stays.
 func defaultAutomaticDownloads() {
-	dir, err := mygo.App.Path(mygo.PathUserData)
-	if err != nil {
-		return
-	}
-	file := filepath.Join(dir, "mingle-desktop.json")
-	var prefs struct {
-		AutomaticDownloadsSet bool `json:"automaticDownloadsSet"`
-	}
-	if data, err := os.ReadFile(file); err == nil {
-		_ = json.Unmarshal(data, &prefs)
-	}
-	if prefs.AutomaticDownloadsSet {
+	if loadPrefs().AutomaticDownloadsSet {
 		return
 	}
 	updater.SetAutomaticDownloads(true)
-	prefs.AutomaticDownloadsSet = true
-	if data, err := json.Marshal(prefs); err == nil {
-		_ = os.MkdirAll(dir, 0o755)
-		_ = os.WriteFile(file, data, 0o644)
-	}
+	updatePrefs(func(p *prefs) { p.AutomaticDownloadsSet = true })
 }

@@ -11,7 +11,9 @@ import {
 } from "./api.ts";
 import { errorText, type MessageKey, statusDetailText, useI18n } from "./i18n.ts";
 import { ModelPicker } from "./NewAgent.tsx";
+import { online, useOnline } from "./online.ts";
 import { PlatformIcon } from "./platforms.tsx";
+import { OnlineRows } from "./Settings.tsx";
 import {
   AgentStatusText,
   ApiKeyHint,
@@ -207,6 +209,7 @@ export function AgentPage({
                 {activity !== null && !setupDone ? (
                   <GettingStarted agent={agent} heard={(activity ?? []).length > 0} onConnect={connect} />
                 ) : null}
+                {agent.connections.some((c) => c.state === "connected") ? <KeepOnline /> : null}
                 {/* Narrow windows have no right panel: what needs the person comes first. */}
                 {needsYou ? <div className="flex flex-col gap-7 min-[1140px]:hidden">{needsYou}</div> : null}
                 {activity && activity.length > 0 ? (
@@ -299,6 +302,32 @@ function AgentError({ agent }: { agent: AgentView }) {
         <p className="selectable mt-1 font-mono text-caption text-ink3 wrap-anywhere">{agent.statusDetail}</p>
       ) : null}
     </Problem>
+  );
+}
+
+/**
+ * Once an agent can be reached, the desktop app offers what keeps it reachable: opening at
+ * login and staying awake on power (docs/spec.md 9.1). Shown until the person closes it.
+ */
+function KeepOnline() {
+  const { t } = useI18n();
+  const state = useOnline();
+  if (!state || state.cardDismissed) return null;
+  return (
+    <Section
+      title={t("online.title")}
+      action={
+        <Button small onClick={() => online.dismissCard()}>
+          {t("online.done")}
+        </Button>
+      }
+    >
+      <p className="px-1 text-small text-ink2">{t("online.body")}</p>
+      <Group>
+        <OnlineRows state={state} notifications={false} />
+      </Group>
+      <p className="px-1 text-caption text-ink3">{t("online.later")}</p>
+    </Section>
   );
 }
 

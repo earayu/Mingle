@@ -18,10 +18,11 @@ import (
 //go:embed resources/tray.png
 var trayTemplate []byte
 
-//go:embed resources/icon.png
-var appIcon []byte
-
-const isMac = runtime.GOOS == "darwin"
+const (
+	goos      = runtime.GOOS
+	isMac     = goos == "darwin"
+	isWindows = goos == "windows"
+)
 
 func main() {
 	if !mygo.App.RequestSingleInstanceLock() {
@@ -33,11 +34,11 @@ func main() {
 	resources, _ := mygo.App.Path(mygo.PathResources)
 	d := newDaemon(resources, logs)
 	origin := d.origin()
-	t := texts()
+	t := newTexts()
 
 	// Mingle releases often: check every few hours, and let the console offer the update.
 	mygo.Use(updater.New(updater.Options{Interval: 6 * time.Hour}))
-	mygo.Bind(newUpdates())
+	updates := newUpdates()
 	// A menu bar app: the Dock icon shows only while the window does.
 	mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 	mygo.App.OnWindowAllClosed(func() {})
@@ -53,6 +54,8 @@ func main() {
 		win.Focus()
 		mygo.App.Focus()
 	}
+	tray := newTrayController(t, logs, updates, show)
+	mygo.Bind(updates, newOnline(tray))
 	mygo.App.OnSecondInstance(func([]string, string) { show() })
 	mygo.App.OnActivate(func(bool) { show() })
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { quitting = true })
@@ -61,7 +64,7 @@ func main() {
 	mygo.App.WhenReady(func() {
 		// macOS has an app menu; on Windows and Linux it would be a menu bar in the window.
 		if isMac {
-			setAppMenu()
+			setAppMenu(tray)
 		}
 
 		options := mygo.WindowOptions{
@@ -94,53 +97,22 @@ func main() {
 			e.PreventDefault()
 			win.Hide()
 			mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
+			tray.closeHint()
 		})
 		if !mygo.App.WasOpenedAtLogin() {
 			show()
 		}
 
-		loginItem := &mygo.MenuItem{Label: t.openAtLogin, Type: mygo.MenuItemCheckbox, Checked: mygo.App.OpenAtLogin()}
-		loginItem.Click = func(item *mygo.MenuItem, _ *mygo.Window) {
-			if err := mygo.App.SetOpenAtLogin(!mygo.App.OpenAtLogin()); err != nil {
-				log.Println("open at login:", err)
-			}
-			item.Checked = mygo.App.OpenAtLogin()
-		}
-		status := &mygo.MenuItem{Label: t.starting, Disabled: true}
-		// macOS tints a template image for the menu bar; other trays show the app icon.
-		icon := appIcon
-		if isMac {
-			icon = trayTemplate
-		}
-		tray, err := mygo.NewTray(mygo.TrayOptions{
-			ID:             "mingle",
-			Icon:           icon,
-			IconIsTemplate: isMac,
-			ToolTip:        "Mingle",
-			Menu: mygo.NewMenu([]*mygo.MenuItem{
-				status,
-				mygo.Separator(),
-				{Label: t.open, Click: func(*mygo.MenuItem, *mygo.Window) { show() }},
-				{Label: t.logs, Click: func(*mygo.MenuItem, *mygo.Window) { go mygo.Shell.OpenPath(logs) }},
-				mygo.Separator(),
-				loginItem,
-				updater.MenuItem(),
-				mygo.Separator(),
-				{Label: t.quit, Role: mygo.RoleQuit},
-			}),
-		})
-		if err != nil {
-			log.Println("tray:", err)
-		}
-		_ = tray
+		tray.start()
+		updater.OnChange(tray.refresh)
 
 		// Each time Mingle (re)starts, point the window at its console.
 		d.onReady = func(url, token string) {
-			status.Label = t.running
+			tray.ready(url, token)
 			_ = win.Page().LoadURL(url + "/#token=" + token)
 		}
 		d.onDown = func(reason string) {
-			status.Label = t.stopped
+			tray.down()
 			_ = win.Page().LoadURL("data:text/html;charset=utf-8," + loadingPage(t.restarting+" "+reason))
 		}
 		go d.run()
@@ -151,7 +123,7 @@ func main() {
 	}
 }
 
-func setAppMenu() {
+func setAppMenu(tray *trayController) {
 	mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
 		{Label: "Mingle", Submenu: []*mygo.MenuItem{
 			{Role: mygo.RoleAbout},
@@ -159,45 +131,12 @@ func setAppMenu() {
 			mygo.Separator(),
 			{Role: mygo.RoleHide},
 			mygo.Separator(),
-			{Role: mygo.RoleQuit},
+			// Asks first while agents are online, as the menu bar's Quit does.
+			{Label: tray.t.quit, Accelerator: "CmdOrCtrl+Q", Click: func(*mygo.MenuItem, *mygo.Window) { go tray.quit() }},
 		}},
 		{Role: mygo.RoleEditMenu},
 		{Role: mygo.RoleWindowMenu},
 	}))
-}
-
-type strings_ struct {
-	starting, restarting, running, stopped, open, logs, openAtLogin, quit string
-}
-
-func texts() strings_ {
-	for _, lang := range mygo.App.PreferredLanguages() {
-		if strings.HasPrefix(lang, "zh") {
-			return strings_{
-				starting:    "Mingle 正在启动…",
-				restarting:  "Mingle 已停止，正在重新启动。",
-				running:     "Mingle 正在运行",
-				stopped:     "Mingle 已停止",
-				open:        "打开 Mingle",
-				logs:        "查看日志",
-				openAtLogin: "登录时打开",
-				quit:        "退出 Mingle",
-			}
-		}
-		if strings.HasPrefix(lang, "en") {
-			break
-		}
-	}
-	return strings_{
-		starting:    "Mingle is starting…",
-		restarting:  "Mingle stopped and is restarting.",
-		running:     "Mingle is running",
-		stopped:     "Mingle has stopped",
-		open:        "Open Mingle",
-		logs:        "Show Logs",
-		openAtLogin: "Open at Login",
-		quit:        "Quit Mingle",
-	}
 }
 
 // loadingPage is shown until the console answers, in the console's own look (DESIGN.md).

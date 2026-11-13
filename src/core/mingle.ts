@@ -59,6 +59,8 @@ export interface MingleOptions {
   readonly cliEntry: string;
   readonly coalesceMs?: number;
   readonly reminderTickMs?: number;
+  /** How often to look for a jump of the clock, the sign that the computer slept. */
+  readonly wakeCheckMs?: number;
   readonly retryDelaysMs?: readonly number[];
   readonly log?: (line: string) => void;
 }
@@ -74,6 +76,8 @@ export class Mingle {
   private readonly live = new Map<string, ChannelConnection>();
   private readonly tokens = new Map<string, string>();
   private reminderTimer: NodeJS.Timeout | undefined;
+  private wakeTimer: NodeJS.Timeout | undefined;
+  private resuming: Promise<void> | undefined;
   private readonly onboardings = new Map<string, OnboardingSession>();
 
   private readonly options: MingleOptions;
@@ -101,10 +105,53 @@ export class Mingle {
     await Promise.all(this.store.connections().map((c) => this.reconnect(c)));
     const tick = this.options.reminderTickMs ?? 10_000;
     this.reminderTimer = setInterval(() => this.fireReminders(), tick);
+    // Timers do not run while the computer sleeps: a tick that comes far later than due means it
+    // slept, and its connections are likely dead without knowing it yet (docs/spec.md 7.1).
+    const every = this.options.wakeCheckMs ?? 15_000;
+    let last = Date.now();
+    this.wakeTimer = setInterval(() => {
+      const now = Date.now();
+      const slept = now - last - every;
+      last = now;
+      if (slept > 60_000) void this.resume(`the computer slept for ${Math.round(slept / 60_000)} min`);
+    }, every);
+  }
+
+  /**
+   * Reconnect every chat app now, rather than waiting for each connection's heartbeat to notice
+   * that it died during sleep, then fire the reminders that came due meanwhile.
+   */
+  resume(reason: string): Promise<void> {
+    this.resuming ??= (async () => {
+      this.log(`${reason}: reconnecting the chat apps`);
+      await Promise.all(
+        this.store.connections().map(async (connection) => {
+          if (!connection.secretRef) return; // nothing to reconnect with
+          const live = this.live.get(connection.id);
+          this.live.delete(connection.id);
+          await live?.close().catch(() => {});
+          if (this.store.connection(connection.id)) await this.reconnect(connection);
+          // Removed while it reconnected: leave it gone.
+          if (!this.store.connection(connection.id)) {
+            await this.live
+              .get(connection.id)
+              ?.close()
+              .catch(() => {});
+            this.live.delete(connection.id);
+          }
+        }),
+      );
+      this.fireReminders();
+    })().finally(() => {
+      this.resuming = undefined;
+    });
+    return this.resuming;
   }
 
   async stop(): Promise<void> {
     clearInterval(this.reminderTimer);
+    clearInterval(this.wakeTimer);
+    await this.resuming?.catch(() => {});
     this.replies.dispose();
     for (const id of [...this.onboardings.keys()]) this.cancelOnboarding(id);
     await Promise.all([...this.live.values()].map((c) => c.close().catch(() => {})));

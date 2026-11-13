@@ -294,6 +294,21 @@ const en = {
     "Its bots are disconnected and their credentials removed. Its folder, with its memory and notes, is kept.",
   "settings.general": "General",
   "settings.about": "About",
+  "online.title": "Keep your agents online",
+  "online.body":
+    "Agents answer only while Mingle runs and this computer is awake. Closing the window keeps Mingle running in the background.",
+  "online.openAtLogin": "Open at login",
+  "online.openAtLoginHint": "After a restart, your agents come back without opening Mingle.",
+  "online.keepAwake": "Stay awake on power",
+  "online.keepAwakeHintMac":
+    "While an agent is online and the Mac is plugged in, it does not sleep when idle; the display still turns off. Closing the lid still puts it to sleep, unless an external display is connected.",
+  "online.keepAwakeHint":
+    "While an agent is online and the computer is plugged in, it does not sleep when idle; the display still turns off. Closing a laptop's lid follows the system's power settings.",
+  "online.notifications": "Notify me when something needs me",
+  "online.notificationsHint":
+    "A connection fails, an approval comes through, or an agent could not answer. Replies come through the chat apps.",
+  "online.done": "Done",
+  "online.later": "You can change these later in Settings.",
   "settings.version": "Version",
   "update.restart": "Restart to update",
   "update.install": "Update to {version}",
@@ -598,6 +613,19 @@ const zh: Record<MessageKey, string> = {
   "agent.deleteBody": "它的机器人会断开，凭据会删除。它的文件夹（记忆和笔记）会保留。",
   "settings.general": "通用",
   "settings.about": "关于",
+  "online.title": "让 Agent 一直在线",
+  "online.body": "只有 Mingle 在运行、电脑醒着时，Agent 才能回复。关掉窗口后，Mingle 仍在后台运行。",
+  "online.openAtLogin": "登录时打开",
+  "online.openAtLoginHint": "电脑重启后，不用手动打开 Mingle，Agent 也会回来。",
+  "online.keepAwake": "插电时保持唤醒",
+  "online.keepAwakeHintMac":
+    "有 Agent 在线、Mac 插着电时，空闲也不睡眠，屏幕照常关闭。合上盖子仍会睡眠，接着外接显示器时除外。",
+  "online.keepAwakeHint":
+    "有 Agent 在线、电脑插着电时，空闲也不睡眠，屏幕照常关闭。合上笔记本盖子时，按系统的电源设置处理。",
+  "online.notifications": "需要我处理时通知我",
+  "online.notificationsHint": "连接出错、审核通过、Agent 没能回复时。回复本身由聊天软件通知。",
+  "online.done": "好了",
+  "online.later": "之后可以在设置里更改。",
   "settings.version": "版本",
   "update.restart": "重启以更新",
   "update.install": "更新到 {version}",

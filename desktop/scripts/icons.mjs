@@ -93,9 +93,54 @@ writeFileSync(
   }),
 );
 
-// Menu bar icon: a template image, black on transparent, 16 pt at 2x.
+// Menu bar icons: template images, black on transparent, 16 pt at 2x, which macOS tints.
+// Three states (docs/spec.md 9.1): normal; with a dot when something needs the owner;
+// faded while Mingle has stopped. A template cannot take a colour, so the dot is a shape.
+const trayRings = { cx: 0.5, cy: 0.5, r: 0.27, w: 0.09, gap: 0.17 };
+const dot = { x: 0.87, y: 0.13, r: 0.12 };
+const inDot = (x, y, grow = 0) => Math.hypot(x - dot.x, y - dot.y) <= dot.r + grow;
+const black = (alpha) => [0, 0, 0, alpha];
+const clear = [0, 0, 0, 0];
 writeFileSync(
   join(out, "tray.png"),
-  png(32, (x, y) => (rings(x, y, { cx: 0.5, cy: 0.5, r: 0.27, w: 0.09, gap: 0.17 }) ? [0, 0, 0, 1] : [0, 0, 0, 0])),
+  png(32, (x, y) => (rings(x, y, trayRings) ? black(1) : clear)),
+);
+writeFileSync(
+  join(out, "tray-attention.png"),
+  png(32, (x, y) => {
+    if (inDot(x, y)) return black(1);
+    // A clear ring around the dot keeps it apart from the rings.
+    if (inDot(x, y, 0.05)) return clear;
+    return rings(x, y, trayRings) ? black(1) : clear;
+  }),
+);
+writeFileSync(
+  join(out, "tray-stopped.png"),
+  png(32, (x, y) => (rings(x, y, trayRings) ? black(0.35) : clear)),
+);
+
+// Notification area icons (Windows, Linux): the app icon in colour, with the same three states.
+// The dot is the console's amber (DESIGN.md), on a clear ring so it reads on any taskbar.
+const amber = [0xdf, 0x86, 0x01];
+const appIcon = (x, y, alpha) => {
+  // At 16 pt the icon needs no margin: the square fills the slot.
+  if (!roundedSquare(x, y, 0.02, 0.22)) return clear;
+  return rings(x, y, { cx: 0.5, cy: 0.5, r: 0.19, w: 0.075, gap: 0.105 }) ? [...paper, alpha] : [...ink, alpha];
+};
+writeFileSync(
+  join(out, "tray-color.png"),
+  png(32, (x, y) => appIcon(x, y, 1)),
+);
+writeFileSync(
+  join(out, "tray-color-attention.png"),
+  png(32, (x, y) => {
+    if (inDot(x, y, -0.01)) return [...amber, 1];
+    if (inDot(x, y, 0.06)) return clear;
+    return appIcon(x, y, 1);
+  }),
+);
+writeFileSync(
+  join(out, "tray-color-stopped.png"),
+  png(32, (x, y) => appIcon(x, y, 0.4)),
 );
 console.log(`icons written to ${out}`);

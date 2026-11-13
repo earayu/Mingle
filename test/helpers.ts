@@ -41,6 +41,9 @@ export class FakeChannel implements Channel {
   liveEnabled = false;
   /** Live replies refuse their final content, as QQ's stream does past its window. */
   finishFails = false;
+  /** How many times a bot connected, and how many of those connections were closed. */
+  connects = 0;
+  closes = 0;
   private events: ChannelEvents | undefined;
   private seq = 1000;
 
@@ -50,6 +53,7 @@ export class FakeChannel implements Channel {
 
   async connect(_credentials: unknown, events: ChannelEvents): Promise<ChannelConnection> {
     this.events = events;
+    this.connects++;
     return {
       bot: { id: "bot1", name: "@alex_bot" },
       capabilities: () => ({
@@ -98,7 +102,9 @@ export class FakeChannel implements Channel {
       setTyping: async () => {},
       download: async () => {},
       listMembers: async () => [],
-      close: async () => {},
+      close: async () => {
+        this.closes++;
+      },
     };
   }
 
