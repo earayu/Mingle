@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AgentPage } from "./AgentPage.tsx";
 import { type AgentView, ApiError, api, captureToken } from "./api.ts";
 import { ConnectPage } from "./Connect.tsx";
-import { I18n, translator, useI18n, useLocaleSettings } from "./i18n.ts";
+import { I18n, type MessageKey, translator, useI18n, useLocaleSettings } from "./i18n.ts";
 import iconUrl from "./icon.svg";
 import { NewAgent } from "./NewAgent.tsx";
 import { onNavigateRequest } from "./online.ts";
+import { usePolling } from "./poll.ts";
 import { applyTheme, SettingsPage, savedTheme } from "./Settings.tsx";
 import { Avatar, Button, Eyebrow, PlusIcon, SettingsIcon, StatusDot, UpdateIcon } from "./ui.tsx";
 import { updates, useUpdates } from "./updates.ts";
@@ -117,12 +118,7 @@ function Shell() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!token) return;
-    refresh();
-    const timer = setInterval(refresh, 2000);
-    return () => clearInterval(timer);
-  }, [token, refresh]);
+  usePolling(refresh, 2000, Boolean(token));
 
   if (problem === "unauthorized") return <Unauthorized />;
 
@@ -221,7 +217,10 @@ function Sidebar({
       <nav className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
         {agents.map((a) => {
           const on = currentId === a.id;
-          const apps = a.connections.map((c) => t(`platform.${c.platform}` as never)).join("、");
+          // One name per chat app, even with several bots in it.
+          const apps = [...new Set(a.connections.map((c) => c.platform))]
+            .map((p) => t(`platform.${p}` as MessageKey))
+            .join(t("list.separator"));
           return (
             <button
               key={a.id}

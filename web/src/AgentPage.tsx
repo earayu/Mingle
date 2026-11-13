@@ -13,6 +13,7 @@ import { errorText, type MessageKey, statusDetailText, useI18n } from "./i18n.ts
 import { ModelPicker } from "./NewAgent.tsx";
 import { online, useOnline } from "./online.ts";
 import { PlatformIcon } from "./platforms.tsx";
+import { usePolling } from "./poll.ts";
 import { OnlineRows } from "./Settings.tsx";
 import {
   AgentStatusText,
@@ -65,19 +66,14 @@ export function AgentPage({
       .catch(() => {});
   }, [agent.id]);
 
-  useEffect(() => {
-    setActivity(null);
-    refresh();
-    const timer = setInterval(refresh, 2500);
-    return () => clearInterval(timer);
-  }, [refresh]);
-
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset when switching to another agent
   useEffect(() => {
+    setActivity(null);
     setConfirmDelete(false);
     setNotice(null);
     setTab("activity");
   }, [agent.id]);
+  usePolling(refresh, 2500);
 
   const busy = agent.status === "thinking" || agent.status === "working";
   const retry = async (ids: string[]) => {

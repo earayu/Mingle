@@ -60,6 +60,33 @@ const open = (id: string, runtime: Runtime, resume?: string) =>
     events,
   );
 
+describe("harness list", () => {
+  it("probes every harness side by side and keeps the display order", async () => {
+    let running = 0;
+    let peak = 0;
+    const delays: Record<string, number> = { claude: 60, codex: 10 };
+    const source = {
+      require: (id: string): Runtime => {
+        if (id !== "claude" && id !== "codex") throw new Error("not offered here");
+        return {
+          ...defaultRuntimes.require(id),
+          installation: async () => {
+            running++;
+            peak = Math.max(peak, running);
+            await new Promise((r) => setTimeout(r, delays[id]));
+            running--;
+            return { kind: "available", via: "executable", command: id, version: "1.2.3" };
+          },
+        };
+      },
+    };
+    const list = await oarHarness(source).available();
+    expect(peak).toBe(2);
+    expect(list.map((h) => h.id)).toEqual(["claude", "codex"]);
+    expect(list[0]?.version).toBe("1.2.3");
+  });
+});
+
 describe("opencode version gate", () => {
   it.each(["1.19.5", "opencode v1.19.5", "1.19.5-beta.1"])("enables OpenCode %s", async (version) => {
     const { runtime } = opencodeAt(version);

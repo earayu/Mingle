@@ -182,31 +182,31 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
 
   return {
     async available() {
-      const out: HarnessInfo[] = [];
-      for (const id of OFFERED) {
+      // Each probe starts the harness's executable for its version; run them side by side.
+      const probes = OFFERED.map(async (id): Promise<HarnessInfo | undefined> => {
         let runtime: Runtime;
         try {
           runtime = source.require(id);
         } catch {
-          continue;
+          return undefined;
         }
         const found = await runtime.installation?.().catch(() => undefined);
-        if (found?.kind !== "available") continue;
+        if (found?.kind !== "available") return undefined;
         // Harnesses print versions their own way ("2.1.322 (Claude Code)", "codex-cli 0.167.1"): keep the number.
         const version = found.via === "executable" ? /\d+(?:\.\d+)+/.exec(found.version ?? "")?.[0] : undefined;
         const brand = runtime.brand;
         const light = brand ? runtimeBrandIcon(brand, "light") : null;
         const dark = brand ? runtimeBrandIcon(brand, "dark") : null;
         const disabled = incompatibility(runtime, found);
-        out.push({
+        return {
           id,
           name: brand?.name ?? id,
           ...(version ? { version } : {}),
           ...(light && dark ? { icon: { light, dark } } : {}),
           ...(disabled ? { disabled } : {}),
-        });
-      }
-      return out;
+        };
+      });
+      return (await Promise.all(probes)).filter((h): h is HarnessInfo => h !== undefined);
     },
 
     name(id) {

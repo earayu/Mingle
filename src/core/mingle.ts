@@ -12,7 +12,7 @@ import type {
   OnboardingFailure,
   Platform,
 } from "../channels/channel.ts";
-import type { Harness } from "../harness/harness.ts";
+import type { Harness, HarnessInfo } from "../harness/harness.ts";
 import type { SecretStore } from "../platform/secrets.ts";
 import { type Agent, type Connection, Store } from "../store/store.ts";
 import { MingleError, notFound } from "./errors.ts";
@@ -101,6 +101,8 @@ export class Mingle {
   async start(apiUrl: string): Promise<void> {
     this.apiUrl = apiUrl;
     this.writeCliWrapper();
+    // Warm the harness list so the console's first look at it does not wait on the probe.
+    void this.probeHarnesses().catch(() => {});
     for (const agent of this.store.agents()) this.addRuntime(agent).start();
     await Promise.all(this.store.connections().map((c) => this.reconnect(c)));
     const tick = this.options.reminderTickMs ?? 10_000;
@@ -171,8 +173,37 @@ export class Mingle {
     return join(this.options.paths.agents, agent.slug);
   }
 
-  async availableHarnesses() {
-    return this.options.harness.available();
+  /**
+   * The installed harnesses. Finding them starts every harness's executable, over a second in
+   * all, and the console asks on every settings view and every brain change. So answer from
+   * the last result and refresh it in the background when it is older than a minute.
+   * `fresh` waits for a new probe: use it before refusing a harness the cache does not list,
+   * since the person may have just installed it.
+   */
+  async availableHarnesses(fresh = false): Promise<readonly HarnessInfo[]> {
+    const cached = this.harnessList;
+    if (!fresh && cached?.value) {
+      if (Date.now() - cached.at > 60_000) void this.probeHarnesses().catch(() => {});
+      return cached.value;
+    }
+    return this.probeHarnesses();
+  }
+
+  private harnessList?: { value?: readonly HarnessInfo[]; at: number };
+  private harnessProbe?: Promise<readonly HarnessInfo[]> | undefined;
+
+  /** One probe at a time; callers arriving meanwhile share it. */
+  private probeHarnesses(): Promise<readonly HarnessInfo[]> {
+    this.harnessProbe ??= this.options.harness
+      .available()
+      .then((value) => {
+        this.harnessList = { value, at: Date.now() };
+        return value;
+      })
+      .finally(() => {
+        this.harnessProbe = undefined;
+      });
+    return this.harnessProbe;
   }
 
   /**

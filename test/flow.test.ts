@@ -327,6 +327,44 @@ describe("agent settings", () => {
     expect(current.mingle.store.agents()).toHaveLength(before);
   });
 
+  it("answers the harness list from a cache warmed at start", async () => {
+    let probes = 0;
+    current = await rig(async () => {}, {
+      wrap: (h) => ({
+        ...h,
+        available: async () => {
+          probes++;
+          return h.available();
+        },
+      }),
+    });
+    const { mingle, agentId } = current;
+    await until(() => probes === 1);
+    for (let i = 0; i < 3; i++) expect((await current.admin("GET", "/v1/admin/harnesses")).status).toBe(200);
+    // A settings change validates the harness against the cache too.
+    expect((await current.admin("PATCH", `/v1/admin/agents/${agentId}`, { model: "m2" })).status).toBe(200);
+    expect(probes).toBe(1);
+    expect(mingle.store.agent(agentId)?.model).toBe("m2");
+  });
+
+  it("looks again before refusing a harness installed after the last look", async () => {
+    let installed = false;
+    current = await rig(async () => {}, {
+      wrap: (h) => ({
+        ...h,
+        available: async () => [...(await h.available()), ...(installed ? [{ id: "late", name: "Late" }] : [])],
+      }),
+    });
+    const { mingle, agentId } = current;
+    expect((await current.admin("GET", "/v1/admin/harnesses")).json).not.toContainEqual(
+      expect.objectContaining({ id: "late" }),
+    );
+    installed = true;
+    const switched = await current.admin("PATCH", `/v1/admin/agents/${agentId}`, { harness: "late" });
+    expect(switched.status).toBe(200);
+    expect(mingle.store.agent(agentId)?.harness).toBe("late");
+  });
+
   it("rejects switching to a disabled harness and keeps every setting", async () => {
     current = await rig(async () => {}, { harnessAdapter: wrappedHarness(blocked) });
     const { mingle, agentId } = current;
