@@ -171,15 +171,11 @@ export class AgentRuntime {
     // While a turn runs, only chat messages are steered in. Reminders and notes wait for the
     // next turn: steered at the very end of a turn they could be accepted and never acted on.
     // (A message in that position is still caught by the unanswered check after the turn.)
-    const batch = this.running ? this.pending.filter((p) => p.kind === "message") : this.pending.slice();
+    const taken = this.running ? this.pending.filter((p) => p.kind === "message") : this.pending.slice();
     this.pending = this.running ? this.pending.filter((p) => p.kind !== "message") : [];
+    // A message settled while it waited (answered, or queued twice) is not delivered again.
+    const batch = taken.filter((p) => p.kind === "text" || this.deps.store.message(p.id)?.state === "received");
     if (batch.length === 0) return;
-    const messageIds = batch.flatMap((p) => (p.kind === "message" ? [p.id] : []));
-    const text = batch
-      .map((p) => (p.kind === "text" ? p.text : this.render(p.id)))
-      .filter(Boolean)
-      .join("\n\n");
-    if (!text) return;
 
     let session: HarnessSession;
     try {
@@ -190,7 +186,19 @@ export class AgentRuntime {
     }
     const inputId = randomUUID();
     // Mark first: a fast agent can reply before deliver() returns, and its reply must win.
-    this.deps.store.setInboundState(messageIds, "delivered", inputId);
+    const delivered = new Set(
+      this.deps.store.moveInbound(
+        batch.flatMap((p) => (p.kind === "message" ? [p.id] : [])),
+        "deliver",
+        inputId,
+      ),
+    );
+    const messageIds = [...delivered];
+    const text = batch
+      .flatMap((p) => (p.kind === "text" ? [p.text] : delivered.has(p.id) ? [this.render(p.id)] : []))
+      .filter(Boolean)
+      .join("\n\n");
+    if (!text) return;
     let result: Awaited<ReturnType<HarnessSession["deliver"]>>;
     try {
       result = await session.deliver(text, inputId);
@@ -211,10 +219,12 @@ export class AgentRuntime {
    * hears about it instead of waiting; reminders and notes wait for the next turn.
    */
   private lose(batch: readonly Pending[], error: unknown): void {
-    const ids = batch.flatMap((p) => (p.kind === "message" ? [p.id] : []));
     this.pending.unshift(...batch.filter((p) => p.kind === "text"));
+    const ids = this.deps.store.moveInbound(
+      batch.flatMap((p) => (p.kind === "message" ? [p.id] : [])),
+      "fail",
+    );
     if (ids.length === 0) return;
-    this.deps.store.setInboundState(ids, "failed");
     this.deps.onSettled?.(ids, "failed", { failure: failureOf(error) });
   }
 
@@ -297,15 +307,11 @@ export class AgentRuntime {
     const awaiting = store.awaitingReply(this.agentId);
     const fresh = awaiting.filter((m) => !store.wasNudged(m.id));
     const stale = awaiting.filter((m) => store.wasNudged(m.id));
-    store.setInboundState(
+    const givenUp = store.moveInbound(
       stale.map((m) => m.id),
-      "unanswered",
+      "give_up",
     );
-    if (stale.length > 0)
-      this.deps.onSettled?.(
-        stale.map((m) => m.id),
-        "unanswered",
-      );
+    if (givenUp.length > 0) this.deps.onSettled?.(givenUp, "unanswered");
     if (fresh.length > 0) {
       store.markNudged(fresh.map((m) => m.id));
       const ids = fresh.map((m) => m.id).join(", ");
@@ -336,9 +342,11 @@ export class AgentRuntime {
 
   /** Every message still waiting on this agent fails with `why`. */
   private settleAwaiting(why: FailureInfo): void {
-    const lost = this.deps.store.awaitingReply(this.agentId).map((m) => m.id);
+    const lost = this.deps.store.moveInbound(
+      this.deps.store.awaitingReply(this.agentId).map((m) => m.id),
+      "fail",
+    );
     if (lost.length === 0) return;
-    this.deps.store.setInboundState(lost, "failed");
     this.deps.onSettled?.(lost, "failed", why);
   }
 

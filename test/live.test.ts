@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { failureText, LiveReplies, stepKind } from "../src/core/live.ts";
 import { type Failure, type Harness, HarnessError } from "../src/harness/harness.ts";
 import { type InboundState, Store } from "../src/store/store.ts";
-import { messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
+import { driveInbound, messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
 
 let current: Rig | undefined;
 afterEach(async () => {
@@ -389,7 +389,7 @@ describe("ignoring messages", () => {
         createdAt: Date.now() + seq,
       });
       if (!message) throw new Error("insert failed");
-      if (state !== "received") store.setInboundState([message.id], state);
+      driveInbound(store, message.id, state);
       return message.id;
     };
     const failedId = inbound(chat.id, "failed");

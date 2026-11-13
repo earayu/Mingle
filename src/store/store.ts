@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { ChatKind, Platform } from "../channels/channel.ts";
 import { shortId } from "../core/ids.ts";
+import { INBOUND, type InboundEvent } from "../core/inbound.ts";
 
 export type AgentStatus = "offline" | "idle" | "thinking" | "working" | "error";
 export type ConnectionStateKind = "awaiting_credentials" | "awaiting_approval" | "connected" | "reconnecting" | "error";
@@ -373,9 +374,24 @@ export class Store {
     this.db.prepare("UPDATE messages SET state = ?, platform_id = ? WHERE id = ?").run(state, platformId, id);
   }
 
-  setInboundState(ids: readonly string[], state: InboundState, inputId?: string): void {
-    const stmt = this.db.prepare("UPDATE messages SET state = ?, input_id = coalesce(?, input_id) WHERE id = ?");
-    for (const id of ids) stmt.run(state, inputId ?? null, id);
+  /**
+   * The only way an inbound message changes state (src/core/inbound.ts). Each message moves
+   * only if it is in one of the event's source states; the rest are left as they are, so a
+   * late or repeated event cannot overwrite a newer state. Returns the IDs that moved.
+   * `deliver` records `inputId`; `retry` clears the nudge so the message is nudged again.
+   */
+  moveInbound(ids: readonly string[], event: InboundEvent, inputId?: string): string[] {
+    const rule = INBOUND[event];
+    const stmt = this.db.prepare(
+      `UPDATE messages SET state = ?, input_id = coalesce(?, input_id), nudged = CASE WHEN ? THEN 0 ELSE nudged END
+       WHERE id = ? AND direction = 'in' AND state IN (${rule.from.map(() => "?").join(", ")})`,
+    );
+    const moved: string[] = [];
+    for (const id of ids) {
+      const result = stmt.run(rule.to, inputId ?? null, event === "retry" ? 1 : 0, id, ...rule.from);
+      if (result.changes) moved.push(id);
+    }
+    return moved;
   }
 
   message(id: string): Message | undefined {
@@ -473,12 +489,6 @@ export class Store {
       .all(agentId) as Row[];
     const wanted = ids && new Set(ids);
     return rows.map(toMessage).filter((m) => !wanted || wanted.has(m.id));
-  }
-
-  /** Put messages back in the inbox as if just received: delivered again, nudged again if need be. */
-  requeue(ids: readonly string[]): void {
-    const stmt = this.db.prepare("UPDATE messages SET state = 'received', nudged = 0 WHERE id = ?");
-    for (const id of ids) stmt.run(id);
   }
 
   /** Inbound messages received but never handed to the agent (for example, the process stopped first). */

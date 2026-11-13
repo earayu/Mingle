@@ -679,7 +679,7 @@ export class Mingle {
     const live = this.live.get(connectionId);
 
     if (inbound.text.trim() === "/stop" && inbound.sender.id === ownerId) {
-      this.store.setInboundState([message.id], "replied");
+      this.store.moveInbound([message.id], "reply");
       for (const id of this.replies.openFor(connection.agentId)) this.replies.settle(id, "stopped");
       void this.runtimes
         .get(connection.agentId)
@@ -730,6 +730,7 @@ export class Mingle {
         offline.add(connection.id);
         continue;
       }
+      if (this.store.moveInbound([message.id], "retry").length === 0) continue;
       retried.push(message.id);
       if (message.platformId) {
         this.replies.open({
@@ -743,7 +744,6 @@ export class Mingle {
         });
       }
     }
-    this.store.requeue(retried);
     runtime.retry(retried);
     return { retried, offline: [...offline] };
   }
@@ -751,9 +751,10 @@ export class Mingle {
   /** Dismiss selected failed or unanswered inbound messages without waking the agent or sending a reply. */
   ignoreMessages(idOrSlug: string, ids: readonly string[]): string[] {
     const agent = this.agent(idOrSlug);
-    const ignored = this.store.retryable(agent.id, ids).map((message) => message.id);
-    this.store.setInboundState(ignored, "ignored");
-    return ignored;
+    return this.store.moveInbound(
+      this.store.retryable(agent.id, ids).map((message) => message.id),
+      "ignore",
+    );
   }
 
   // --------------------------------------------------------------- reminders
