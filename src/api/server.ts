@@ -254,6 +254,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   const agentView = (agent: Agent) => ({
     ...agent,
+    harnessName: mingle.harnessName(agent.id),
     home: mingle.homeDir(agent),
     role: readRole(mingle.homeDir(agent)),
     connections: store.connections(agent.id).map((n) => ({
@@ -370,6 +371,12 @@ export function createApi(mingle: Mingle): Hono<Env> {
   });
 
   app.post("/v1/admin/agents/:id/stop", async (c) => c.json({ stopped: await mingle.stopAgent(c.req.param("id")) }));
+
+  /** Try again on messages the agent failed or did not answer: all of them, or `ids`. */
+  app.post("/v1/admin/agents/:id/messages/retry", async (c) => {
+    const body = await c.req.json<{ ids?: string[] }>().catch(() => ({}) as { ids?: string[] });
+    return c.json({ retried: mingle.retryMessages(c.req.param("id"), body.ids) });
+  });
 
   app.delete("/v1/admin/agents/:id", async (c) => {
     await mingle.deleteAgent(c.req.param("id"), c.req.query("removeHome") === "1");

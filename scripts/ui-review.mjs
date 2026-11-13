@@ -165,9 +165,16 @@ try {
     alex.id,
   );
   insert(
-    "UPDATE agents SET status = 'error', status_detail = 'the harness refused the input (busy: another turn is running)' WHERE id = ?",
+    "UPDATE agents SET status = 'error', status_detail = 'Not logged in · Please run /login', status_failure = 'auth' WHERE id = ?",
     long.id,
   );
+  // A message the agent could not answer because its harness was signed out.
+  insert(
+    "INSERT INTO chats (id, connection_id, platform_id, kind, name, created_at, updated_at) VALUES ('c3','n4','9','dm','Wilhelmina',?,?)",
+    now,
+    now,
+  );
+  msg("m06", "c3", "in", "Wilhelmina", "Could you summarise this week's article for the club?", "failed", 60_000);
   db.close();
 
   const pages = [

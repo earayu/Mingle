@@ -9,6 +9,7 @@ import (
 	"log"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/updater"
@@ -32,7 +33,9 @@ func main() {
 	origin := d.origin()
 	t := texts()
 
-	mygo.Use(updater.Plugin)
+	// Mingle releases often: check every few hours, and let the console offer the update.
+	mygo.Use(updater.New(updater.Options{Interval: 6 * time.Hour}))
+	mygo.Bind(newUpdates())
 	// A menu bar app: the Dock icon shows only while the window does.
 	mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 	mygo.App.OnWindowAllClosed(func() {})

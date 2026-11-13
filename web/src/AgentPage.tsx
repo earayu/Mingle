@@ -14,6 +14,7 @@ import { ModelPicker } from "./NewAgent.tsx";
 import { PlatformIcon } from "./platforms.tsx";
 import {
   AgentStatusText,
+  ApiKeyHint,
   Avatar,
   Button,
   Group,
@@ -77,15 +78,36 @@ export function AgentPage({
   }, [agent.id]);
 
   const busy = agent.status === "thinking" || agent.status === "working";
+  const retry = async (ids: string[]) => {
+    try {
+      const { retried } = await api.retry(agent.id, ids);
+      setNotice(
+        retried.length > 0
+          ? t("agent.retrying", { count: String(retried.length), name: agent.name })
+          : t("agent.retryOffline"),
+      );
+    } catch (error) {
+      setNotice(errorText(t, error));
+    }
+    refresh();
+  };
   const connect = () => onNavigate({ kind: "connect", slug: agent.slug });
   const unanswered = (activity ?? []).filter((m) => m.direction === "in" && m.state === "unanswered");
+  const failed = (activity ?? []).filter((m) => m.direction === "in" && m.state === "failed");
   const troubled = agent.connections.filter((c) => c.state === "error" || c.state === "awaiting_approval");
   const replied = (activity ?? []).some((m) => m.direction === "out");
   const setupDone = agent.connections.length > 0 && replied;
 
-  const hasNeeds = agent.connections.length > 0 || troubled.length > 0 || unanswered.length > 0;
+  const hasNeeds = agent.connections.length > 0 || troubled.length > 0 || unanswered.length > 0 || failed.length > 0;
   const needsYou = hasNeeds ? (
-    <NeedsYou agent={agent} unanswered={unanswered.length} troubled={troubled} onConnect={connect} />
+    <NeedsYou
+      agent={agent}
+      unanswered={unanswered.map((m) => m.id)}
+      failed={failed.map((m) => m.id)}
+      troubled={troubled}
+      onRetry={retry}
+      onConnect={connect}
+    />
   ) : null;
 
   return (
@@ -148,11 +170,7 @@ export function AgentPage({
               />
             ) : null}
             {notice ? <p className="rise -mb-3 text-small text-ink2">{notice}</p> : null}
-            {agent.status === "error" && agent.statusDetail ? (
-              <Problem title={t("agent.errorTitle")} tone="red">
-                <span className="selectable wrap-anywhere">{statusDetailText(t, agent.statusDetail)}</span>
-              </Problem>
-            ) : null}
+            {agent.status === "error" ? <AgentError agent={agent} /> : null}
 
             {tab === "settings" ? (
               <>
@@ -193,7 +211,7 @@ export function AgentPage({
                 {needsYou ? <div className="flex flex-col gap-7 min-[1140px]:hidden">{needsYou}</div> : null}
                 {activity && activity.length > 0 ? (
                   <Section title={t("agent.activity")}>
-                    <ActivityList items={activity} />
+                    <ActivityList items={activity} onRetry={retry} />
                   </Section>
                 ) : null}
                 <div className="flex flex-col gap-7 min-[1140px]:hidden">
@@ -239,25 +257,74 @@ function GettingStarted({ agent, heard, onConnect }: { agent: AgentView; heard: 
           {connected ? <Waiting>{t("start.waiting")}</Waiting> : <Waiting>{t("start.waitingConnection")}</Waiting>}
         </Step>
         <Step n={4} state={heard ? "now" : "later"} title={t("start.reply")}>
-          <Waiting>{t("start.replying", { name: agent.name })}</Waiting>
+          {agent.status === "error" ? (
+            <p className="text-small text-red">{t("start.replyFailed", { name: agent.name })}</p>
+          ) : (
+            <Waiting>{t("start.replying", { name: agent.name })}</Waiting>
+          )}
         </Step>
       </Steps>
     </section>
   );
 }
 
+/** Failure classes the console explains; anything else shows the generic text. */
+const FAILURES = ["auth", "quota", "billing", "model_unavailable", "busy", "input_too_large", "not_installed"] as const;
+
+function failureKey(failure: string | null): (typeof FAILURES)[number] | "unknown" {
+  if (failure === "rate_limited" || failure === "overloaded" || failure === "provider") return "busy";
+  return (FAILURES as readonly string[]).includes(failure ?? "") ? (failure as (typeof FAILURES)[number]) : "unknown";
+}
+
+/** Why the agent stopped, in plain words and with the next step; the harness's own words underneath. */
+function AgentError({ agent }: { agent: AgentView }) {
+  const { t } = useI18n();
+  if (agent.statusDetail) {
+    const detail = statusDetailText(t, agent.statusDetail);
+    if (detail !== agent.statusDetail) {
+      return (
+        <Problem title={t("failure.unknown.title" as MessageKey, { name: agent.name })} tone="red">
+          <span className="selectable wrap-anywhere">{detail}</span>
+        </Problem>
+      );
+    }
+  }
+  const key = failureKey(agent.statusFailure);
+  const vars = { harness: agent.harnessName, name: agent.name };
+  return (
+    <Problem title={t(`failure.${key}.title` as MessageKey, vars)} tone="red">
+      <p>{t(`failure.${key}.body` as MessageKey, vars)}</p>
+      {key === "auth" ? <ApiKeyHint harness={agent.harness} /> : null}
+      {agent.statusDetail ? (
+        <p className="selectable mt-1 font-mono text-caption text-ink3 wrap-anywhere">{agent.statusDetail}</p>
+      ) : null}
+    </Problem>
+  );
+}
+
 function NeedsYou({
   agent,
   unanswered,
+  failed,
   troubled,
   onConnect,
+  onRetry,
 }: {
   agent: AgentView;
-  unanswered: number;
+  unanswered: string[];
+  failed: string[];
   troubled: ConnectionView[];
   onConnect: () => void;
+  onRetry: (ids: string[]) => Promise<void>;
 }) {
   const { t } = useI18n();
+  // Retrying while the harness still fails only fails again; say so, but let the person try.
+  const retryAction = (ids: string[]) => (
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <RetryButton onRetry={() => onRetry(ids)} label={t("needs.retry")} />
+      {agent.status === "error" ? <span className="text-caption text-ink3">{t("needs.retryFirst")}</span> : null}
+    </div>
+  );
   const items = [
     ...troubled.map((c) => (
       <Problem
@@ -268,10 +335,19 @@ function NeedsYou({
         {c.state === "error" ? connectionDetail(t, c) : t("connection.approvalHint")}
       </Problem>
     )),
-    ...(unanswered > 0
+    ...(failed.length > 0
       ? [
-          <Problem key="unanswered" title={t("needs.unanswered", { count: String(unanswered) })}>
+          <Problem key="failed" tone="red" title={t("needs.failed", { count: String(failed.length) })}>
+            {t("needs.failedBody", { name: agent.name })}
+            {retryAction(failed)}
+          </Problem>,
+        ]
+      : []),
+    ...(unanswered.length > 0
+      ? [
+          <Problem key="unanswered" title={t("needs.unanswered", { count: String(unanswered.length) })}>
             {t("needs.unansweredBody", { name: agent.name })}
+            {retryAction(unanswered)}
           </Problem>,
         ]
       : []),
@@ -636,7 +712,24 @@ function DeleteConfirm({
   );
 }
 
-function ActivityList({ items }: { items: Activity[] }) {
+/** Disabled while the request runs, so a double click does not send it twice. */
+function RetryButton({ onRetry, label }: { onRetry: () => Promise<void>; label: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      small
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        await onRetry().finally(() => setBusy(false));
+      }}
+    >
+      {label}
+    </Button>
+  );
+}
+
+function ActivityList({ items, onRetry }: { items: Activity[]; onRetry: (ids: string[]) => Promise<void> }) {
   const { t, locale } = useI18n();
   return (
     <Group>
@@ -668,6 +761,14 @@ function ActivityList({ items }: { items: Activity[] }) {
                 <p className="flex items-center gap-1.5 text-caption text-amber">
                   <StatusDot state="awaiting_approval" />
                   {t("agent.unanswered")}
+                  <RetryLink onRetry={() => onRetry([m.id])} />
+                </p>
+              ) : null}
+              {m.direction === "in" && m.state === "failed" ? (
+                <p className="flex items-center gap-1.5 text-caption text-red">
+                  <StatusDot state="error" />
+                  {t("agent.failed")}
+                  <RetryLink onRetry={() => onRetry([m.id])} />
                 </p>
               ) : null}
             </div>
@@ -675,5 +776,24 @@ function ActivityList({ items }: { items: Activity[] }) {
         );
       })}
     </Group>
+  );
+}
+
+/** "Retry" inline after a message's state, in the same small type. */
+function RetryLink({ onRetry }: { onRetry: () => Promise<void> }) {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      className="ml-1 font-medium text-accent hover:underline disabled:opacity-45"
+      onClick={async () => {
+        setBusy(true);
+        await onRetry().finally(() => setBusy(false));
+      }}
+    >
+      {t("agent.retry")}
+    </button>
   );
 }

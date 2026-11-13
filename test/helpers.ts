@@ -39,6 +39,8 @@ export class FakeChannel implements Channel {
   }[] = [];
   /** Off by default so most tests see plain replies; the live-reply tests turn it on. */
   liveEnabled = false;
+  /** Live replies refuse their final content, as QQ's stream does past its window. */
+  finishFails = false;
   private events: ChannelEvents | undefined;
   private seq = 1000;
 
@@ -85,6 +87,7 @@ export class FakeChannel implements Channel {
                   record.updates.push(markdown);
                 },
                 finish: async (markdown: string) => {
+                  if (this.finishFails) return { kind: "failed" as const, code: "unknown" as const, retryable: false };
                   record.final = markdown;
                   return { kind: "sent" as const, platformId };
                 },
@@ -168,6 +171,8 @@ export async function rig(
     coalesceMs?: number;
     live?: boolean;
     channels?: Partial<Record<Platform, Channel>>;
+    /** Change what the harness reports, e.g. to make a failed turn look like a sign-in problem. */
+    wrap?: (harness: Harness) => Harness;
   } = {},
 ): Promise<Rig> {
   const home = mkdtempSync(join(tmpdir(), "mingle-test-"));
@@ -200,7 +205,7 @@ export async function rig(
   };
   const mingle = new Mingle({
     paths: resolvePaths(home),
-    harness,
+    harness: options.wrap ? options.wrap(harness) : harness,
     channels: { telegram: channel, ...options.channels },
     secrets: memorySecrets(),
     cliEntry: CLI_ENTRY,

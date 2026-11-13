@@ -238,6 +238,32 @@ export function Problem({
   );
 }
 
+/** Official docs for using an API key instead of signing in, for harnesses we can point to. */
+const API_KEY_DOCS: Readonly<Record<string, string>> = {
+  claude: "https://code.claude.com/docs/en/llm-gateway-connect",
+  codex: "https://developers.openai.com/codex/config-advanced",
+};
+
+/**
+ * Under a "not signed in" problem: signing in is not the only way. Says how to use an
+ * API key with this harness and that Mingle needs a restart to see a shell variable.
+ */
+export function ApiKeyHint({ harness }: { harness: string }) {
+  const { t } = useI18n();
+  const docs = API_KEY_DOCS[harness];
+  if (!docs) return null;
+  return (
+    <p className="mt-1">
+      {t(`apiKey.${harness}` as "apiKey.claude")}{" "}
+      <a className="text-accent underline-offset-2 hover:underline" href={docs} target="_blank" rel="noreferrer">
+        {t("apiKey.docs")}
+      </a>
+      <br />
+      {t("apiKey.restart")}
+    </p>
+  );
+}
+
 export type StepState = "later" | "todo" | "now" | "done";
 
 /**
@@ -422,6 +448,12 @@ export const SettingsIcon = (p: { className?: string }) => (
   <Icon {...p}>
     <circle cx="8" cy="8" r="2" />
     <path d="M8 1.5v1.6M8 12.9v1.6M14.5 8h-1.6M3.1 8H1.5M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1M12.6 12.6l-1.1-1.1M4.5 4.5 3.4 3.4" />
+  </Icon>
+);
+export const UpdateIcon = (p: { className?: string }) => (
+  <Icon {...p}>
+    <circle cx="8" cy="8" r="6.5" />
+    <path d="M8 11V5M5.5 7.5 8 5l2.5 2.5" />
   </Icon>
 );
 export const CheckIcon = (p: { className?: string }) => (

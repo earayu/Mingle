@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Harness, HarnessSession } from "../harness/harness.ts";
+import { type Failure, failureOf, type Harness, type HarnessSession } from "../harness/harness.ts";
 import type { Agent, AgentStatus, Store } from "../store/store.ts";
 import { formatMessage } from "./format.ts";
 import { readRole } from "./home.ts";
@@ -14,10 +14,16 @@ export interface RuntimeDeps {
   /** Progress inside a turn, for live replies. */
   readonly onActivity?: (kind: "thinking" | "tool", detail?: string) => void;
   /** Messages that will not be answered: given up on after the nudge, or lost to a failed turn. */
-  readonly onSettled?: (messageIds: readonly string[], outcome: "unanswered" | "failed") => void;
+  readonly onSettled?: (messageIds: readonly string[], outcome: "unanswered" | "failed", why?: FailureInfo) => void;
   /** Wait before delivering to an idle agent, so a burst of messages becomes one input. */
   readonly coalesceMs?: number;
   readonly log?: (line: string) => void;
+}
+
+/** Why messages were lost to a failure: its class and, for quota, when the limit resets. */
+export interface FailureInfo {
+  readonly failure: Failure;
+  readonly resetsAt?: number;
 }
 
 type Pending = { readonly kind: "message"; readonly id: string } | { readonly kind: "text"; readonly text: string };
@@ -38,6 +44,8 @@ export class AgentRuntime {
   private chain: Promise<void> = Promise.resolve();
   private status: AgentStatus | undefined;
   private disposed = false;
+  /** Messages the owner asked to try again; their next delivery says so. */
+  private readonly retried = new Set<string>();
 
   private readonly agentId: string;
   private readonly deps: RuntimeDeps;
@@ -73,6 +81,14 @@ export class AgentRuntime {
   enqueueMessage(messageId: string): void {
     this.pending.push({ kind: "message", id: messageId });
     this.schedule();
+  }
+
+  /** Deliver messages again that were given up on. The store already has them back as received. */
+  retry(messageIds: readonly string[]): void {
+    for (const id of messageIds) {
+      this.retried.add(id);
+      this.enqueueMessage(id);
+    }
   }
 
   /** Input that is not a chat message: a reminder firing, or a note from Mingle itself. */
@@ -149,8 +165,7 @@ export class AgentRuntime {
     try {
       session = await this.ensureSession();
     } catch (error) {
-      // Keep the messages as "received": they are retried on the next message or restart.
-      this.pending.unshift(...batch);
+      this.lose(batch, error);
       throw error;
     }
     const inputId = randomUUID();
@@ -160,16 +175,27 @@ export class AgentRuntime {
     try {
       result = await session.deliver(text, inputId);
     } catch (error) {
-      this.deps.store.setInboundState(messageIds, "received");
-      this.pending.unshift(...batch);
+      this.lose(batch, error);
       throw error;
     }
     if (result.outcome === "rejected") {
-      this.deps.store.setInboundState(messageIds, "received");
-      this.pending.unshift(...batch);
-      throw new Error(`the harness refused the input (${result.reason ?? "no reason"})`);
+      const error = new Error(`the harness refused the input (${result.reason ?? "no reason"})`);
+      this.lose(batch, error);
+      throw error;
     }
     this.deps.log?.(`${this.agentId}: delivered ${messageIds.join(",") || "note"} (${result.outcome})`);
+  }
+
+  /**
+   * Input that could not be handed over. Chat messages settle as failed, so the person
+   * hears about it instead of waiting; reminders and notes wait for the next turn.
+   */
+  private lose(batch: readonly Pending[], error: unknown): void {
+    const ids = batch.flatMap((p) => (p.kind === "message" ? [p.id] : []));
+    this.pending.unshift(...batch.filter((p) => p.kind === "text"));
+    if (ids.length === 0) return;
+    this.deps.store.setInboundState(ids, "failed");
+    this.deps.onSettled?.(ids, "failed", { failure: failureOf(error) });
   }
 
   private render(messageId: string): string {
@@ -178,7 +204,10 @@ export class AgentRuntime {
     const chat = message && store.chat(message.chatId);
     const connection = chat && store.connection(chat.connectionId);
     if (!message || !chat || !connection) return "";
-    return formatMessage(message, chat, connection.platform, { ownerId: connection.ownerId });
+    const text = formatMessage(message, chat, connection.platform, { ownerId: connection.ownerId });
+    if (!this.retried.delete(messageId)) return text;
+    // An old message coming back: the agent should know it is late, not treat it as new.
+    return `[mingle] Retry: ${message.id} was not answered when it arrived (see its time). Reply to it now, and say briefly that the answer is late.\n${text}`;
   }
 
   private async ensureSession(): Promise<HarnessSession> {
@@ -208,8 +237,14 @@ export class AgentRuntime {
         },
         onTurnEnded: (outcome) => {
           this.running = false;
-          if (outcome.kind === "failed") this.setStatus("error", outcome.reason ?? "the turn failed");
-          else this.setStatus("idle");
+          if (outcome.kind === "failed") {
+            const failure = outcome.failure ?? "unknown";
+            this.setStatus("error", outcome.reason ?? "the turn failed", failure);
+            // The agent did not get to answer: say so now rather than nudge it into the same failure.
+            this.settleAwaiting({ failure, ...(outcome.resetsAt ? { resetsAt: outcome.resetsAt } : {}) });
+          } else {
+            this.setStatus("idle");
+          }
           this.afterTurn();
         },
         onActivity: (kind, detail) => {
@@ -263,10 +298,18 @@ export class AgentRuntime {
     return agent;
   }
 
-  private setStatus(status: AgentStatus, detail: string | null = null): void {
+  private setStatus(status: AgentStatus, detail: string | null = null, failure: Failure | null = null): void {
     if (this.status === status && status !== "working" && status !== "error") return;
     this.status = status;
-    this.deps.store.setAgentStatus(this.agentId, status, detail);
+    this.deps.store.setAgentStatus(this.agentId, status, detail, failure);
+  }
+
+  /** Every message still waiting on this agent fails with `why`. */
+  private settleAwaiting(why: FailureInfo): void {
+    const lost = this.deps.store.awaitingReply(this.agentId).map((m) => m.id);
+    if (lost.length === 0) return;
+    this.deps.store.setInboundState(lost, "failed");
+    this.deps.onSettled?.(lost, "failed", why);
   }
 
   private fail(error: unknown): void {
@@ -278,8 +321,8 @@ export class AgentRuntime {
     this.session = undefined;
     this.running = false;
     void session?.dispose().catch(() => {});
-    this.setStatus("error", message);
-    const lost = this.deps.store.awaitingReply(this.agentId).map((m) => m.id);
-    if (lost.length > 0) this.deps.onSettled?.(lost, "failed");
+    const failure = failureOf(error);
+    this.setStatus("error", message, failure);
+    this.settleAwaiting({ failure });
   }
 }

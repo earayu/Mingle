@@ -3,6 +3,7 @@ import type { Navigate } from "./App.tsx";
 import { api, type Harness, type ModelList } from "./api.ts";
 import { errorText, type MessageKey, useI18n } from "./i18n.ts";
 import {
+  ApiKeyHint,
   Button,
   Field,
   HarnessIcon,
@@ -277,7 +278,10 @@ export function ModelPicker({
     return inline ? (
       <span className="text-small text-amber">{t("brain.signedOut")}</span>
     ) : (
-      <Problem title={t("brain.signedOut")}>{t("brain.signedOutBody")}</Problem>
+      <Problem title={t("brain.signedOut")}>
+        {t("brain.signedOutBody")}
+        <ApiKeyHint harness={harness} />
+      </Problem>
     );
   }
   // "default" is Claude Code's own name for "whatever it would pick": that is our first option.

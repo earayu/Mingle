@@ -413,7 +413,7 @@ describe("eager session startup", () => {
     expect(open).toHaveBeenCalledTimes(2);
   });
 
-  it("drains input retained during a failed startup once the brain recovers", async () => {
+  it("preserves input after failed startup and retries it once the brain recovers", async () => {
     let failing = true;
     const deliveries: string[] = [];
     const open = vi.fn(async () => {
@@ -431,18 +431,24 @@ describe("eager session startup", () => {
     await until(() => mingle.store.agent(agentId)?.status === "error");
 
     const inbound = channel.receive({ text: "retained input" });
-    // Delivery tries and fails again on the same dead brain; the message stays received.
-    await until(() => open.mock.calls.length === 2);
-    const chat = mingle.store.agentChats(agentId)[0]?.id as string;
+    const chat = await until(() => mingle.store.agentChats(agentId)[0]?.id);
+    await until(() => mingle.store.messageByPlatformId(chat, inbound.platformId)?.state === "failed");
     const stored = mingle.store.messageByPlatformId(chat, inbound.platformId);
-    expect(stored?.state).toBe("received");
+    expect(stored?.body).toBe("retained input");
+    expect(deliveries).toHaveLength(0);
 
     failing = false;
     const patched = await admin("PATCH", `/v1/admin/agents/${agentId}`, { model: "fixture-model" });
     expect(patched.status).toBe(200);
-    await until(() => deliveries.length === 1, 10_000);
+    await until(() => mingle.store.agent(agentId)?.status === "idle");
+    expect(deliveries).toHaveLength(0);
+    const retried = await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: [stored?.id] });
+    expect(retried.status).toBe(200);
+    expect(retried.json).toEqual({ retried: [stored?.id] });
+    await until(() => deliveries.length === 1);
     expect(deliveries[0]).toContain("retained input");
-    expect(open).toHaveBeenCalledTimes(3); // startup + failed delivery + recovery reopen
+    expect(deliveries[0]).toContain("[mingle] Retry:");
+    expect(open).toHaveBeenCalledTimes(3);
   });
 
   it("dispose waits for a pending open and tears down the arrived session once", async () => {

@@ -5,7 +5,7 @@ import { shortId } from "../core/ids.ts";
 
 export type AgentStatus = "offline" | "idle" | "thinking" | "working" | "error";
 export type ConnectionStateKind = "awaiting_credentials" | "awaiting_approval" | "connected" | "reconnecting" | "error";
-export type InboundState = "received" | "delivered" | "replied" | "unanswered" | "ignored";
+export type InboundState = "received" | "delivered" | "replied" | "unanswered" | "failed" | "ignored";
 export type OutboundState = "pending" | "sent" | "failed" | "uncertain";
 export type TaskStatus = "todo" | "in_progress" | "done" | "closed";
 
@@ -18,6 +18,8 @@ export interface Agent {
   sessionId: string | null;
   status: AgentStatus;
   statusDetail: string | null;
+  /** With status "error": the failure class (auth, quota, ...), or null when it is not known. */
+  statusFailure: string | null;
   createdAt: number;
 }
 
@@ -158,10 +160,10 @@ export class Store {
     return (this.db.prepare("SELECT * FROM agents ORDER BY created_at").all() as Row[]).map(toAgent);
   }
 
-  setAgentStatus(id: string, status: AgentStatus, detail: string | null = null): void {
+  setAgentStatus(id: string, status: AgentStatus, detail: string | null = null, failure: string | null = null): void {
     this.db
-      .prepare("UPDATE agents SET status = ?, status_detail = ?, updated_at = ? WHERE id = ?")
-      .run(status, detail, this.now(), id);
+      .prepare("UPDATE agents SET status = ?, status_detail = ?, status_failure = ?, updated_at = ? WHERE id = ?")
+      .run(status, detail, failure, this.now(), id);
   }
 
   updateAgent(id: string, patch: { name?: string; harness?: string; model?: string | null }): void {
@@ -432,6 +434,24 @@ export class Store {
     return row?.nudged === 1;
   }
 
+  /** Inbound messages of this agent that were given up on (failed or unanswered), oldest first; `ids` narrows it. */
+  retryable(agentId: string, ids?: readonly string[]): Message[] {
+    const rows = this.db
+      .prepare(
+        `SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
+         WHERE n.agent_id = ? AND m.direction = 'in' AND m.state IN ('failed', 'unanswered') ORDER BY m.created_at`,
+      )
+      .all(agentId) as Row[];
+    const wanted = ids && new Set(ids);
+    return rows.map(toMessage).filter((m) => !wanted || wanted.has(m.id));
+  }
+
+  /** Put messages back in the inbox as if just received: delivered again, nudged again if need be. */
+  requeue(ids: readonly string[]): void {
+    const stmt = this.db.prepare("UPDATE messages SET state = 'received', nudged = 0 WHERE id = ?");
+    for (const id of ids) stmt.run(id);
+  }
+
   /** Inbound messages received but never handed to the agent (for example, the process stopped first). */
   undelivered(agentId: string): Message[] {
     const rows = this.db
@@ -540,6 +560,7 @@ function toAgent(r: Row): Agent {
     sessionId: str(r.session_id),
     status: String(r.status) as AgentStatus,
     statusDetail: str(r.status_detail),
+    statusFailure: str(r.status_failure),
     createdAt: Number(r.created_at),
   };
 }

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +13,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -158,8 +155,11 @@ func (d *daemon) startAndWait() error {
 	}
 	defer logFile.Close()
 
-	cmd := exec.Command(d.node, d.entry, "start", "--no-open", "--stop-on-stdin-close", "--port", strconv.Itoa(d.port))
-	cmd.Env = append(os.Environ(), "PATH="+userPath(filepath.Dir(d.node)))
+	// --login-shell-env: Mingle takes the user's login-shell environment (PATH, API keys,
+	// base URLs, proxies set in ~/.zshrc), which apps opened from Finder or a Linux
+	// desktop do not get, and puts the bundled Node.js last on PATH.
+	cmd := exec.Command(d.node, d.entry, "start", "--no-open", "--stop-on-stdin-close", "--login-shell-env", "--port", strconv.Itoa(d.port))
+	cmd.Env = withShell(os.Environ())
 	hideWindow(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -239,45 +239,15 @@ func (d *daemon) stop() {
 	}
 }
 
-// userPath is the PATH of the user's login shell. Apps opened from Finder or a
-// Linux desktop get a minimal PATH, which would hide the harnesses (claude, codex)
-// installed with Homebrew, npm or the like. Windows apps already get the user's
-// PATH. The bundled Node.js goes last, as a fallback.
-func userPath(fallbackDir string) string {
-	path := os.Getenv("PATH")
-	if runtime.GOOS == "windows" {
-		return appendDir(path, fallbackDir)
+// withShell makes sure SHELL is set, so Mingle can find the user's login shell.
+// Windows needs none: its apps already get the user's environment.
+func withShell(env []string) []string {
+	if runtime.GOOS == "windows" || os.Getenv("SHELL") != "" {
+		return env
 	}
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-		if runtime.GOOS == "darwin" {
-			shell = "/bin/zsh"
-		}
+	shell := "/bin/sh"
+	if runtime.GOOS == "darwin" {
+		shell = "/bin/zsh"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	const marker = "__MINGLE_PATH__"
-	out, err := exec.CommandContext(ctx, shell, "-ilc", `printf '`+marker+`%s' "$PATH"`).Output()
-	if err == nil {
-		if i := bytes.LastIndex(out, []byte(marker)); i >= 0 {
-			if found := strings.TrimSpace(string(out[i+len(marker):])); found != "" {
-				path = found
-			}
-		}
-	}
-	return appendDir(path, fallbackDir)
-}
-
-func appendDir(path, dir string) string {
-	sep := string(os.PathListSeparator)
-	for _, d := range strings.Split(path, sep) {
-		if strings.EqualFold(d, dir) {
-			return path
-		}
-	}
-	if path == "" {
-		return dir
-	}
-	return path + sep + dir
+	return append(env, "SHELL="+shell)
 }
