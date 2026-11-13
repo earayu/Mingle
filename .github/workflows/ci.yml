@@ -1,8 +1,35 @@
 name: CI
+# Changes that pnpm check (typecheck, biome, vitest) never reads skip this run:
+# prose, the Go desktop shell (desktop.yml builds it), spikes, and workflows no test reads.
+# Keep the push and pull_request lists identical.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "site/README.md"
+      - "desktop/**.md"
+      - "docs/**"
+      - "LICENSE"
+      - "spikes/**"
+      - "desktop/**.go"
+      - "desktop/go.mod"
+      - "desktop/go.sum"
+      - ".github/workflows/desktop.yml"
+      - ".github/workflows/website.yml"
   pull_request:
+    paths-ignore:
+      - "*.md"
+      - "site/README.md"
+      - "desktop/**.md"
+      - "docs/**"
+      - "LICENSE"
+      - "spikes/**"
+      - "desktop/**.go"
+      - "desktop/go.mod"
+      - "desktop/go.sum"
+      - ".github/workflows/desktop.yml"
+      - ".github/workflows/website.yml"
 permissions:
   contents: read
 # A newer push to the same branch or pull request makes the older run moot.
@@ -26,18 +53,3 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-  desktop:
-    # The desktop shell compiles for every system it ships to.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: desktop/go.mod
-          cache-dependency-path: desktop/go.sum
-      - working-directory: desktop
-        run: |
-          for target in darwin/arm64 darwin/amd64 windows/amd64 windows/arm64 linux/amd64 linux/arm64; do
-            GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 go build -o /dev/null . && echo "ok $target"
-          done
-          go vet ./...
