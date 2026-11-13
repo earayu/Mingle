@@ -2,6 +2,7 @@ import { scriptedRuntime } from "@botiverse/oar/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Harness, HarnessSession } from "../src/harness/harness.ts";
 import { oarHarness } from "../src/harness/harness.ts";
+import { memorySecrets } from "../src/platform/secrets.ts";
 import { type FakeChannel, messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
 
 /**
@@ -652,5 +653,39 @@ describe("waking from sleep", () => {
     expect(mingle.store.connections()).toEqual([]);
     expect(mingle.isLive(id)).toBe(false);
     expect(channel.closes).toBe(channel.connects);
+  });
+});
+
+describe("binding a bot again", () => {
+  it("keeps the first connection working with the new credentials when another agent scans the same bot", async () => {
+    const secrets = memorySecrets();
+    current = await rig(async () => {}, { secrets });
+    const { channel, mingle } = current;
+    const first = mingle.store.connections()[0] as { id: string; secretRef: string };
+    const other = mingle.createAgent({ name: "Bea", role: "", harness: "scripted", model: null });
+    // Scanning again issued a new secret, which revokes the one the first connection had.
+    channel.onboardCredentials = { token: "rotated" };
+
+    await expect(mingle.addConnection(other.id, "telegram", { token: "rotated" })).rejects.toMatchObject({
+      code: "bot_in_use",
+    });
+    expect(mingle.store.connections().map((c) => c.id)).toEqual([first.id]);
+    expect(JSON.parse((await secrets.get(first.secretRef)) as string)).toEqual({ token: "rotated" });
+    expect(channel.lastCredentials).toEqual({ token: "rotated" });
+    expect(mingle.store.connection(first.id)?.state).toBe("connected");
+  });
+
+  it("rebinds the same agent's bot instead of refusing it", async () => {
+    const secrets = memorySecrets();
+    current = await rig(async () => {}, { secrets });
+    const { channel, mingle, agentId } = current;
+    const first = mingle.store.connections()[0] as { id: string; secretRef: string };
+    channel.onboardCredentials = { token: "rotated" };
+
+    const again = await mingle.addConnection(agentId, "telegram", { token: "rotated" });
+    expect(again.id).toBe(first.id);
+    expect(mingle.store.connections()).toHaveLength(1);
+    expect(JSON.parse((await secrets.get(first.secretRef)) as string)).toEqual({ token: "rotated" });
+    expect(mingle.store.connection(first.id)?.state).toBe("connected");
   });
 });
