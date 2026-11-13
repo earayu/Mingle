@@ -1,0 +1,4 @@
+# LF everywhere, Windows checkouts included: the formatter and the shell scripts expect it.
+* text=auto eol=lf
+*.png binary
+*.ico binary
