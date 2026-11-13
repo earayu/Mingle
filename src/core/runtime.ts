@@ -11,6 +11,11 @@ export interface RuntimeDeps {
   readonly homeDir: string;
   /** Environment for the harness process: API address, token, CLI path. */
   readonly env: () => Readonly<Record<string, string>>;
+  /**
+   * The agent's own variables, read from the secret store each time a session opens.
+   * Undefined when it has none, so opening then takes no extra turn of the event loop.
+   */
+  readonly agentEnv?: () => Promise<Readonly<Record<string, string>>> | undefined;
   /** Progress inside a turn, for live replies. */
   readonly onActivity?: (kind: "thinking" | "tool", detail?: string) => void;
   /** Messages that will not be answered: given up on after the nudge, or lost to a failed turn. */
@@ -44,6 +49,8 @@ export class AgentRuntime {
   private chain: Promise<void> = Promise.resolve();
   private status: AgentStatus | undefined;
   private disposed = false;
+  /** The agent's variables changed during a turn: reopen once it ends. */
+  private stale = false;
   /** Messages the owner asked to try again; their next delivery says so. */
   private readonly retried = new Set<string>();
 
@@ -110,6 +117,7 @@ export class AgentRuntime {
       .then(async () => {
         const session = this.session;
         this.session = undefined;
+        this.stale = false;
         this.running = false;
         await session?.dispose().catch(() => {});
         if (this.disposed) return;
@@ -120,6 +128,18 @@ export class AgentRuntime {
       })
       .catch((error) => this.fail(error));
     await this.chain;
+  }
+
+  /**
+   * The agent's variables changed. They reach the harness when its process starts, so reopen
+   * (resuming the same conversation) now if idle, or after the current turn: never mid-work.
+   */
+  async refresh(): Promise<void> {
+    if (this.running) {
+      this.stale = true;
+      return;
+    }
+    await this.restart();
   }
 
   async dispose(): Promise<void> {
@@ -230,14 +250,19 @@ export class AgentRuntime {
 
   private async open(): Promise<HarnessSession> {
     const agent = this.agent();
+    // A harness whose shell gets no environment (Cursor) gets none of the agent's variables
+    // either, and the guide does not name them. Values never go into the prompt.
+    const reading = this.deps.harness.acceptsEnv?.(agent.harness) === false ? undefined : this.deps.agentEnv?.();
+    const own = reading ? await reading : {};
     const session = await this.deps.harness.open(
       {
         harness: agent.harness,
         model: agent.model,
         cwd: this.deps.homeDir,
         resume: agent.sessionId,
-        appendSystemPrompt: renderManual(agent.name, readRole(this.deps.homeDir)),
-        env: this.deps.env(),
+        appendSystemPrompt: renderManual(agent.name, readRole(this.deps.homeDir), process.platform, Object.keys(own)),
+        // Mingle's own variables win over the agent's.
+        env: { ...own, ...this.deps.env() },
       },
       {
         onTurnStarted: () => {
@@ -294,6 +319,11 @@ export class AgentRuntime {
         kind: "text",
         text: `[mingle] Not answered yet: ${ids}. Reply to each with "$MINGLE_CLI" message reply <id>, or send a short note if no reply is needed.`,
       });
+    }
+    if (this.stale) {
+      // restart() delivers what is pending once the new process is up.
+      void this.restart();
+      return;
     }
     if (this.pending.length > 0) this.flushSoon();
   }

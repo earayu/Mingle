@@ -23,6 +23,9 @@ const WIDTHS = (process.env.WIDTHS ?? "1440,1024,760,560").split(",").map(Number
 const LOCALES = ["en-US", "zh-CN"];
 
 const home = mkdtempSync(join(tmpdir(), "mingle-ui-"));
+const ENV_SECRET = "ui-review-not-a-real-secret";
+/** Run before the daemon stops: undo what the review put outside its own folder. */
+const cleanups = [];
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
@@ -57,7 +60,13 @@ try {
       "A".repeat(0) +
       "Research assistant for the reading club. Summarises long articles, keeps a running list of recommended books with short reviews, answers questions about previous discussions, and posts a weekly digest every Sunday evening.",
   });
-  await admin("POST", "/v1/admin/agents", { name: "小助手", harness, role: "" });
+  const helper = await admin("POST", "/v1/admin/agents", { name: "小助手", harness, role: "" });
+  // Environment variables: two stored in the system credential store (removed again at the
+  // end, since this is the real Keychain), and one whose value is missing (name only, below).
+  for (const name of ["DAILY_WEBHOOK_URL", "GITHUB_TOKEN"]) {
+    await admin("PUT", `/v1/admin/agents/${helper.id}/env/${name}`, { value: ENV_SECRET });
+    cleanups.push(() => admin("DELETE", `/v1/admin/agents/${helper.id}/env/${name}`));
+  }
   // Onboarding states: never answered yet (idle, busy, disconnected) and answered long ago.
   const idleAgent = await admin("POST", "/v1/admin/agents", { name: "Poppy", harness, role: "" });
   const busyAgent = await admin("POST", "/v1/admin/agents", { name: "Scout", harness, role: "" });
@@ -69,6 +78,11 @@ try {
   // Seed chats and history straight into the database.
   const db = new DatabaseSync(join(home, "mingle.db"));
   db.exec("PRAGMA busy_timeout = 5000");
+  db.prepare("INSERT INTO agent_env (agent_id, name, updated_at) VALUES (?, ?, ?)").run(
+    helper.id,
+    "SLACK_BOT_TOKEN_FOR_THE_WEEKEND_HIKING_GROUP",
+    Date.now() - 86_400_000,
+  );
   const now = Date.now();
   const insert = (sql, ...args) => db.prepare(sql).run(...args);
   const conn = (id, agent, platform, bot, state, detail, owner) =>
@@ -379,10 +393,13 @@ try {
     token: adminToken,
     slug: alex.slug,
     singleSlug: long.slug,
+    envSlug: helper.slug,
+    envSecret: ENV_SECRET,
     chrome: CHROME,
     out: OUT,
   });
 } finally {
+  for (const cleanup of cleanups) await cleanup().catch(() => {});
   daemon.kill("SIGTERM");
   await new Promise((r) => setTimeout(r, 500));
   rmSync(home, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 import type { InboundState } from "../store/store.ts";
 
 /**
- * The life of one inbound chat message, as an explicit state machine (docs/spec.md 4.9).
+ * The life of one inbound chat message, as an explicit state machine (docs/spec.md 4.10).
  *
  * Every change of an inbound message's state is one of these events, and goes through
  * `Store.moveInbound`, which applies it only to messages in one of the event's source

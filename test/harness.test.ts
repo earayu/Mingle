@@ -224,6 +224,21 @@ describe("declared option refusals", () => {
     }
   });
 
+  it("never writes an agent's own variables into the prompt when the harness refuses an environment", async () => {
+    const { runtime, opened, sent } = recording({ appendSystemPrompt: "fixture", env: "fixture refusal" });
+    const harness = oarHarness({ require: () => runtime });
+    expect((await harness.available()).find((h) => h.id === "codex")?.noEnv).toBe(true);
+    expect(harness.acceptsEnv?.("codex")).toBe(false);
+    const session = await harness.open(
+      { harness: "codex", cwd: cwd(), appendSystemPrompt: PROMPT, env: { ...ENV, DAILY_WEBHOOK_URL: "s3cr3t-hook" } },
+      events,
+    );
+    await session.deliver("hello", "i1");
+    expect(opened[0]).not.toHaveProperty("env");
+    expect(sent.join("\n")).not.toContain("s3cr3t-hook");
+    expect(sent.join("\n")).not.toContain("DAILY_WEBHOOK_URL");
+  });
+
   it("does not repeat the guide in a resumed session", async () => {
     const { runtime, sent } = recording({ appendSystemPrompt: "fixture refusal" });
     const session = await open("codex", runtime, "s-old");

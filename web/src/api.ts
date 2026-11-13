@@ -101,6 +101,16 @@ export interface Harness {
   icon?: { light: string; dark: string };
   /** Listed but cannot serve Mingle: what is missing and the next step. */
   disabled?: { code: string; reason: string };
+  /** Its shell gets no environment, so the agent's variables do not reach it. */
+  noEnv?: true;
+}
+
+/** An agent's environment variable: its name only. Values are write-only. */
+export interface EnvVar {
+  name: string;
+  updatedAt: number;
+  /** The name is known but the system credential store no longer has its value. */
+  missing: boolean;
 }
 
 export interface Model {
@@ -200,6 +210,10 @@ export const api = {
   createAgent: (input: { name: string; role: string; harness: string; model?: string }) =>
     call<AgentView>("POST", "/v1/admin/agents", input),
   setRole: (id: string, role: string) => call("PUT", `/v1/admin/agents/${id}/role`, { role }),
+  env: (id: string) => call<EnvVar[]>("GET", `/v1/admin/agents/${id}/env`),
+  setEnv: (id: string, name: string, value: string) =>
+    call("PUT", `/v1/admin/agents/${id}/env/${encodeURIComponent(name)}`, { value }),
+  deleteEnv: (id: string, name: string) => call("DELETE", `/v1/admin/agents/${id}/env/${encodeURIComponent(name)}`),
   stop: (id: string) => call<{ stopped: boolean }>("POST", `/v1/admin/agents/${id}/stop`),
   /** Try again on failed or unanswered messages: these, or all of them. */
   retry: (id: string, ids?: string[]) =>

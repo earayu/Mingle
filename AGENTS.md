@@ -19,7 +19,7 @@ M3 进行中，进度见 `docs/spec.md` 11.1–11.3。已实现：存储、Agent
 - `src/core/mingle.ts`：整个进程的装配，收消息（inbox）、连接管理、提醒触发
 - `src/core/runtime.ts`：每个 Agent 的会话与消息投递，`docs/spec.md` 4.1–4.3 的实现
 - `src/core/outbox.ts`：所有对外发送
-- `src/core/inbound.ts`：入站消息状态机，所有状态写入经 `Store.moveInbound`（`docs/spec.md` 4.9）
+- `src/core/inbound.ts`：入站消息状态机，所有状态写入经 `Store.moveInbound`（`docs/spec.md` 4.10）
 - `src/api/server.ts`：本地 HTTP API，`/v1/agent/*` 给 CLI，`/v1/admin/*` 给 owner
 - `src/cli/main.ts`：`mingle` 命令；`src/cli/manual.md` 是注入给 harness 的指南
 - `src/harness/harness.ts`：唯一引用 OAR 的地方

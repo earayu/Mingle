@@ -16,6 +16,7 @@ import type { Harness, HarnessInfo } from "../harness/harness.ts";
 import type { SecretStore } from "../platform/secrets.ts";
 import { type Agent, type Connection, Store } from "../store/store.ts";
 import { Brains } from "./brains.ts";
+import { checkEnvName, checkEnvValue, decodeEnvValue, encodeEnvValue, envRef } from "./env.ts";
 import { MingleError, notFound } from "./errors.ts";
 import { formatReminder } from "./format.ts";
 import { createHome, writeRole } from "./home.ts";
@@ -278,9 +279,63 @@ export class Mingle {
     await this.runtimes.get(agent.id)?.restart();
   }
 
+  // -------------------------------------------------------------- agent env
+
+  /** The agent's variables by name, and whether each value is still in the secret store. Never the values. */
+  async envList(idOrSlug: string): Promise<{ name: string; updatedAt: number; missing: boolean }[]> {
+    const agent = this.agent(idOrSlug);
+    return Promise.all(
+      this.store.envNames(agent.id).map(async (v) => ({
+        ...v,
+        missing: (await this.options.secrets.get(envRef(agent.id, v.name)).catch(() => undefined)) === undefined,
+      })),
+    );
+  }
+
+  /** Add or replace a variable. Applies from the next message (docs/spec.md 4.4). */
+  async setEnv(idOrSlug: string, name: string, value: unknown): Promise<void> {
+    const agent = this.agent(idOrSlug);
+    checkEnvName(name);
+    checkEnvValue(value);
+    try {
+      await this.options.secrets.set(envRef(agent.id, name), encodeEnvValue(value));
+    } catch {
+      // The store's own error could carry the value (a command line, say): report without it.
+      throw new MingleError("env_save_failed", "the system credential store did not save it; try again", 500);
+    }
+    this.store.putEnvName(agent.id, name);
+    await this.runtimes.get(agent.id)?.refresh();
+  }
+
+  async deleteEnv(idOrSlug: string, name: string): Promise<void> {
+    const agent = this.agent(idOrSlug);
+    if (!this.store.deleteEnvName(agent.id, name)) {
+      throw new MingleError("env_not_found", `no variable ${name} on this agent`, 404);
+    }
+    await this.options.secrets.delete(envRef(agent.id, name)).catch(() => {});
+    await this.runtimes.get(agent.id)?.refresh();
+  }
+
+  /** Name to value for the harness. A value missing from the secret store is left out, not an error. */
+  private agentEnv(agentId: string): Promise<Record<string, string>> | undefined {
+    const names = this.store.envNames(agentId);
+    if (names.length === 0) return undefined;
+    return (async () => {
+      const env: Record<string, string> = {};
+      for (const { name } of names) {
+        const stored = await this.options.secrets.get(envRef(agentId, name)).catch(() => undefined);
+        if (stored !== undefined) env[name] = decodeEnvValue(stored);
+      }
+      return env;
+    })();
+  }
+
   async deleteAgent(idOrSlug: string, removeHome: boolean): Promise<void> {
     const agent = this.agent(idOrSlug);
     for (const connection of this.store.connections(agent.id)) await this.removeConnection(connection.id);
+    for (const { name } of this.store.envNames(agent.id)) {
+      await this.options.secrets.delete(envRef(agent.id, name)).catch(() => {});
+    }
     await this.runtimes.get(agent.id)?.dispose();
     this.runtimes.delete(agent.id);
     for (const [token, id] of this.tokens) if (id === agent.id) this.tokens.delete(token);
@@ -311,6 +366,7 @@ export class Mingle {
       harness: this.options.harness,
       homeDir: this.homeDir(agent),
       env: () => ({ MINGLE_API: this.apiUrl, MINGLE_TOKEN: token, MINGLE_CLI: this.cliPath }),
+      agentEnv: () => this.agentEnv(agent.id),
       ...(this.options.coalesceMs !== undefined ? { coalesceMs: this.options.coalesceMs } : {}),
       onActivity: (kind, detail) => this.replies.activity(agent.id, kind, detail),
       onSettled: (ids, outcome, why) => {
