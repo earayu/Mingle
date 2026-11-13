@@ -70,12 +70,16 @@ export class AgentRuntime {
     return this.running;
   }
 
-  /** Resume pending work after a restart. */
-  start(): void {
+  /**
+   * Resume pending work after a restart. `after`: wait for it before opening, e.g. for the
+   * previous session of this agent to close, so there are never two.
+   */
+  start(after?: Promise<void>): void {
     this.setStatus("idle");
     // Open the session now, not on the first message: startup problems (login,
     // a refused option) surface before anyone chats. No input is delivered here.
     this.chain = this.chain
+      .then(() => after)
       .then(async () => {
         if (this.disposed) return;
         await this.ensureSession();
@@ -142,13 +146,23 @@ export class AgentRuntime {
     await this.restart();
   }
 
-  async dispose(): Promise<void> {
+  /**
+   * Close the session for good. `final` is the status it leaves behind: offline when Mingle stops
+   * or the agent is deleted, paused when the owner pauses it. Nothing the session reports after
+   * this point changes the status.
+   */
+  async dispose(final: "offline" | "paused" = "offline"): Promise<void> {
     this.disposed = true;
     clearTimeout(this.timer);
+    this.pending = [];
+    // Written now, not after the session is gone: closing can wait on a session still opening.
+    this.deps.store.setAgentStatus(this.agentId, final);
+    // Pausing ends the work in hand; the session is closed right after.
+    if (final === "paused" && this.running) await this.session?.abort().catch(() => {});
     await this.chain.catch(() => {});
     await this.session?.dispose().catch(() => {});
     this.session = undefined;
-    this.setStatus("offline");
+    this.running = false;
   }
 
   private schedule(): void {
@@ -335,6 +349,9 @@ export class AgentRuntime {
   }
 
   private setStatus(status: AgentStatus, detail: string | null = null, failure: Failure | null = null): void {
+    // A late report from a closed session (a turn ending after it was aborted) must not overwrite
+    // the status dispose() left: a paused agent stays paused.
+    if (this.disposed) return;
     if (this.status === status && status !== "working" && status !== "error") return;
     this.status = status;
     this.deps.store.setAgentStatus(this.agentId, status, detail, failure);

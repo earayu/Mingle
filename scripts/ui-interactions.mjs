@@ -31,6 +31,11 @@ const LOCALES = {
     ignored: "Ignored",
     envTitle: "Environment variables",
     envAdd: "Add",
+    activity: "Activity",
+    pause: "Pause",
+    resume: "Resume",
+    paused: "Paused",
+    pausedCard: "is paused",
   },
   "zh-CN": {
     storage: "zh-CN",
@@ -50,6 +55,11 @@ const LOCALES = {
     ignored: "已忽略",
     envTitle: "环境变量",
     envAdd: "添加",
+    activity: "动态",
+    pause: "暂停",
+    resume: "恢复",
+    paused: "已暂停",
+    pausedCard: "已暂停",
   },
 };
 
@@ -110,7 +120,7 @@ const INSTALL_MOCK = String.raw`(() => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function reviewInteractions({ url, token, slug, singleSlug, envSlug, envSecret, chrome, out }) {
+export async function reviewInteractions({ url, token, slug, singleSlug, envSlug, pauseSlug, envSecret, chrome, out }) {
   const profile = mkdtempSync(join(tmpdir(), "mingle-cdp-"));
   const child = spawn(
     chrome,
@@ -777,6 +787,55 @@ export async function reviewInteractions({ url, token, slug, singleSlug, envSlug
         await installScenario(localeName, labels, width);
         passed++;
         console.log(`install ${localeName} ${width}: passed`);
+      }
+    }
+
+    // --- pause and resume from the agent's Settings, and back from the card ---
+    const buttonByText = (wanted) => {
+      const el = [...document.querySelectorAll("main button, button")].find((b) => b.textContent.trim() === wanted);
+      if (!el) return null;
+      el.scrollIntoView({ block: "center" });
+      const r = el.getBoundingClientRect();
+      return r.width && r.height ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+    };
+    const pauseScenario = async (localeName, labels, width) => {
+      const tag = `pause ${localeName} ${width}`;
+      await metrics(width);
+      await goto(`/a/${pauseSlug}`, labels);
+      await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.settings));
+      await clickEl(await until("pause button", buttonByText, labels.pause));
+      await until("paused status", (p) => document.querySelector("header")?.textContent.includes(p), labels.paused);
+      assert(await call(pageFits), `${tag}: horizontal overflow`);
+      await shot(`${localeName}-${width}-paused-settings`);
+      await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.activity));
+      await until(
+        "paused card",
+        (p) => [...document.querySelectorAll("section h2")].some((h) => h.textContent.includes(p)),
+        labels.pausedCard,
+      );
+      assert(await call(pageFits), `${tag}: horizontal overflow`);
+      await shot(`${localeName}-${width}-paused-activity`);
+      const auth = { headers: { authorization: `Bearer ${token}` } };
+      const paused = (await (await fetch(`${url}/v1/admin/status`, auth)).json()).agents.find(
+        (a) => a.slug === pauseSlug,
+      );
+      assert(paused?.status === "paused", `${tag}: API does not say paused`);
+      await clickEl(await until("resume button", buttonByText, labels.resume));
+      await until(
+        "card gone",
+        (r) => ![...document.querySelectorAll("button")].some((b) => b.textContent.trim() === r),
+        labels.resume,
+      );
+      const back = (await (await fetch(`${url}/v1/admin/status`, auth)).json()).agents.find(
+        (a) => a.slug === pauseSlug,
+      );
+      assert(back?.status !== "paused", `${tag}: still paused after resume`);
+    };
+    for (const [localeName, labels] of Object.entries(LOCALES)) {
+      for (const width of [1440, 560]) {
+        await pauseScenario(localeName, labels, width);
+        passed++;
+        console.log(`pause ${localeName} ${width}: passed`);
       }
     }
 

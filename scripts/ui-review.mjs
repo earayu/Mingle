@@ -74,6 +74,14 @@ try {
   const doneAgent = await admin("POST", "/v1/admin/agents", { name: "Riley", harness, role: "" });
   // Answered before, then its last bot was removed: the way to add one must still be there.
   const lonelyAgent = await admin("POST", "/v1/admin/agents", { name: "Quinn", harness, role: "" });
+  // Paused by the owner (docs/spec.md 4.11), with a long name; and one the interactions pause and resume.
+  const pausedAgent = await admin("POST", "/v1/admin/agents", {
+    name: "Bartholomew the Weekend Hiking Planner",
+    harness,
+    role: "",
+  });
+  await admin("POST", `/v1/admin/agents/${pausedAgent.id}/pause`);
+  const pauseAgent = await admin("POST", "/v1/admin/agents", { name: "Nova", harness, role: "" });
 
   // Seed chats and history straight into the database.
   const db = new DatabaseSync(join(home, "mingle.db"));
@@ -257,6 +265,7 @@ try {
     ["onboard-offline", `/a/${offAgent.slug}`],
     ["onboard-done", `/a/${doneAgent.slug}`],
     ["no-bot", `/a/${lonelyAgent.slug}`],
+    ["paused", `/a/${pausedAgent.slug}`],
   ];
   const checkPlatformCounts = (dom, zh, expected) => {
     const buttons = [...dom.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map((match) => match[0]);
@@ -317,6 +326,14 @@ try {
       assert.ok(!dom.includes('class="spin'), "inactive agent shows a spinner");
       // Offline is never a dead end: a way to reconnect is right there.
       assert.ok(dom.includes(zh ? "重新连接" : "Reconnect"), "offline bot has no reconnect action");
+    },
+    paused: (dom, zh) => {
+      assert.ok(dom.includes(zh ? "已暂停" : "is paused"), "paused agent does not say so");
+      assert.ok(
+        new RegExp(`<button[^>]*>[\\s\\S]*?${zh ? "恢复" : "Resume"}\\s*</button>`).test(dom),
+        "paused agent has no Resume",
+      );
+      assert.ok(!dom.includes(zh ? "正在回复" : "got it and is answering"), "paused agent shows replying");
     },
     "no-bot": (dom, zh) => {
       assert.ok(dom.includes(zh ? "连接聊天软件" : "Connect a chat app"), "agent without a bot has no way to add one");
@@ -394,6 +411,7 @@ try {
     slug: alex.slug,
     singleSlug: long.slug,
     envSlug: helper.slug,
+    pauseSlug: pauseAgent.slug,
     envSecret: ENV_SECRET,
     chrome: CHROME,
     out: OUT,

@@ -32,6 +32,8 @@ const TEXT = {
     answeredBelow: "已回复，见下方消息。",
     unanswered: "这条消息没有得到回复。",
     stopped: "已叫停。",
+    paused: "已暂停，这条消息不会再回复。",
+    pausedNote: (name: string) => `${name} 已暂停，暂时不回复消息。`,
     failed: "处理时出错了，请稍后再发一次。",
     nothingToStop: "现在没有在处理的事。",
     failures: {
@@ -63,6 +65,8 @@ const TEXT = {
     answeredBelow: "Answered below.",
     unanswered: "This message did not get a reply.",
     stopped: "Stopped.",
+    paused: "Paused. This message won't get a reply.",
+    pausedNote: (name: string) => `${name} is paused and not replying for now.`,
     failed: "Something went wrong. Send it again in a moment.",
     nothingToStop: "Nothing to stop.",
     failures: {
@@ -107,6 +111,11 @@ export function langFor(platform: Platform): Lang {
 export function stopNote(platform: Platform, stopped: boolean): string {
   const t = TEXT[langFor(platform)];
   return stopped ? t.stopped : t.nothingToStop;
+}
+
+/** What Mingle tells a chat that writes to a paused agent, in the chat's language. */
+export function pausedNote(platform: Platform, name: string): string {
+  return TEXT[langFor(platform)].pausedNote(name);
 }
 
 /** What to tell the person when the agent could not answer: what happened, and what helps. */
@@ -277,7 +286,11 @@ export class LiveReplies {
    * The message is settled some other way. Closes its live reply with a short note.
    * A failure is always told: where no live reply can carry it, as a message of its own.
    */
-  settle(messageId: string, outcome: "answered" | "unanswered" | "stopped" | "failed", why?: FailureNote): void {
+  settle(
+    messageId: string,
+    outcome: "answered" | "unanswered" | "stopped" | "paused" | "failed",
+    why?: FailureNote,
+  ): void {
     const entry = this.entries.get(messageId);
     if (!entry || entry.closed) return;
     this.close(entry, messageId);
@@ -291,7 +304,9 @@ export class LiveReplies {
           ? t.unanswered
           : outcome === "stopped"
             ? t.stopped
-            : failureText(entry.lang, why, this.now());
+            : outcome === "paused"
+              ? t.paused
+              : failureText(entry.lang, why, this.now());
     void entry.live
       .then(async (live) => {
         const result = live ? await live.finish(`*${note}*`).catch(() => undefined) : undefined;

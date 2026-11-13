@@ -4,7 +4,7 @@ import type { ChatKind, Platform } from "../channels/channel.ts";
 import { shortId } from "../core/ids.ts";
 import { INBOUND, type InboundEvent } from "../core/inbound.ts";
 
-export type AgentStatus = "offline" | "idle" | "thinking" | "working" | "error";
+export type AgentStatus = "offline" | "idle" | "thinking" | "working" | "error" | "paused";
 export type ConnectionStateKind = "awaiting_credentials" | "awaiting_approval" | "connected" | "reconnecting" | "error";
 export type InboundState = "received" | "delivered" | "replied" | "unanswered" | "failed" | "ignored";
 export type OutboundState = "pending" | "sent" | "failed" | "uncertain";
@@ -571,9 +571,13 @@ export class Store {
     return rows.map(toReminder);
   }
 
+  /** Reminders that are due, except a paused agent's: they wait and fire once it resumes. */
   dueReminders(at: number): Reminder[] {
     const rows = this.db
-      .prepare("SELECT * FROM reminders WHERE next_fire_at IS NOT NULL AND next_fire_at <= ? ORDER BY next_fire_at")
+      .prepare(
+        `SELECT r.* FROM reminders r JOIN agents a ON a.id = r.agent_id
+         WHERE r.next_fire_at IS NOT NULL AND r.next_fire_at <= ? AND a.status != 'paused' ORDER BY r.next_fire_at`,
+      )
       .all(at) as Row[];
     return rows.map(toReminder);
   }

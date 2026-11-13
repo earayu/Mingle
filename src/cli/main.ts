@@ -407,6 +407,22 @@ async function adminCommand(group: string, action: string | undefined, args: str
       print(result, () => (result.stopped ? "stopped" : "it was not working on anything"));
       return true;
     }
+    case "agent pause":
+    case "agent resume": {
+      const verb = action === "pause" ? "pause" : "resume";
+      const id = need(args[0], "agent_required", `usage: mingle agent ${verb} <agent>`);
+      const result = await adminClient()<{ changed: boolean }>("POST", `/v1/admin/agents/${id}/${verb}`);
+      print(result, () =>
+        verb === "pause"
+          ? result.changed
+            ? "paused; it takes no messages until you resume it"
+            : "it was already paused"
+          : result.changed
+            ? "resumed"
+            : "it was not paused",
+      );
+      return true;
+    }
     case "agent delete": {
       const id = need(args[0], "agent_required", "usage: mingle agent delete <agent> [--remove-home]");
       await adminClient()("DELETE", `/v1/admin/agents/${id}${flags["remove-home"] ? "?removeHome=1" : ""}`);
@@ -576,6 +592,8 @@ For the owner:
   mingle agent create --name <n> --harness <id> [--model <m>] [--role <text> | --role-file <path>]
   mingle agent role <agent>                replace ROLE.md from standard input
   mingle agent stop <agent>                stop what it is doing now
+  mingle agent pause <agent>               stop it and take no messages until resumed
+  mingle agent resume <agent>              take messages again
   mingle agent delete <agent> [--remove-home]
   mingle connect <agent> telegram          bot token on standard input
   mingle disconnect <connection-id>

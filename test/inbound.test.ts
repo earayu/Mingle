@@ -32,6 +32,13 @@ describe("inbound message state machine", () => {
     expect(nextInbound("delivered", "send")).toBe("replied");
     expect(nextInbound("unanswered", "send")).toBe("replied");
   });
+
+  it("drops what a paused agent had not answered, and leaves what waits on the owner", () => {
+    expect(nextInbound("received", "pause")).toBe("ignored");
+    expect(nextInbound("delivered", "pause")).toBe("ignored");
+    expect(nextInbound("failed", "pause")).toBeUndefined();
+    expect(nextInbound("unanswered", "pause")).toBeUndefined();
+  });
 });
 
 describe("concurrent inbound events", () => {

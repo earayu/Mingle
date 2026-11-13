@@ -22,7 +22,7 @@ import { formatReminder } from "./format.ts";
 import { createHome, writeRole } from "./home.ts";
 import { slugify } from "./ids.ts";
 import { BACKOFF_MS, type LinkEvent, type LinkState, step, stored } from "./link.ts";
-import { LiveReplies, stopNote } from "./live.ts";
+import { LiveReplies, pausedNote, stopNote } from "./live.ts";
 import { Outbox } from "./outbox.ts";
 import type { Paths } from "./paths.ts";
 import { AgentRuntime } from "./runtime.ts";
@@ -93,6 +93,11 @@ export class Mingle {
   private wakeTimer: NodeJS.Timeout | undefined;
   private resuming: Promise<void> | undefined;
   private readonly onboardings = new Map<string, OnboardingSession>();
+  /** Paused agents (docs/spec.md 4.11), and the chats already told so during the current pause. */
+  private readonly paused = new Set<string>();
+  private readonly pauseNoted = new Set<string>();
+  /** Sessions of just-paused agents that are still closing; resuming waits for them. */
+  private readonly closing = new Map<string, Promise<void>>();
   /** Installs and sign-ins of harnesses, run for the console. */
   readonly brains: Brains;
 
@@ -121,7 +126,11 @@ export class Mingle {
     this.writeCliWrapper();
     // Warm the harness list so the console's first look at it does not wait on the probe.
     void this.probeHarnesses().catch(() => {});
-    for (const agent of this.store.agents()) this.addRuntime(agent).start();
+    for (const agent of this.store.agents()) {
+      // A paused agent stays paused across restarts: no session, no token, until the owner resumes it.
+      if (agent.status === "paused") this.paused.add(agent.id);
+      else this.addRuntime(agent).start();
+    }
     await Promise.all(this.store.connections().map((c) => this.reconnect(c.id)));
     const tick = this.options.reminderTickMs ?? 10_000;
     this.reminderTimer = setInterval(() => this.fireReminders(), tick);
@@ -156,6 +165,7 @@ export class Mingle {
     clearInterval(this.reminderTimer);
     clearInterval(this.wakeTimer);
     await this.resuming?.catch(() => {});
+    await Promise.all(this.closing.values());
     this.brains.dispose();
     this.replies.dispose();
     for (const id of [...this.onboardings.keys()]) this.cancelOnboarding(id);
@@ -337,8 +347,10 @@ export class Mingle {
       await this.options.secrets.delete(envRef(agent.id, name)).catch(() => {});
     }
     await this.runtimes.get(agent.id)?.dispose();
+    await this.closing.get(agent.id);
     this.runtimes.delete(agent.id);
-    for (const [token, id] of this.tokens) if (id === agent.id) this.tokens.delete(token);
+    this.revokeTokens(agent.id);
+    this.paused.delete(agent.id);
     this.store.deleteAgent(agent.id);
     if (removeHome) rmSync(this.homeDir(agent), { recursive: true, force: true });
   }
@@ -346,6 +358,62 @@ export class Mingle {
   async stopAgent(idOrSlug: string): Promise<boolean> {
     const agent = this.agent(idOrSlug);
     return (await this.runtimes.get(agent.id)?.stop()) ?? false;
+  }
+
+  isPaused(agentId: string): boolean {
+    return this.paused.has(agentId);
+  }
+
+  /**
+   * Pause an agent (docs/spec.md 4.11): end the work in hand, close its session and revoke its CLI
+   * token, so it neither takes in nor sends anything until resumed. Its bots stay connected, so
+   * Mingle can tell people it is paused. Returns false when it was already paused.
+   */
+  async pauseAgent(idOrSlug: string): Promise<boolean> {
+    const agent = this.agent(idOrSlug);
+    if (this.paused.has(agent.id)) return false;
+    // From here on, new messages take the paused path in receive().
+    this.paused.add(agent.id);
+    // A background job of the old session must not speak for it any more.
+    this.revokeTokens(agent.id);
+    for (const id of this.replies.openFor(agent.id)) this.replies.settle(id, "paused");
+    const runtime = this.runtimes.get(agent.id);
+    this.runtimes.delete(agent.id);
+    if (runtime) {
+      // The status is paused at once; closing the session can take a while (one still opening
+      // is closed once it is up), and the owner does not wait for it.
+      const closing = runtime.dispose("paused").finally(() => {
+        if (this.closing.get(agent.id) === closing) this.closing.delete(agent.id);
+      });
+      this.closing.set(agent.id, closing);
+    } else {
+      this.store.setAgentStatus(agent.id, "paused");
+    }
+    // What it had not answered yet will not be answered; failed and unanswered ones wait for the owner.
+    const awaiting = [...this.store.undelivered(agent.id), ...this.store.awaitingReply(agent.id)];
+    this.store.moveInbound(
+      awaiting.map((m) => m.id),
+      "pause",
+    );
+    this.log(`${agent.name} paused`);
+    return true;
+  }
+
+  /** Resume a paused agent: open its session again and fire the reminders that came due meanwhile. */
+  async resumeAgent(idOrSlug: string): Promise<boolean> {
+    const agent = this.agent(idOrSlug);
+    if (!this.paused.delete(agent.id)) return false;
+    for (const chat of this.store.agentChats(agent.id)) this.pauseNoted.delete(chat.id);
+    this.store.setAgentStatus(agent.id, "offline");
+    // Never two sessions of one agent: the new one opens once the paused one has closed.
+    this.addRuntime(agent).start(this.closing.get(agent.id));
+    this.fireReminders();
+    this.log(`${agent.name} resumed`);
+    return true;
+  }
+
+  private revokeTokens(agentId: string): void {
+    for (const [token, id] of this.tokens) if (id === agentId) this.tokens.delete(token);
   }
 
   /** The agent a CLI token belongs to. */
@@ -687,6 +755,18 @@ export class Mingle {
 
     const live = this.live.get(connectionId);
 
+    if (this.paused.has(connection.agentId)) {
+      // Not handed to the agent, and not kept for later: the person hears once per chat that it is paused.
+      this.store.moveInbound([message.id], "pause");
+      if (this.pauseNoted.has(chat.id)) return;
+      this.pauseNoted.add(chat.id);
+      const name = this.store.agent(connection.agentId)?.name ?? "";
+      void this.outbox
+        .send(connection.agentId, { chatId: chat.id, text: pausedNote(connection.platform, name), replyTo: message.id })
+        .catch((error) => this.log(`paused note failed: ${(error as Error).message}`));
+      return;
+    }
+
     if (inbound.text.trim() === "/stop" && inbound.sender.id === ownerId) {
       this.store.moveInbound([message.id], "reply");
       for (const id of this.replies.openFor(connection.agentId)) this.replies.settle(id, "stopped");
@@ -726,6 +806,9 @@ export class Mingle {
    */
   retryMessages(idOrSlug: string, ids?: readonly string[]): { retried: string[]; offline: string[] } {
     const agent = this.agent(idOrSlug);
+    if (this.paused.has(agent.id)) {
+      throw new MingleError("agent_paused", `${agent.name} is paused; resume it first`, 409);
+    }
     const runtime = this.runtimes.get(agent.id);
     if (!runtime) return { retried: [], offline: [] };
     const retried: string[] = [];

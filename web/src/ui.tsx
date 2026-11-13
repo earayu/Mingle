@@ -181,6 +181,8 @@ const dot: Record<string, string> = {
   awaiting_credentials: "bg-ink3",
   offline: "bg-ink3",
   error: "bg-red",
+  // Paused on purpose: a hollow dot, so it does not read as "offline" or "broken".
+  paused: "border-[1.5px] border-ink3",
 };
 
 export function StatusDot({ state }: { state: string }) {
@@ -555,6 +557,16 @@ export const UpdateIcon = (p: { className?: string }) => (
 export const CheckIcon = (p: { className?: string }) => (
   <Icon {...p} size={14}>
     <path d="M3.5 8.5 6.5 11.5 12.5 4.5" strokeWidth="2" />
+  </Icon>
+);
+export const PauseIcon = (p: { className?: string }) => (
+  <Icon {...p}>
+    <path d="M6 3.5v9M10 3.5v9" />
+  </Icon>
+);
+export const PlayIcon = (p: { className?: string }) => (
+  <Icon {...p}>
+    <path d="M5 3.5v9l7-4.5z" />
   </Icon>
 );
 export const AlertIcon = (p: { className?: string }) => (
