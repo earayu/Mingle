@@ -89,7 +89,18 @@ export interface Harness {
   id: string;
   name: string;
   version?: string;
+  icon?: { light: string; dark: string };
 }
+
+export interface Model {
+  id: string;
+  name: string;
+  isDefault?: boolean;
+  provider?: string;
+  disabled?: string;
+}
+
+export type ModelList = { kind: "ok"; models: Model[] } | { kind: "unauthenticated" } | { kind: "unsupported" };
 
 export interface CredentialField {
   key: string;
@@ -131,6 +142,9 @@ export interface Reminder {
 export const api = {
   status: () => call<{ version: string; agents: AgentView[] }>("GET", "/v1/admin/status"),
   harnesses: () => call<Harness[]>("GET", "/v1/admin/harnesses"),
+  models: (harness: string) => call<ModelList>("GET", `/v1/admin/harnesses/${harness}/models`),
+  updateAgent: (id: string, patch: { name?: string; harness?: string; model?: string | null }) =>
+    call<AgentView>("PATCH", `/v1/admin/agents/${id}`, patch),
   platforms: () => call<PlatformInfo[]>("GET", "/v1/admin/platforms"),
   createAgent: (input: { name: string; role: string; harness: string; model?: string }) =>
     call<AgentView>("POST", "/v1/admin/agents", input),

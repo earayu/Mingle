@@ -23,6 +23,7 @@ func main() {
 	logs, _ := mygo.App.Path(mygo.PathLogs)
 	resources, _ := mygo.App.Path(mygo.PathResources)
 	d := newDaemon(resources, logs)
+	origin := d.origin()
 	t := texts()
 
 	mygo.Use(updater.Plugin)
@@ -61,14 +62,22 @@ func main() {
 		}))
 
 		win = mygo.NewWindow(mygo.WindowOptions{
-			Title:           "Mingle",
-			Width:           1120,
-			Height:          780,
-			MinWidth:        560,
-			MinHeight:       480,
-			Hidden:          true,
-			BackgroundColor: "light-dark(#ffffff, #161616)",
-			URL:             "data:text/html;charset=utf-8," + loadingPage(t.starting),
+			Title:     "Mingle",
+			Width:     1180,
+			Height:    800,
+			MinWidth:  720,
+			MinHeight: 520,
+			Hidden:    true,
+			StateKey:  "main",
+			// The console draws its own title bar: the traffic lights sit in the sidebar's
+			// brand row, centred in its 52 points, and the sidebar shows the window's material.
+			TitleBarStyle:        mygo.TitleBarHidden,
+			TrafficLightPosition: &mygo.Point{X: 18, Y: 19},
+			Transparent:          true,
+			Vibrancy:             mygo.VibrancySidebar,
+			// Trusted, so the page gets the title bar's insets and can move the window.
+			Page: mygo.PageOptions{TrustedOrigins: []string{origin}},
+			URL:  "data:text/html;charset=utf-8," + loadingPage(t.starting),
 		})
 		// Closing the window keeps Mingle running in the menu bar.
 		win.OnClose(func(e *mygo.CloseEvent) {

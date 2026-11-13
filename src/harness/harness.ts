@@ -2,13 +2,37 @@
  * The only module that imports OAR. Everything else depends on these types,
  * so an OAR upgrade touches this file alone.
  */
-import { type AvailableInstallation, defaultRuntimes, type Runtime, type Session } from "@botiverse/oar";
+import {
+  type AvailableInstallation,
+  defaultRuntimes,
+  type Runtime,
+  runtimeBrandIcon,
+  type Session,
+} from "@botiverse/oar";
 
 export interface HarnessInfo {
   readonly id: string;
   readonly name: string;
   readonly version?: string;
+  /** SVG data URLs of the harness's mark, from OAR's offline brand set. */
+  readonly icon?: { readonly light: string; readonly dark: string };
 }
+
+/** A model the harness will run right now. */
+export interface ModelInfo {
+  readonly id: string;
+  readonly name: string;
+  /** The model the harness uses when none is chosen, where it says so. */
+  readonly isDefault?: boolean;
+  readonly provider?: string;
+  /** Listed, but the harness refuses it as it is (often: the CLI needs an upgrade). */
+  readonly disabled?: string;
+}
+
+export type ModelList =
+  | { readonly kind: "ok"; readonly models: readonly ModelInfo[] }
+  | { readonly kind: "unauthenticated" }
+  | { readonly kind: "unsupported" };
 
 export interface OpenOptions {
   readonly harness: string;
@@ -40,6 +64,8 @@ export interface HarnessSession {
 
 export interface Harness {
   available(): Promise<HarnessInfo[]>;
+  /** What can go in `OpenOptions.model`. Asks the harness, so it can take seconds. */
+  models?(id: string): Promise<ModelList>;
   open(options: OpenOptions, events: HarnessEvents): Promise<HarnessSession>;
 }
 
@@ -72,10 +98,37 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
         }
         const found = await runtime.installation?.().catch(() => undefined);
         if (found?.kind !== "available") continue;
-        const version = found.via === "executable" ? found.version : undefined;
-        out.push({ id, name: runtime.brand?.name ?? id, ...(version ? { version } : {}) });
+        // Harnesses print versions their own way ("2.1.322 (Claude Code)", "codex-cli 0.167.1"): keep the number.
+        const version = found.via === "executable" ? /\d+(?:\.\d+)+/.exec(found.version ?? "")?.[0] : undefined;
+        const brand = runtime.brand;
+        const light = brand ? runtimeBrandIcon(brand, "light") : null;
+        const dark = brand ? runtimeBrandIcon(brand, "dark") : null;
+        out.push({
+          id,
+          name: brand?.name ?? id,
+          ...(version ? { version } : {}),
+          ...(light && dark ? { icon: { light, dark } } : {}),
+        });
       }
       return out;
+    },
+
+    async models(id) {
+      const runtime = source.require(id);
+      const install = await installation(runtime);
+      if (!runtime.listModels) return { kind: "unsupported" };
+      const result = await runtime.listModels(install, { timeoutMs: 20_000 });
+      if (result.kind !== "ok") return { kind: result.kind };
+      return {
+        kind: "ok",
+        models: result.models.map((m) => ({
+          id: m.id,
+          name: m.displayName ?? m.id,
+          ...(m.default ? { isDefault: true } : {}),
+          ...(m.provider ? { provider: m.provider.displayName ?? m.provider.id } : {}),
+          ...(m.disabled ? { disabled: m.disabled.reason } : {}),
+        })),
+      };
     },
 
     async open(options, events) {

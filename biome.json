@@ -9,6 +9,8 @@
       "!node_modules",
       "!**/*.md",
       "!desktop/build",
+      "!desktop/build-e2e",
+      "!desktop/.e2e-home",
       "!desktop/resources/mingle",
       "!desktop/.cache",
       "!desktop/.mygo"

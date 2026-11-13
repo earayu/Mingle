@@ -164,6 +164,18 @@ export class Store {
       .run(status, detail, this.now(), id);
   }
 
+  updateAgent(id: string, patch: { name?: string; harness?: string; model?: string | null }): void {
+    const sets: string[] = [];
+    const values: (string | null)[] = [];
+    for (const [column, value] of Object.entries(patch)) {
+      if (value === undefined || !["name", "harness", "model"].includes(column)) continue;
+      sets.push(`${column} = ?`);
+      values.push(value);
+    }
+    if (!sets.length) return;
+    this.db.prepare(`UPDATE agents SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`).run(...values, this.now(), id);
+  }
+
   setSessionId(id: string, sessionId: string | null): void {
     this.db.prepare("UPDATE agents SET session_id = ?, updated_at = ? WHERE id = ?").run(sessionId, this.now(), id);
   }

@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -23,8 +25,10 @@ import (
 // data directory, the app shows that one and leaves it alone.
 type daemon struct {
 	node, entry, home, logs string
-	onReady                 func(url, token string)
-	onDown                  func(reason string)
+	// port is where the Mingle this app starts listens; the window trusts that origin.
+	port    int
+	onReady func(url, token string)
+	onDown  func(reason string)
 
 	mu       sync.Mutex
 	cmd      *exec.Cmd
@@ -58,6 +62,22 @@ func newDaemon(resources, logs string) *daemon {
 		}
 	}
 	return d
+}
+
+// origin is the address the window will show: a Mingle already running on this data, or
+// the one this app is about to start, on its usual port when that is free.
+func (d *daemon) origin() string {
+	if rt, ok := d.runtime(); ok && healthy(rt.URL) {
+		return rt.URL
+	}
+	d.port = 7419
+	if l, err := net.Listen("tcp", "127.0.0.1:7419"); err == nil {
+		l.Close()
+	} else if l, err := net.Listen("tcp", "127.0.0.1:0"); err == nil {
+		d.port = l.Addr().(*net.TCPAddr).Port
+		l.Close()
+	}
+	return "http://127.0.0.1:" + strconv.Itoa(d.port)
 }
 
 func (d *daemon) runtime() (runtimeFile, bool) {
@@ -131,7 +151,7 @@ func (d *daemon) startAndWait() error {
 	}
 	defer logFile.Close()
 
-	cmd := exec.Command(d.node, d.entry, "start", "--no-open")
+	cmd := exec.Command(d.node, d.entry, "start", "--no-open", "--port", strconv.Itoa(d.port))
 	cmd.Env = append(os.Environ(), "PATH="+userPath(filepath.Dir(d.node)))
 	// The console URL with the admin token goes to stdout; keep it out of the log file.
 	cmd.Stdout = io.Discard

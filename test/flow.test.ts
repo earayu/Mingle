@@ -243,3 +243,26 @@ describe("admin API (console)", () => {
     expect(anonymous.status).toBe(401);
   });
 });
+
+describe("agent settings", () => {
+  it("renames the agent and changes its model; a new model keeps the session", async () => {
+    current = await rig(async () => {});
+    const { mingle, agentId } = current;
+    mingle.store.setSessionId(agentId, "s-1");
+    const renamed = await current.admin("PATCH", `/v1/admin/agents/${agentId}`, { name: " Alex 2 ", model: "sonnet" });
+    expect(renamed.status).toBe(200);
+    expect(renamed.json).toMatchObject({ name: "Alex 2", model: "sonnet" });
+    expect(mingle.store.agent(agentId)?.sessionId).toBe("s-1");
+    // Back to the harness's default.
+    await current.admin("PATCH", `/v1/admin/agents/${agentId}`, { model: "" });
+    expect(mingle.store.agent(agentId)?.model).toBeNull();
+    const empty = await current.admin("PATCH", `/v1/admin/agents/${agentId}`, { name: "  " });
+    expect(empty.json).toMatchObject({ error: "name_required" });
+  });
+
+  it("refuses a harness that is not installed", async () => {
+    current = await rig(async () => {});
+    const refused = await current.admin("PATCH", `/v1/admin/agents/${current.agentId}`, { harness: "nope" });
+    expect(refused.json).toMatchObject({ error: "harness_unavailable" });
+  });
+});

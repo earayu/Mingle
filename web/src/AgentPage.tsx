@@ -1,45 +1,55 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { Navigate } from "./App.tsx";
 import {
   type Activity,
   type AgentView,
   api,
   type ConnectionView,
-  type CredentialField,
-  type OnboardingState,
-  type Platform,
-  type PlatformInfo,
+  type Harness,
   type Reminder,
   type Task,
 } from "./api.ts";
 import { errorText, type MessageKey, useI18n } from "./i18n.ts";
+import { ModelPicker } from "./NewAgent.tsx";
+import { PlatformIcon } from "./platforms.tsx";
 import {
-  AgentStatusLine,
+  AgentStatusText,
   Avatar,
   Button,
-  Field,
-  Input,
-  Muted,
+  Group,
+  GroupRow,
+  HarnessIcon,
+  MoreMenu,
+  PageHeader,
+  PlusIcon,
+  Problem,
   relativeTime,
   Section,
+  Segmented,
+  Select,
   StatusDot,
+  Step,
+  Steps,
   shortDateTime,
   Textarea,
+  Waiting,
 } from "./ui.tsx";
 
 export function AgentPage({
   agent,
+  onNavigate,
   onChanged,
-  onDeleted,
 }: {
   agent: AgentView;
-  onChanged: () => void;
-  onDeleted: () => void;
+  onNavigate: Navigate;
+  onChanged: () => Promise<void> | void;
 }) {
-  const { t, locale } = useI18n();
-  const [activity, setActivity] = useState<Activity[]>([]);
+  const { t } = useI18n();
+  const [activity, setActivity] = useState<Activity[] | null>(null);
   const [work, setWork] = useState<{ tasks: Task[]; reminders: Reminder[] }>({ tasks: [], reminders: [] });
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [tab, setTab] = useState<"activity" | "settings">("activity");
 
   const refresh = useCallback(() => {
     api
@@ -53,8 +63,9 @@ export function AgentPage({
   }, [agent.id]);
 
   useEffect(() => {
+    setActivity(null);
     refresh();
-    const timer = setInterval(refresh, 3000);
+    const timer = setInterval(refresh, 2500);
     return () => clearInterval(timer);
   }, [refresh]);
 
@@ -62,98 +73,387 @@ export function AgentPage({
   useEffect(() => {
     setConfirmDelete(false);
     setNotice(null);
+    setTab("activity");
   }, [agent.id]);
 
-  async function stop() {
-    const { stopped } = await api.stop(agent.id);
-    setNotice(t(stopped ? "agent.stopped" : "agent.idleNothing"));
-  }
+  const busy = agent.status === "thinking" || agent.status === "working";
+  const connect = () => onNavigate({ kind: "connect", slug: agent.slug });
+  const unanswered = (activity ?? []).filter((m) => m.direction === "in" && m.state === "unanswered");
+  const troubled = agent.connections.filter((c) => c.state === "error" || c.state === "awaiting_approval");
+  const replied = (activity ?? []).some((m) => m.direction === "out");
+  const setupDone = agent.connections.length > 0 && replied;
+
+  const hasNeeds = agent.connections.length > 0 || troubled.length > 0 || unanswered.length > 0;
+  const needsYou = hasNeeds ? (
+    <NeedsYou agent={agent} unanswered={unanswered.length} troubled={troubled} onConnect={connect} />
+  ) : null;
 
   return (
-    <div className="flex flex-col gap-10">
-      <header className="flex items-center gap-4">
-        <Avatar name={agent.name} size={48} />
-        <div className="flex min-w-0 flex-col gap-1">
-          <h1 className="truncate text-title font-semibold" title={agent.name}>
-            {agent.name}
-          </h1>
-          <AgentStatusLine status={agent.status} detail={agent.status === "working" ? agent.statusDetail : null} />
+    <>
+      <PageHeader
+        leading={<Avatar name={agent.name} size={26} />}
+        title={agent.name}
+        meta={<AgentStatusText status={agent.status} detail={agent.statusDetail} />}
+        actions={
+          <>
+            <Segmented
+              label={t("agent.view")}
+              value={tab}
+              onChange={setTab}
+              options={[
+                { value: "activity", label: t("agent.tabActivity") },
+                { value: "settings", label: t("agent.tabSettings") },
+              ]}
+            />
+            {busy ? (
+              <Button
+                small
+                onClick={async () => {
+                  const { stopped } = await api.stop(agent.id);
+                  setNotice(t(stopped ? "agent.stopped" : "agent.idleNothing"));
+                }}
+              >
+                {t("agent.stop")}
+              </Button>
+            ) : null}
+            <MoreMenu
+              label={t("agent.more")}
+              items={[
+                { label: t("agent.openHome"), onSelect: () => api.openHome(agent.id) },
+                {
+                  label: t("agent.delete"),
+                  danger: true,
+                  onSelect: () => {
+                    setTab("settings");
+                    setConfirmDelete(true);
+                  },
+                },
+              ]}
+            />
+          </>
+        }
+      />
+      <div className="flex min-h-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+          <div className="flex max-w-[680px] flex-col gap-7 px-6 py-6 md:px-8">
+            {confirmDelete ? (
+              <DeleteConfirm
+                agent={agent}
+                onCancel={() => setConfirmDelete(false)}
+                onDeleted={async () => {
+                  // Refresh first: with the old list, "home" would pick the deleted agent again.
+                  await onChanged();
+                  onNavigate({ kind: "home" }, { replace: true });
+                }}
+              />
+            ) : null}
+            {notice ? <p className="rise -mb-3 text-small text-ink2">{notice}</p> : null}
+            {agent.status === "error" && agent.statusDetail ? (
+              <Problem title={t("agent.errorTitle")} tone="red">
+                <span className="selectable font-mono text-caption wrap-anywhere">{agent.statusDetail}</span>
+              </Problem>
+            ) : null}
+
+            {tab === "settings" ? (
+              <>
+                <Connections agent={agent} onConnect={connect} onChanged={onChanged} />
+                <RoleEditor agent={agent} onSaved={onChanged} />
+                <Brain agent={agent} onSaved={onChanged} />
+                <Section title={t("agent.home")}>
+                  <Group>
+                    <GroupRow>
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span>{t("agent.homeTitle")}</span>
+                        <span className="selectable truncate font-mono text-caption text-ink2" title={agent.home}>
+                          {agent.home}
+                        </span>
+                      </span>
+                      <Button small onClick={() => api.openHome(agent.id)}>
+                        {t("agent.openHome")}
+                      </Button>
+                    </GroupRow>
+                    <GroupRow>
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span>{t("agent.delete")}</span>
+                        <span className="text-caption text-ink2">{t("agent.deleteBody")}</span>
+                      </span>
+                      <Button small variant="danger" onClick={() => setConfirmDelete(true)}>
+                        {t("agent.delete")}
+                      </Button>
+                    </GroupRow>
+                  </Group>
+                </Section>
+              </>
+            ) : (
+              <>
+                {activity !== null && !setupDone ? (
+                  <GettingStarted agent={agent} heard={(activity ?? []).length > 0} onConnect={connect} />
+                ) : null}
+                {/* Narrow windows have no right panel: what needs the person comes first. */}
+                {needsYou ? <div className="flex flex-col gap-7 min-[1140px]:hidden">{needsYou}</div> : null}
+                {activity && activity.length > 0 ? (
+                  <Section title={t("agent.activity")}>
+                    <ActivityList items={activity} />
+                  </Section>
+                ) : null}
+                <div className="flex flex-col gap-7 min-[1140px]:hidden">
+                  <Work work={work} />
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </header>
-      {agent.status === "error" && agent.statusDetail ? (
-        <p className="-mt-6 rounded-sm bg-surface px-3 py-2 font-mono text-small wrap-anywhere text-text-secondary">
-          {agent.statusDetail}
+        <aside className="hidden w-[320px] shrink-0 flex-col gap-6 overflow-y-auto border-l border-line bg-wing px-4 py-5 min-[1140px]:flex">
+          {needsYou}
+          {agent.connections.length ? <ChatAppsSummary agent={agent} onManage={() => setTab("settings")} /> : null}
+          <Work work={work} />
+        </aside>
+      </div>
+    </>
+  );
+}
+
+/** Until the agent has answered someone: the steps that get it there, and where it is. */
+function GettingStarted({ agent, heard, onConnect }: { agent: AgentView; heard: boolean; onConnect: () => void }) {
+  const { t } = useI18n();
+  const connected = agent.connections.find((c) => c.state === "connected");
+  const any = agent.connections.length > 0;
+  return (
+    <section className="flex flex-col gap-4 rounded-card border border-line bg-card px-5 py-4 shadow-card">
+      <div className="flex flex-col gap-0.5">
+        <h2 className="text-headline font-semibold">{t("start.title")}</h2>
+        <p className="text-small text-ink2">{t("start.body", { name: agent.name })}</p>
+      </div>
+      <Steps>
+        <Step n={1} state="done" title={t("start.created")} />
+        <Step n={2} state={any ? "done" : "now"} title={t("start.connect")}>
+          <p className="text-small text-ink2">{t("start.connectBody")}</p>
+          <Button variant="primary" className="self-start" onClick={onConnect}>
+            {t("start.connectAction")}
+          </Button>
+        </Step>
+        <Step n={3} state={!any ? "later" : heard ? "done" : "now"} title={t("start.say")}>
+          <p className="text-small text-ink2">
+            {connected ? t(`${connected.platform}.qr3` as MessageKey) : t("start.sayBody")}
+          </p>
+          {connected ? <Waiting>{t("start.waiting")}</Waiting> : <Waiting>{t("start.waitingConnection")}</Waiting>}
+        </Step>
+        <Step n={4} state={heard ? "now" : "later"} title={t("start.reply")}>
+          <Waiting>{t("start.replying", { name: agent.name })}</Waiting>
+        </Step>
+      </Steps>
+    </section>
+  );
+}
+
+function NeedsYou({
+  agent,
+  unanswered,
+  troubled,
+  onConnect,
+}: {
+  agent: AgentView;
+  unanswered: number;
+  troubled: ConnectionView[];
+  onConnect: () => void;
+}) {
+  const { t } = useI18n();
+  const items = [
+    ...troubled.map((c) => (
+      <Problem
+        key={c.id}
+        tone={c.state === "error" ? "red" : "amber"}
+        title={`${c.bot ?? t(`platform.${c.platform}` as MessageKey)} · ${t(`connection.${c.state}` as MessageKey)}`}
+      >
+        {c.state === "error" ? connectionDetail(t, c) : t("connection.approvalHint")}
+      </Problem>
+    )),
+    ...(unanswered > 0
+      ? [
+          <Problem key="unanswered" title={t("needs.unanswered", { count: String(unanswered) })}>
+            {t("needs.unansweredBody", { name: agent.name })}
+          </Problem>,
+        ]
+      : []),
+  ];
+  if (agent.connections.length === 0 && items.length === 0) return null;
+  return (
+    <Section title={t("needs.title")}>
+      {items.length ? (
+        <div className="flex flex-col gap-2">{items}</div>
+      ) : (
+        <p className="flex items-center gap-2 px-1 text-small text-ink2">
+          <StatusDot state="connected" /> {t("needs.none")}
         </p>
+      )}
+      {agent.connections.length === 0 ? (
+        <Button className="self-start" onClick={onConnect}>
+          {t("start.connectAction")}
+        </Button>
       ) : null}
+    </Section>
+  );
+}
 
-      <RoleEditor agent={agent} onSaved={onChanged} />
-      <Connections agent={agent} onChanged={onChanged} />
+/** The agent's bots at a glance, in the side panel. */
+function ChatAppsSummary({ agent, onManage }: { agent: AgentView; onManage: () => void }) {
+  const { t } = useI18n();
+  return (
+    <Section
+      title={t("agent.chatApps")}
+      action={
+        <Button variant="ghost" small onClick={onManage}>
+          {t("agent.manage")}
+        </Button>
+      }
+    >
+      <Group>
+        {agent.connections.map((c) => (
+          <GroupRow key={c.id} className="min-h-[44px]">
+            <PlatformIcon platform={c.platform} size={22} />
+            <span className="min-w-0 flex-1 truncate">{c.bot ?? t(`platform.${c.platform}` as MessageKey)}</span>
+            <StatusDot state={c.state} />
+          </GroupRow>
+        ))}
+      </Group>
+    </Section>
+  );
+}
 
-      <Section title={t("agent.activity")}>
-        {activity.length === 0 ? <Muted>{t("agent.noActivity")}</Muted> : <ActivityList items={activity} />}
-      </Section>
+function connectionDetail(t: ReturnType<typeof useI18n>["t"], c: ConnectionView): string {
+  const key = `connection.detail.${c.detail}` as MessageKey;
+  return t(key) !== key ? t(key) : t("connection.detail.unknown");
+}
 
-      {work.tasks.length > 0 ? (
-        <Section title={t("agent.tasks")}>
-          <ul className="flex flex-col">
+function Work({ work }: { work: { tasks: Task[]; reminders: Reminder[] } }) {
+  const { t, locale } = useI18n();
+  return (
+    <>
+      <Section title={t("agent.tasks")}>
+        {work.tasks.length === 0 ? (
+          <p className="px-1 text-small text-ink3">{t("agent.noTasks")}</p>
+        ) : (
+          <Group>
             {work.tasks.map((task) => (
-              <li key={task.id} className="flex h-11 items-center gap-3 border-b border-border last:border-0">
-                <span className="w-16 shrink-0 text-small text-text-secondary">
-                  {t(`task.${task.status}` as MessageKey)}
-                </span>
-                <span className="min-w-0 flex-1 truncate" title={task.title}>
+              <GroupRow key={task.id} className="min-h-[44px]">
+                <span className="line-clamp-2 min-w-0 flex-1 wrap-anywhere" title={task.title}>
                   {task.title}
                 </span>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      ) : null}
-
-      {work.reminders.length > 0 ? (
-        <Section title={t("agent.reminders")}>
-          <ul className="flex flex-col">
-            {work.reminders.map((r) => (
-              <li key={r.id} className="flex h-11 items-center gap-3 border-b border-border last:border-0">
-                <span className="w-28 shrink-0 whitespace-nowrap text-small text-text-secondary">
-                  {r.nextFireAt ? shortDateTime(r.nextFireAt, locale) : ""}
+                <span className="shrink-0 rounded-full bg-bg3 px-2 py-0.5 text-caption text-ink2">
+                  {t(`task.${task.status}` as MessageKey)}
                 </span>
-                <span className="min-w-0 flex-1 truncate" title={r.body}>
+              </GroupRow>
+            ))}
+          </Group>
+        )}
+      </Section>
+      <Section title={t("agent.reminders")}>
+        {work.reminders.length === 0 ? (
+          <p className="px-1 text-small text-ink3">{t("agent.noReminders")}</p>
+        ) : (
+          <Group>
+            {work.reminders.map((r) => (
+              <GroupRow key={r.id} className="min-h-[44px] flex-col items-start gap-0.5">
+                <span className="line-clamp-2 wrap-anywhere" title={r.body}>
                   {r.body}
                 </span>
-              </li>
+                <span className="text-caption text-ink2">
+                  {r.nextFireAt ? shortDateTime(r.nextFireAt, locale) : ""}
+                </span>
+              </GroupRow>
             ))}
-          </ul>
-        </Section>
-      ) : null}
-
-      <footer className="flex flex-wrap items-center gap-2 border-t border-border pt-6">
-        <Button onClick={() => api.openHome(agent.id)}>{t("agent.openHome")}</Button>
-        <Button onClick={stop}>{t("agent.stop")}</Button>
-        {confirmDelete ? (
-          <span className="flex items-center gap-2">
-            <span className="text-small text-text-secondary">{t("agent.deleteConfirm", { name: agent.name })}</span>
-            <Button
-              variant="primary"
-              onClick={async () => {
-                await api.remove(agent.id);
-                onDeleted();
-              }}
-            >
-              {t("agent.deleteYes")}
-            </Button>
-            <Button variant="text" onClick={() => setConfirmDelete(false)}>
-              {t("agent.deleteNo")}
-            </Button>
-          </span>
-        ) : (
-          <Button variant="text" onClick={() => setConfirmDelete(true)}>
-            {t("agent.delete")}
-          </Button>
+          </Group>
         )}
-        {notice ? <span className="text-small text-text-secondary">{notice}</span> : null}
-      </footer>
-    </div>
+      </Section>
+    </>
+  );
+}
+
+function Connections({
+  agent,
+  onConnect,
+  onChanged,
+}: {
+  agent: AgentView;
+  onConnect: () => void;
+  onChanged: () => void;
+}) {
+  const { t } = useI18n();
+  if (agent.connections.length === 0) return null;
+  return (
+    <Section
+      title={t("agent.chatApps")}
+      action={
+        <Button variant="ghost" small onClick={onConnect}>
+          <PlusIcon /> {t("agent.add")}
+        </Button>
+      }
+    >
+      <Group>
+        {agent.connections.map((c) => (
+          <ConnectionRow key={c.id} connection={c} onChanged={onChanged} />
+        ))}
+      </Group>
+    </Section>
+  );
+}
+
+function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; onChanged: () => void }) {
+  const { t } = useI18n();
+  const [confirming, setConfirming] = useState(false);
+  const platform = t(`platform.${connection.platform}` as MessageKey);
+  const hint = connection.state === "connected" && !connection.owner ? t("connection.noOwner") : null;
+  return (
+    <GroupRow className="flex-wrap">
+      <PlatformIcon platform={connection.platform} size={32} />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate font-medium" title={connection.bot ?? undefined}>
+          {connection.bot ?? platform}
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5 text-small text-ink2">
+          <StatusDot state={connection.state} />
+          <span className="truncate">
+            {platform} · {t(`connection.${connection.state}` as MessageKey)}
+          </span>
+        </span>
+      </span>
+      {confirming ? (
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span className="hidden text-small text-ink2 sm:inline">{t("connection.removeAsk")}</span>
+          <Button
+            small
+            variant="danger"
+            onClick={async () => {
+              await api.disconnect(connection.id);
+              onChanged();
+            }}
+          >
+            {t("connection.removeYes")}
+          </Button>
+          <Button small variant="ghost" onClick={() => setConfirming(false)}>
+            {t("agent.deleteNo")}
+          </Button>
+        </span>
+      ) : (
+        <span className="flex shrink-0 items-center gap-1">
+          {connection.invite ? (
+            <a
+              href={connection.invite}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-7 items-center rounded-control border border-line2 px-2.5 text-small font-medium hover:bg-bg3"
+            >
+              {t("connection.invite")}
+            </a>
+          ) : null}
+          <MoreMenu
+            label={t("agent.more")}
+            items={[{ label: t("connection.remove"), danger: true, onSelect: () => setConfirming(true) }]}
+          />
+        </span>
+      )}
+      {hint ? <p className="w-full pl-11 text-caption text-ink3">{hint}</p> : null}
+    </GroupRow>
   );
 }
 
@@ -175,586 +475,185 @@ function RoleEditor({ agent, onSaved }: { agent: AgentView; onSaved: () => void 
   }
 
   return (
-    <Section title={t("agent.role")}>
+    <Section
+      title={t("agent.role")}
+      action={
+        editing ? null : (
+          <Button
+            variant="ghost"
+            small
+            onClick={() => {
+              setEditing(true);
+              setSaved(false);
+            }}
+          >
+            {t("agent.edit")}
+          </Button>
+        )
+      }
+    >
       {editing ? (
         <div className="flex flex-col gap-2">
           <Textarea autoFocus rows={6} value={draft} onChange={(e) => setDraft(e.target.value)} />
           <div className="flex gap-2">
-            <Button variant="primary" onClick={save}>
+            <Button variant="primary" small onClick={save}>
               {t("agent.save")}
             </Button>
-            <Button variant="text" onClick={() => setEditing(false)}>
+            <Button variant="ghost" small onClick={() => setEditing(false)}>
               {t("agent.cancel")}
             </Button>
           </div>
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={() => {
-            setEditing(true);
-            setSaved(false);
-          }}
-          className="-mx-3 rounded-sm px-3 py-2 text-left whitespace-pre-wrap wrap-anywhere hover:bg-surface"
-        >
-          {agent.role.trim() ? agent.role.trim() : <span className="text-text-tertiary">{t("agent.roleEmpty")}</span>}
-        </button>
-      )}
-      {saved ? <p className="text-small text-text-secondary">{t("agent.roleSaved")}</p> : null}
-    </Section>
-  );
-}
-
-function Connections({ agent, onChanged }: { agent: AgentView; onChanged: () => void }) {
-  const { t } = useI18n();
-  // ?connect=<platform> opens the add panel on that platform (deep link; used by scripts/ui-review.mjs).
-  const [linked] = useState(() => new URLSearchParams(location.search).get("connect") as Platform | null);
-  const [adding, setAdding] = useState(Boolean(linked));
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset when switching to another agent
-  useEffect(() => setAdding((current) => current && Boolean(linked)), [agent.id]);
-
-  return (
-    <Section
-      title={t("agent.chatApps")}
-      action={
-        adding ? null : (
-          <Button variant="text" onClick={() => setAdding(true)}>
-            {t("agent.add")}
-          </Button>
-        )
-      }
-    >
-      {agent.connections.length === 0 && !adding ? <Muted>{t("agent.noConnections")}</Muted> : null}
-      <ul className="flex flex-col">
-        {agent.connections.map((c) => (
-          <ConnectionRow key={c.id} connection={c} onChanged={onChanged} />
-        ))}
-      </ul>
-      {adding ? (
-        <AddConnection
-          agentId={agent.id}
-          agentName={agent.name}
-          initial={linked}
-          onDone={() => {
-            setAdding(false);
-            onChanged();
-          }}
-          onCancel={() => setAdding(false)}
-        />
-      ) : null}
-    </Section>
-  );
-}
-
-function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; onChanged: () => void }) {
-  const { t } = useI18n();
-  const [confirming, setConfirming] = useState(false);
-  const detailKey = `connection.detail.${connection.detail}` as MessageKey;
-  const hint =
-    connection.state === "error"
-      ? t(detailKey) !== detailKey
-        ? t(detailKey)
-        : t("connection.detail.unknown")
-      : connection.state === "awaiting_approval"
-        ? t("connection.approvalHint")
-        : connection.state === "connected" && !connection.owner
-          ? t("connection.noOwner")
-          : null;
-
-  return (
-    <li className="flex flex-col gap-1 border-b border-border py-3 last:border-0">
-      <div className="flex items-center gap-3">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate" title={connection.bot ?? undefined}>
-            {connection.bot ?? t(`platform.${connection.platform}` as MessageKey)}
-          </span>
-          <span className="text-small text-text-secondary">{t(`platform.${connection.platform}` as MessageKey)}</span>
+        <div className="selectable rounded-card border border-line bg-card px-4 py-3 whitespace-pre-wrap wrap-anywhere">
+          {agent.role.trim() ? agent.role.trim() : <span className="text-ink3">{t("agent.roleEmpty")}</span>}
         </div>
-        {confirming ? (
-          <span className="flex shrink-0 items-center gap-1">
-            <Button
-              variant="primary"
-              onClick={async () => {
-                await api.disconnect(connection.id);
-                onChanged();
-              }}
-            >
-              {t("connection.removeYes")}
-            </Button>
-            <Button variant="text" onClick={() => setConfirming(false)}>
-              {t("agent.deleteNo")}
-            </Button>
-          </span>
-        ) : (
-          <>
-            <span className="flex shrink-0 items-center gap-2 whitespace-nowrap text-small text-text-secondary">
-              <StatusDot state={connection.state} />
-              {t(`connection.${connection.state}` as MessageKey)}
-            </span>
-            <Button variant="text" className="shrink-0" onClick={() => setConfirming(true)}>
-              {t("connection.remove")}
-            </Button>
-          </>
-        )}
-      </div>
-      {confirming ? <p className="text-small text-text-secondary">{t("connection.removeConfirm")}</p> : null}
-      {!confirming && connection.invite ? (
-        <a
-          href={connection.invite}
-          target="_blank"
-          rel="noreferrer"
-          className="self-start text-small text-text-secondary underline-offset-2 hover:text-text hover:underline"
-        >
-          {t("connection.invite")} ↗
-        </a>
-      ) : null}
-      {!confirming && hint ? (
-        <p className={`text-small ${connection.state === "error" ? "text-error" : "text-text-tertiary"}`}>{hint}</p>
-      ) : null}
-    </li>
+      )}
+      {saved ? <p className="px-1 text-small text-ink2">{t("agent.roleSaved")}</p> : null}
+    </Section>
   );
 }
 
-function AddConnection({
-  agentId,
-  agentName,
-  initial,
-  onDone,
-  onCancel,
-}: {
-  agentId: string;
-  agentName: string;
-  initial: Platform | null;
-  onDone: () => void;
-  onCancel: () => void;
-}) {
+/** Which harness and model drive the agent. A change applies from the next message. */
+function Brain({ agent, onSaved }: { agent: AgentView; onSaved: () => void }) {
   const { t } = useI18n();
-  const [platforms, setPlatforms] = useState<PlatformInfo[]>([]);
-  const [chosen, setChosen] = useState<Platform | null>(initial);
-
+  const [harnesses, setHarnesses] = useState<Harness[] | null>(null);
+  const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     api
-      .platforms()
-      .then(setPlatforms)
-      .catch(() => {});
+      .harnesses()
+      .then(setHarnesses)
+      .catch(() => setHarnesses([]));
   }, []);
 
-  const [manual, setManual] = useState(false);
-  const info = platforms.find((p) => p.platform === chosen);
-  const back = () => {
-    setChosen(null);
-    setManual(false);
-  };
-  if (chosen && info?.onboarding?.kind === "credentials") {
-    return (
-      <CredentialsForm
-        agentId={agentId}
-        info={info}
-        fields={info.onboarding.fields}
-        {...(info.onboarding.setupUrl ? { setupUrl: withAgentName(info.onboarding.setupUrl, agentName) } : {})}
-        onDone={onDone}
-        onBack={back}
-      />
-    );
-  }
-  if (chosen && info?.onboarding?.kind === "qr") {
-    return manual ? (
-      <CredentialsForm
-        agentId={agentId}
-        info={info}
-        fields={info.manualFields}
-        onDone={onDone}
-        onBack={() => setManual(false)}
-      />
-    ) : (
-      <QrOnboarding
-        agentId={agentId}
-        info={info}
-        onDone={onDone}
-        onBack={back}
-        {...(info.manualFields.length ? { onManual: () => setManual(true) } : {})}
-      />
-    );
-  }
-
-  return (
-    <div className="panel flex flex-col gap-3 rounded-md bg-surface p-4">
-      <div className="flex items-center justify-between">
-        <span className="text-small text-text-secondary">{t("connect.title")}</span>
-        <Button variant="text" onClick={onCancel}>
-          {t("create.cancel")}
-        </Button>
-      </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {platforms.map((p) => (
-          <button
-            key={p.platform}
-            type="button"
-            disabled={!p.onboarding}
-            onClick={() => setChosen(p.platform)}
-            className="flex h-14 flex-col items-start justify-center rounded-sm bg-bg px-3 text-left enabled:hover:ring-1 enabled:hover:ring-border disabled:opacity-50"
-          >
-            <span>{t(`platform.${p.platform}` as MessageKey)}</span>
-            {!p.onboarding ? <span className="text-small text-text-tertiary">{t("connect.soon")}</span> : null}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Put the agent's name into a prefilled setup link (it sits inside URL-encoded JSON). */
-function withAgentName(url: string, name: string): string {
-  const safe = JSON.stringify(name.trim().slice(0, 35)).slice(1, -1);
-  // Handles allow only a-z, 0-9, "-", "_" and "."; names in other scripts fall back to a generic one.
-  const handle =
-    name
-      .normalize("NFKD")
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]+/g, "-")
-      .replace(/^[-.]+|[-.]+$/g, "")
-      .slice(0, 80) || "mingle-agent";
-  return url
-    .replaceAll("__MINGLE_AGENT_NAME__", encodeURIComponent(safe))
-    .replaceAll("__MINGLE_AGENT_HANDLE__", encodeURIComponent(handle));
-}
-
-function CredentialsForm({
-  agentId,
-  info,
-  fields,
-  setupUrl,
-  onDone,
-  onBack,
-}: {
-  agentId: string;
-  info: PlatformInfo;
-  fields: CredentialField[];
-  setupUrl?: string;
-  onDone: () => void;
-  onBack: () => void;
-}) {
-  const { t } = useI18n();
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
+  async function save(patch: { harness?: string; model?: string | null }) {
+    setState("saving");
     setError(null);
     try {
-      await api.connect(agentId, info.platform, values);
-      onDone();
+      await api.updateAgent(agent.id, patch);
+      setState("saved");
+      onSaved();
     } catch (e) {
       setError(errorText(t, e));
-    } finally {
-      setBusy(false);
+      setState("idle");
     }
   }
 
-  const steps = `${info.platform}.${info.onboarding?.kind === "qr" ? "manualSteps" : "steps"}` as MessageKey;
+  const current = harnesses?.find((h) => h.id === agent.harness);
   return (
-    <form onSubmit={submit} className="panel flex flex-col gap-4 rounded-md bg-surface p-4">
-      <span className="text-heading font-semibold">{t(`platform.${info.platform}` as MessageKey)}</span>
-      {/* One line reads as a sentence; several become numbered steps. */}
-      {t(steps).includes("\n") ? (
-        <ol className="flex list-decimal flex-col gap-1 pl-5 text-small text-text-secondary">
-          {t(steps)
-            .split("\n")
-            .map((line) => (
-              <li key={line}>{line}</li>
+    <Section title={t("create.brain")}>
+      <Group>
+        <GroupRow>
+          {current ? <HarnessIcon harness={current} size={24} /> : null}
+          <span className="min-w-0 flex-1">{t("brain.harness")}</span>
+          <Select
+            aria-label={t("create.brain")}
+            className="!w-[220px]"
+            value={agent.harness}
+            disabled={!harnesses || state === "saving"}
+            onChange={(e) => save({ harness: e.target.value, model: null })}
+          >
+            {(harnesses ?? []).map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.name}
+              </option>
             ))}
-        </ol>
-      ) : (
-        <p className="text-small text-text-secondary">{t(steps)}</p>
-      )}
-      {setupUrl ? (
-        <a
-          href={setupUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex h-8 items-center self-start rounded-sm border border-border bg-bg px-3 text-body text-text transition-colors duration-[120ms] hover:border-text-tertiary"
-        >
-          {t(`${info.platform}.setup` as MessageKey)} ↗
-        </a>
-      ) : null}
-      {fields.map((f, i) => (
-        <Field key={f.key} label={t(f.labelKey as MessageKey)}>
-          <Input
-            autoFocus={i === 0}
-            required
-            type={f.secret ? "password" : "text"}
-            autoComplete="off"
-            value={values[f.key] ?? ""}
-            onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+            {harnesses && !current ? <option value={agent.harness}>{agent.harness}</option> : null}
+          </Select>
+        </GroupRow>
+        <GroupRow>
+          <span className="min-w-0 flex-1">{t("create.model")}</span>
+          <ModelPicker
+            inline
+            harness={agent.harness}
+            value={agent.model ?? ""}
+            onChange={(id) => save({ model: id || null })}
           />
-        </Field>
-      ))}
-      {error ? <p className="text-small text-error">{error}</p> : null}
-      <div className="flex gap-2">
-        <Button type="submit" variant="primary" disabled={busy}>
-          {busy ? t("connect.connecting") : t("connect.connect")}
-        </Button>
-        <Button variant="text" onClick={onBack}>
-          {t("connect.back")}
-        </Button>
-      </div>
-    </form>
+        </GroupRow>
+      </Group>
+      {error ? <p className="px-1 text-small text-red">{error}</p> : null}
+      {state === "saved" ? <p className="px-1 text-small text-ink2">{t("agent.brainSaved")}</p> : null}
+    </Section>
   );
 }
 
-/** Scan-to-create flow (DESIGN.md "接入 IM"): QR, three steps, state advancing in place. */
-function QrOnboarding({
-  agentId,
-  info,
-  onDone,
-  onBack,
-  onManual,
+function DeleteConfirm({
+  agent,
+  onCancel,
+  onDeleted,
 }: {
-  agentId: string;
-  info: PlatformInfo;
-  onDone: () => void;
-  onBack: () => void;
-  onManual?: () => void;
+  agent: AgentView;
+  onCancel: () => void;
+  onDeleted: () => Promise<void>;
 }) {
   const { t } = useI18n();
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [state, setState] = useState<OnboardingState>({ state: "starting" });
-  const [attempt, setAttempt] = useState(0);
-  const [now, setNow] = useState(Date.now());
-  const platformName = t(`platform.${info.platform}` as MessageKey);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new attempt restarts the flow
-  useEffect(() => {
-    let id: string | null = null;
-    let stopped = false;
-    setState({ state: "starting" });
-    api
-      .startOnboarding(agentId, info.platform)
-      .then((r) => {
-        id = r.id;
-        if (stopped) api.cancelOnboarding(r.id).catch(() => {});
-        else setSessionId(r.id);
-      })
-      .catch((e) => setState({ state: "failed", code: (e as { code?: string }).code ?? "unknown" }));
-    return () => {
-      stopped = true;
-      if (id) api.cancelOnboarding(id).catch(() => {});
-    };
-  }, [agentId, info.platform, attempt]);
-
-  useEffect(() => {
-    if (!sessionId) return;
-    let active = true;
-    const tick = async () => {
-      const next = await api.onboarding(sessionId).catch(() => null);
-      if (!active || !next) return;
-      setState(next);
-      if (next.state === "done") {
-        active = false;
-        setTimeout(onDone, next.pendingApproval ? 2500 : 800);
-      }
-    };
-    tick();
-    const timer = setInterval(tick, 1500);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [sessionId, onDone]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const expired = state.state === "qr" && state.expiresAt <= now;
-  const failedExpired = state.state === "failed" && state.code === "expired";
-  const remaining = state.state === "qr" ? Math.max(0, Math.round((state.expiresAt - now) / 1000)) : 0;
-  const restart = () => {
-    setSessionId(null);
-    setAttempt((n) => n + 1);
-  };
-
+  const [busy, setBusy] = useState(false);
   return (
-    <div className="panel flex flex-col gap-4 rounded-md bg-surface p-4">
-      <span className="text-heading font-semibold">{platformName}</span>
-      <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
-        {/* The QR stays on white in both themes so phones can read it; text on it uses fixed light-theme greys. */}
-        <div className="flex size-[248px] shrink-0 items-center justify-center rounded-md bg-white p-6">
-          {state.state === "qr" && !expired ? (
-            <div
-              className="size-[200px] [&_svg]:size-full"
-              role="img"
-              aria-label={t("qr.label", { platform: platformName })}
-              // biome-ignore lint/security/noDangerouslySetInnerHtml: SVG generated by our own server from a URL
-              dangerouslySetInnerHTML={{ __html: state.qrSvg }}
-            />
-          ) : expired || failedExpired ? (
-            <Button onClick={restart}>{t("qr.refresh")}</Button>
-          ) : state.state === "done" || state.state === "awaiting_approval" || state.state === "scanned" ? (
-            <span className="text-center text-small text-[#6b6b66]">{t("qr.scanned")}</span>
-          ) : state.state === "failed" ? null : (
-            <span className="text-small text-[#a3a39e]">{t("qr.loading")}</span>
-          )}
-        </div>
-        <div className="flex min-w-0 flex-col gap-3">
-          <ol className="flex list-decimal flex-col gap-1 pl-5 text-text-secondary">
-            <li>{t(`${info.platform}.qr1` as MessageKey)}</li>
-            <li>{t(`${info.platform}.qr2` as MessageKey)}</li>
-            <li>{t(`${info.platform}.qr3` as MessageKey)}</li>
-          </ol>
-          <OnboardingStatus state={state} expired={expired} remaining={remaining} platformName={platformName} />
-          {state.state === "needs_code" && sessionId ? <CodeForm sessionId={sessionId} retry={state.retry} /> : null}
-          {state.state === "qr" && !expired && info.onboarding?.kind === "qr" && info.onboarding.desktopLink ? (
-            <a
-              href={state.url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-small text-text-secondary underline underline-offset-2 hover:text-text"
-            >
-              {t("qr.openHere")}
-            </a>
-          ) : null}
-        </div>
+    <div className="rise flex flex-col gap-3 rounded-card border border-red-line bg-red-tint px-4 py-3.5">
+      <div className="flex flex-col gap-0.5">
+        <span className="font-semibold">{t("agent.deleteTitle", { name: agent.name })}</span>
+        <span className="text-small text-ink2">{t("agent.deleteBody")}</span>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="text" onClick={onBack}>
-          {t("connect.back")}
+      <div className="flex gap-2">
+        <Button
+          variant="danger"
+          small
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            await api.remove(agent.id);
+            await onDeleted();
+          }}
+        >
+          {t("agent.deleteYes")}
         </Button>
-        {onManual && state.state !== "done" ? (
-          <Button variant="text" onClick={onManual}>
-            {t("qr.manual")}
-          </Button>
-        ) : null}
+        <Button variant="ghost" small onClick={onCancel}>
+          {t("agent.deleteNo")}
+        </Button>
       </div>
     </div>
   );
-}
-
-/** The code the phone shows after scanning, typed here (WeChat asks for this on some accounts). */
-function CodeForm({ sessionId, retry }: { sessionId: string; retry: boolean }) {
-  const { t } = useI18n();
-  const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: clear the field when the platform asks again
-  useEffect(() => setCode(""), [retry]);
-  return (
-    <form
-      className="flex items-end gap-2"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        setBusy(true);
-        await api.submitCode(sessionId, code).catch(() => {});
-        setBusy(false);
-      }}
-    >
-      <Field label={t("qr.codeLabel")}>
-        <Input
-          autoFocus
-          required
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-        />
-      </Field>
-      <Button type="submit" variant="primary" disabled={busy || !code.trim()}>
-        {t("qr.codeSubmit")}
-      </Button>
-    </form>
-  );
-}
-
-function OnboardingStatus({
-  state,
-  expired,
-  remaining,
-  platformName,
-}: {
-  state: OnboardingState;
-  expired: boolean;
-  remaining: number;
-  platformName: string;
-}) {
-  const { t } = useI18n();
-  const line = (dot: string, text: string, tone = "text-text-secondary") => (
-    <p className={`flex items-start gap-2 text-small ${tone}`}>
-      {/* One text line tall, so the dot centres on the first line. */}
-      <span className="flex h-[18px] shrink-0 items-center">
-        <StatusDot state={dot} />
-      </span>
-      <span>{text}</span>
-    </p>
-  );
-  if (expired || (state.state === "failed" && state.code === "expired")) return line("offline", t("qr.expired"));
-  switch (state.state) {
-    case "starting":
-      return line("offline", t("qr.loading"));
-    case "qr":
-      // Minutes while there is plenty of time; a ticking clock only in the last two minutes.
-      return line(
-        "awaiting_credentials",
-        remaining > 120
-          ? t("qr.waitingMinutes", { minutes: String(Math.ceil(remaining / 60)) })
-          : t("qr.waiting", {
-              minutes: String(Math.floor(remaining / 60)),
-              seconds: String(remaining % 60).padStart(2, "0"),
-            }),
-      );
-    case "scanned":
-      return line("reconnecting", t("qr.scanned"));
-    case "awaiting_approval":
-      return line("awaiting_approval", t("connection.approvalHint"));
-    case "needs_code":
-      return line("reconnecting", t(state.retry ? "qr.codeRetry" : "qr.code"));
-    case "done":
-      return state.pendingApproval
-        ? line("awaiting_approval", t("qr.donePending"))
-        : line("connected", t("qr.done", { platform: platformName }));
-    case "failed":
-      return line("error", errorTextFor(t, state.code), "text-error");
-  }
-}
-
-function errorTextFor(t: ReturnType<typeof useI18n>["t"], code: string): string {
-  const key = `qr.failed.${code}` as MessageKey;
-  const text = t(key);
-  return text === key ? t("qr.failed.unknown") : text;
 }
 
 function ActivityList({ items }: { items: Activity[] }) {
   const { t, locale } = useI18n();
   return (
-    <ul className="flex flex-col">
-      {items.map((m) => (
-        <li key={m.id} className="flex flex-col gap-0.5 border-b border-border py-3 last:border-0">
-          <div className="flex items-baseline gap-2 text-small text-text-secondary">
-            <span className="max-w-[45%] shrink-0 truncate font-semibold text-text" title={m.sender ?? undefined}>
-              {m.sender ?? (m.senderIsOwner ? t("activity.you") : t("activity.someone"))}
-            </span>
-            <span className="min-w-0 flex-1 truncate" title={m.chat.name ?? undefined}>
-              {t(`platform.${m.platform}` as MessageKey)} ·{" "}
-              {m.chat.kind === "dm" ? t("chat.dm") : (m.chat.name ?? t("chat.group"))}
-            </span>
-            <span className="shrink-0 whitespace-nowrap">{relativeTime(m.createdAt, locale)}</span>
+    <Group>
+      {items.map((m) => {
+        const who = m.sender ?? (m.senderIsOwner ? t("activity.you") : t("activity.someone"));
+        const where = m.chat.kind === "dm" ? t("chat.dm") : (m.chat.name ?? t("chat.group"));
+        return (
+          <div key={m.id} className={`flex gap-3 px-4 py-3 ${m.direction === "out" ? "bg-bg2" : ""}`}>
+            <PlatformIcon platform={m.platform} size={20} />
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <div className="flex items-baseline gap-2 text-small">
+                <span className="max-w-[45%] shrink-0 truncate font-semibold" title={who}>
+                  {who}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-ink3" title={where}>
+                  {where}
+                </span>
+                <span className="shrink-0 whitespace-nowrap text-caption text-ink3">
+                  {relativeTime(m.createdAt, locale)}
+                </span>
+              </div>
+              <p className="selectable line-clamp-4 whitespace-pre-wrap wrap-anywhere">{m.body}</p>
+              {m.files.length ? (
+                <p className="truncate font-mono text-caption text-ink2" title={m.files.join(", ")}>
+                  {m.files.join(", ")}
+                </p>
+              ) : null}
+              {m.direction === "in" && m.state === "unanswered" ? (
+                <p className="flex items-center gap-1.5 text-caption text-amber">
+                  <StatusDot state="awaiting_approval" />
+                  {t("agent.unanswered")}
+                </p>
+              ) : null}
+            </div>
           </div>
-          <p className="line-clamp-3 whitespace-pre-wrap wrap-anywhere">{m.body}</p>
-          {m.files.length ? (
-            <p className="truncate font-mono text-small text-text-secondary" title={m.files.join(", ")}>
-              {m.files.join(", ")}
-            </p>
-          ) : null}
-          {m.direction === "in" && m.state === "unanswered" ? (
-            <p className="flex items-center gap-2 text-small text-text-secondary">
-              <StatusDot state="error" />
-              {t("agent.unanswered")}
-            </p>
-          ) : null}
-        </li>
-      ))}
-    </ul>
+        );
+      })}
+    </Group>
   );
 }

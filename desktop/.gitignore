@@ -4,3 +4,7 @@ resources/darwin-*/
 .cache/
 build/
 .mygo/
+build-e2e/
+.e2e-home/
+.e2e-app.pid
+.e2e-app.log

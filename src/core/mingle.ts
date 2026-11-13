@@ -127,6 +127,45 @@ export class Mingle {
     return this.options.harness.available();
   }
 
+  /**
+   * Asking a harness for its models starts it, which takes seconds; the console asks often.
+   * Keep a good answer for five minutes. Failures and sign-in prompts are not kept.
+   */
+  async harnessModels(id: string) {
+    if (!this.options.harness.models) return { kind: "unsupported" as const };
+    const cached = this.modelCache.get(id);
+    if (cached && cached.until > Date.now()) return cached.list;
+    const list = await this.options.harness.models(id);
+    if (list.kind === "ok") this.modelCache.set(id, { list, until: Date.now() + 5 * 60_000 });
+    return list;
+  }
+
+  private readonly modelCache = new Map<
+    string,
+    { list: Awaited<ReturnType<NonNullable<Harness["models"]>>>; until: number }
+  >();
+
+  /**
+   * Rename the agent or give it another brain. A new harness cannot resume the old one's
+   * session, so it starts fresh (MEMORY.md carries what matters); a new model keeps it.
+   */
+  async updateAgent(idOrSlug: string, patch: { name?: string; harness?: string; model?: string | null }) {
+    const agent = this.agent(idOrSlug);
+    const name = patch.name?.trim();
+    if (patch.name !== undefined && !name) throw new MingleError("name_required", "give the agent a name");
+    const harnessChanged = patch.harness !== undefined && patch.harness !== agent.harness;
+    this.store.updateAgent(agent.id, {
+      ...(name ? { name } : {}),
+      ...(patch.harness !== undefined ? { harness: patch.harness } : {}),
+      ...(patch.model !== undefined ? { model: patch.model || null } : {}),
+    });
+    if (harnessChanged) this.store.setSessionId(agent.id, null);
+    const brainChanged = harnessChanged || (patch.model !== undefined && (patch.model || null) !== agent.model);
+    // The name is in the appended system prompt too, so either change reopens the session.
+    if (brainChanged || (name && name !== agent.name)) await this.runtimes.get(agent.id)?.restart();
+    return this.agent(agent.id);
+  }
+
   createAgent(input: { name: string; role: string; harness: string; model?: string | null }): Agent {
     const name = input.name.trim();
     if (!name) throw new MingleError("name_required", "give the agent a name");

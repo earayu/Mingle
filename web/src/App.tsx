@@ -1,23 +1,52 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AgentPage } from "./AgentPage.tsx";
 import { type AgentView, ApiError, api, captureToken } from "./api.ts";
-import { CreateAgent } from "./CreateAgent.tsx";
+import { ConnectPage } from "./Connect.tsx";
 import { detectLocale, I18n, type Locale, translator, useI18n } from "./i18n.ts";
-import { AgentStatusLine, Avatar, Button, Code, Muted, Select, StatusDot } from "./ui.tsx";
+import iconUrl from "./icon.svg";
+import { NewAgent } from "./NewAgent.tsx";
+import { applyTheme, SettingsPage, savedTheme } from "./Settings.tsx";
+import { Avatar, Button, Eyebrow, PlusIcon, SettingsIcon, StatusDot } from "./ui.tsx";
+import { Welcome } from "./Welcome.tsx";
 
-type View = { kind: "agent"; slug: string } | { kind: "new" } | { kind: "home" };
-type Theme = "system" | "light" | "dark";
+export type View =
+  | { kind: "home" }
+  | { kind: "new" }
+  | { kind: "settings" }
+  | { kind: "agent"; slug: string }
+  | { kind: "connect"; slug: string; platform?: string };
 
 function viewFromPath(): View {
   const path = location.pathname;
   if (path === "/new") return { kind: "new" };
-  const match = /^\/a\/([^/]+)/.exec(path);
-  return match?.[1] ? { kind: "agent", slug: decodeURIComponent(match[1]) } : { kind: "home" };
+  if (path === "/settings") return { kind: "settings" };
+  const connect = /^\/a\/([^/]+)\/connect(?:\/([^/]+))?/.exec(path);
+  if (connect?.[1]) {
+    const slug = decodeURIComponent(connect[1]);
+    return connect[2] ? { kind: "connect", slug, platform: connect[2] } : { kind: "connect", slug };
+  }
+  const agent = /^\/a\/([^/]+)/.exec(path);
+  return agent?.[1] ? { kind: "agent", slug: decodeURIComponent(agent[1]) } : { kind: "home" };
 }
 
 function pathFor(view: View): string {
-  return view.kind === "agent" ? `/a/${encodeURIComponent(view.slug)}` : view.kind === "new" ? "/new" : "/";
+  switch (view.kind) {
+    case "agent":
+      return `/a/${encodeURIComponent(view.slug)}`;
+    case "connect":
+      return `/a/${encodeURIComponent(view.slug)}/connect${view.platform ? `/${view.platform}` : ""}`;
+    case "new":
+      return "/new";
+    case "settings":
+      return "/settings";
+    default:
+      return "/";
+  }
 }
+
+// The desktop app's window injects `window.mygo`; there the sidebar shows the window's material.
+if ("mygo" in window) document.documentElement.dataset.shell = "desktop";
+applyTheme(savedTheme());
 
 export function App() {
   const [locale, setLocaleState] = useState<Locale>(detectLocale);
@@ -40,25 +69,22 @@ export function App() {
   );
 }
 
+export type Navigate = (view: View, options?: { replace?: boolean }) => void;
+
 function Shell() {
   const { t } = useI18n();
   const [token, setToken] = useState(captureToken);
   const [agents, setAgents] = useState<AgentView[] | null>(null);
+  const [version, setVersion] = useState("");
   const [problem, setProblem] = useState<"offline" | "unauthorized" | null>(token ? null : "unauthorized");
   const [view, setView] = useState<View>(viewFromPath);
-  // ?menu=1 opens the drawer on load (narrow windows); used by scripts/ui-review.mjs.
   const [menuOpen, setMenuOpen] = useState(() => new URLSearchParams(location.search).get("menu") === "1");
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
-    addEventListener("keydown", onKey);
-    return () => removeEventListener("keydown", onKey);
-  }, [menuOpen]);
-
-  const navigate = useCallback((next: View) => {
-    history.pushState(null, "", pathFor(next));
+  const navigate: Navigate = useCallback((next, options) => {
+    if (options?.replace) history.replaceState(null, "", pathFor(next));
+    else history.pushState(null, "", pathFor(next));
     setView(next);
+    setMenuOpen(false);
   }, []);
 
   useEffect(() => {
@@ -82,6 +108,7 @@ function Shell() {
     try {
       const status = await api.status();
       setAgents(status.agents);
+      setVersion(status.version);
       setProblem(null);
     } catch (e) {
       setProblem(e instanceof ApiError && e.status === 401 ? "unauthorized" : "offline");
@@ -97,76 +124,67 @@ function Shell() {
 
   if (problem === "unauthorized") return <Unauthorized />;
 
-  const current = view.kind === "agent" ? agents?.find((a) => a.slug === view.slug) : undefined;
-  const showCreate = view.kind === "new" || (agents?.length === 0 && view.kind !== "home");
+  const slug = view.kind === "agent" || view.kind === "connect" ? view.slug : undefined;
+  const current = slug ? agents?.find((a) => a.slug === slug) : undefined;
+
+  let page: React.ReactNode = null;
+  if (agents !== null) {
+    if (view.kind === "settings") page = <SettingsPage version={version} />;
+    else if (view.kind === "new")
+      page = <NewAgent first={agents.length === 0} onNavigate={navigate} onCreated={refresh} />;
+    else if (view.kind === "connect" && current)
+      page = <ConnectPage agent={current} platform={view.platform} onNavigate={navigate} onChanged={refresh} />;
+    else if (current) page = <AgentPage agent={current} onNavigate={navigate} onChanged={refresh} />;
+    else if (agents.length === 0) page = <Welcome onStart={() => navigate({ kind: "new" })} />;
+    else {
+      // Nothing chosen, or a link to an agent that is gone: show the first one.
+      const first = agents[0] as AgentView;
+      queueMicrotask(() => navigate({ kind: "agent", slug: first.slug }, { replace: true }));
+    }
+  }
+
+  // The first run is one focused flow: no sidebar until the first agent exists.
+  const bare = agents !== null && agents.length === 0 && view.kind !== "settings";
 
   return (
     <div className="flex h-full">
-      <aside className="panel hidden w-[220px] shrink-0 border-r border-border bg-surface md:flex">
-        <Sidebar agents={agents} currentId={current?.id} onNavigate={navigate} />
-      </aside>
+      {bare ? null : (
+        <aside className="sidebar hidden w-[220px] shrink-0 border-r border-line bg-wing md:flex">
+          <Sidebar agents={agents ?? []} view={view} currentId={current?.id} onNavigate={navigate} />
+        </aside>
+      )}
 
-      {menuOpen ? (
-        <div className="fixed inset-0 z-20 flex md:hidden">
-          <div className="panel flex w-[280px] max-w-[85%] bg-surface">
-            <Sidebar
-              agents={agents}
-              currentId={current?.id}
-              onNavigate={(next) => {
-                setMenuOpen(false);
-                navigate(next);
-              }}
-            />
+      {menuOpen && !bare ? (
+        <div className="fixed inset-0 z-40 flex md:hidden">
+          <div className="flex w-[260px] max-w-[85%] bg-wing shadow-card">
+            <Sidebar agents={agents ?? []} view={view} currentId={current?.id} onNavigate={navigate} />
           </div>
           <button
             type="button"
             aria-label={t("nav.close")}
-            className="flex-1 bg-text/20"
+            className="flex-1 bg-black/25"
             onClick={() => setMenuOpen(false)}
           />
         </div>
       ) : null}
 
-      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4 md:hidden">
-          <button
-            type="button"
-            aria-label={t("nav.menu")}
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen(true)}
-            className="-ml-2 flex size-8 items-center justify-center rounded-sm hover:bg-surface"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </button>
-          <span className="truncate text-heading font-semibold">{current?.name ?? t("app.title")}</span>
-        </header>
-        <div className="w-full max-w-[640px] px-5 py-8 md:px-10 md:py-10">
-          {problem === "offline" ? <p className="mb-6 text-small text-error">{t("error.offline")}</p> : null}
-          {agents === null ? null : showCreate ? (
-            <CreateAgent
-              onCreated={(agent) => {
-                refresh();
-                navigate({ kind: "agent", slug: agent.slug });
-              }}
-              {...(agents.length > 0 ? { onCancel: () => history.back() } : {})}
-            />
-          ) : current ? (
-            <AgentPage
-              agent={current}
-              onChanged={refresh}
-              onDeleted={() => {
-                refresh();
-                navigate({ kind: "home" });
-              }}
-            />
-          ) : agents.length === 0 ? (
-            <Empty onCreate={() => navigate({ kind: "new" })} />
-          ) : (
-            <Pick agents={agents} onPick={(slug) => navigate({ kind: "agent", slug })} />
-          )}
-        </div>
+      <main className="flex min-w-0 flex-1 flex-col bg-bg">
+        {bare ? null : (
+          <div className="drag flex h-11 shrink-0 items-center gap-2 border-b border-line px-3 md:hidden">
+            <Button variant="ghost" small aria-label={t("nav.menu")} onClick={() => setMenuOpen(true)}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </Button>
+            <span className="truncate font-semibold">{current?.name ?? t("app.title")}</span>
+          </div>
+        )}
+        {problem === "offline" ? (
+          <div role="alert" className="shrink-0 border-b border-amber-line bg-amber-tint px-6 py-2 text-small">
+            {t("error.offline")}
+          </div>
+        ) : null}
+        <div className="flex min-h-0 flex-1 flex-col">{page}</div>
       </main>
     </div>
   );
@@ -174,98 +192,75 @@ function Shell() {
 
 function Sidebar({
   agents,
+  view,
   currentId,
   onNavigate,
 }: {
-  agents: AgentView[] | null;
+  agents: AgentView[];
+  view: View;
   currentId: string | undefined;
-  onNavigate: (view: View) => void;
+  onNavigate: Navigate;
 }) {
   const { t } = useI18n();
+  const row =
+    "flex w-full items-center gap-2.5 rounded-control px-2.5 text-left transition-colors duration-[120ms] hover:bg-black/5 dark:hover:bg-white/5 aria-[current=page]:bg-sel";
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
-      <div className="flex h-14 shrink-0 items-center px-4 text-heading font-semibold">{t("app.title")}</div>
-      <nav className="flex flex-1 flex-col overflow-y-auto">
-        {(agents ?? []).map((a) => (
-          <button
-            key={a.id}
-            type="button"
-            title={`${a.name} · ${t(`status.${a.status}`)}`}
-            onClick={() => onNavigate({ kind: "agent", slug: a.slug })}
-            aria-current={currentId === a.id ? "page" : undefined}
-            className="flex h-11 shrink-0 items-center gap-3 px-4 text-left hover:bg-bg aria-[current=page]:bg-bg"
-          >
-            <Avatar name={a.name} size={24} />
-            <span className="min-w-0 flex-1 truncate">{a.name}</span>
-            <StatusDot state={a.status} />
-            <span className="sr-only">{t(`status.${a.status}`)}</span>
-          </button>
-        ))}
-        {agents?.length === 0 ? <p className="px-4 py-3 text-small text-text-tertiary">{t("agents.empty")}</p> : null}
-      </nav>
-      <div className="flex shrink-0 flex-col gap-2 border-t border-border p-4">
-        <Button onClick={() => onNavigate({ kind: "new" })}>{t("agents.new")}</Button>
-        <Settings />
+    <div className="flex min-w-0 flex-1 flex-col px-2 pb-3">
+      {/* The brand row: in the desktop app it sits right of the traffic lights and moves the window. */}
+      <div className="drag flex h-[52px] shrink-0 items-center gap-2 pr-1.5 pl-[max(10px,calc(var(--mygo-titlebar-inset-left,0px)+2px))]">
+        <img src={iconUrl} alt="" className="size-5 rounded-[5px] dark:ring-1 dark:ring-white/20" />
+        <span className="font-semibold">{t("app.title")}</span>
       </div>
-    </div>
-  );
-}
-
-function Empty({ onCreate }: { onCreate: () => void }) {
-  const { t } = useI18n();
-  return (
-    <div className="flex flex-col items-start gap-4 pt-20">
-      <h1 className="text-title font-semibold">{t("empty.title")}</h1>
-      <Muted>{t("empty.body")}</Muted>
-      <Button variant="primary" onClick={onCreate}>
-        {t("empty.action")}
-      </Button>
-    </div>
-  );
-}
-
-/** With agents but none selected (or on a narrow window), list them in the content area. */
-function Pick({ agents, onPick }: { agents: AgentView[]; onPick: (slug: string) => void }) {
-  return (
-    <ul className="flex flex-col">
-      {agents.map((a) => (
-        <li key={a.id}>
-          <button
-            type="button"
-            onClick={() => onPick(a.slug)}
-            className="flex h-14 w-full items-center gap-3 border-b border-border text-left hover:bg-surface"
-          >
-            <Avatar name={a.name} />
-            <span className="flex-1 truncate">{a.name}</span>
-            <AgentStatusLine status={a.status} />
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function Settings() {
-  const { t, locale, setLocale } = useI18n();
-  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("mingle.theme") as Theme) || "system");
-
-  useEffect(() => {
-    if (theme === "system") delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = theme;
-    localStorage.setItem("mingle.theme", theme);
-  }, [theme]);
-
-  return (
-    <div className="flex flex-col gap-2">
-      <Select aria-label={t("settings.language")} value={locale} onChange={(e) => setLocale(e.target.value as Locale)}>
-        <option value="en">English</option>
-        <option value="zh-CN">简体中文</option>
-      </Select>
-      <Select aria-label={t("settings.appearance")} value={theme} onChange={(e) => setTheme(e.target.value as Theme)}>
-        <option value="system">{t("settings.system")}</option>
-        <option value="light">{t("settings.light")}</option>
-        <option value="dark">{t("settings.dark")}</option>
-      </Select>
+      <Eyebrow>{t("sidebar.agents")}</Eyebrow>
+      <nav className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
+        {agents.map((a) => {
+          const on = currentId === a.id;
+          const apps = a.connections.map((c) => t(`platform.${c.platform}` as never)).join("、");
+          return (
+            <button
+              key={a.id}
+              type="button"
+              title={a.name}
+              onClick={() => onNavigate({ kind: "agent", slug: a.slug })}
+              aria-current={on ? "page" : undefined}
+              className={`${row} min-h-[46px] py-1.5`}
+            >
+              <Avatar name={a.name} size={28} />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate font-medium">{a.name}</span>
+                <span className="flex min-w-0 items-center gap-1.5 text-caption text-ink2">
+                  <StatusDot state={a.status} />
+                  <span className="truncate">
+                    {t(`status.${a.status}`)}
+                    {apps ? ` · ${apps}` : ""}
+                  </span>
+                </span>
+              </span>
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          onClick={() => onNavigate({ kind: "new" })}
+          aria-current={view.kind === "new" ? "page" : undefined}
+          className={`${row} h-8 text-ink2 hover:text-ink`}
+        >
+          <PlusIcon className="mx-1.5" />
+          {t("agents.new")}
+        </button>
+      </nav>
+      <div className="flex-1" />
+      <div className="flex flex-col gap-0.5 border-t border-line pt-2">
+        <button
+          type="button"
+          onClick={() => onNavigate({ kind: "settings" })}
+          aria-current={view.kind === "settings" ? "page" : undefined}
+          className={`${row} h-8 text-ink2 hover:text-ink aria-[current=page]:text-ink`}
+        >
+          <SettingsIcon className="mx-1.5" />
+          {t("settings.title")}
+        </button>
+      </div>
     </div>
   );
 }
@@ -273,13 +268,12 @@ function Settings() {
 function Unauthorized() {
   const { t } = useI18n();
   return (
-    <main className="flex h-full items-start justify-center">
-      <div className="flex max-w-[480px] flex-col gap-3 pt-32">
-        <h1 className="text-title font-semibold">{t("auth.title")}</h1>
-        <Muted>{t("auth.body")}</Muted>
-        <div className="rounded-sm bg-surface px-3 py-2">
-          <Code>mingle open</Code>
-        </div>
+    <main className="drag flex h-full items-start justify-center bg-bg px-6">
+      <div className="flex max-w-[440px] flex-col gap-3 pt-32">
+        <img src={iconUrl} alt="" className="mb-2 size-12 rounded-[12px]" />
+        <h1 className="text-title2 font-semibold">{t("auth.title")}</h1>
+        <p className="text-ink2">{t("auth.body")}</p>
+        <code className="self-start rounded-control bg-bg3 px-3 py-1.5 font-mono text-small">mingle open</code>
       </div>
     </main>
   );

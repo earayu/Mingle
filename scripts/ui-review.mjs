@@ -176,11 +176,13 @@ try {
     ["new", "/new"],
     ["home", "/"],
     ["menu", `/a/${alex.slug}?menu=1`],
+    ["settings", "/settings"],
     // The QR step is not here: it needs a live call to the platform, which headless Chrome's
-    // virtual clock outruns. Check it in a real browser against a running Mingle instead.
-    ["connect", `/a/${long.slug}?connect=none`],
-    ["connect-slack", `/a/${long.slug}?connect=slack`],
-    ["connect-discord", `/a/${long.slug}?connect=discord`],
+    // virtual clock outruns. Check it in the desktop app (desktop/README.md) instead.
+    ["connect", `/a/${long.slug}/connect`],
+    ["connect-slack", `/a/${long.slug}/connect/slack`],
+    ["connect-discord", `/a/${long.slug}/connect/discord`],
+    ["connect-telegram", `/a/${alex.slug}/connect/telegram`],
   ];
   const jobs = [];
   for (const locale of LOCALES) {

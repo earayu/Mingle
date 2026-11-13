@@ -278,6 +278,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   app.get("/v1/admin/status", (c) => c.json({ version: VERSION, agents: store.agents().map(agentView) }));
   app.get("/v1/admin/harnesses", async (c) => c.json(await mingle.availableHarnesses()));
+  app.get("/v1/admin/harnesses/:id/models", async (c) => c.json(await mingle.harnessModels(c.req.param("id"))));
 
   /** Every first-batch platform, with how to connect it, or null when it is not built yet. */
   app.get("/v1/admin/platforms", (c) => {
@@ -351,6 +352,17 @@ export function createApi(mingle: Mingle): Hono<Env> {
   });
 
   app.get("/v1/admin/agents/:id", (c) => c.json(agentView(mingle.agent(c.req.param("id")))));
+
+  app.patch("/v1/admin/agents/:id", async (c) => {
+    const body = await c.req.json<{ name?: string; harness?: string; model?: string | null }>();
+    if (body.harness !== undefined) {
+      const harnesses = await mingle.availableHarnesses();
+      if (!harnesses.some((h) => h.id === body.harness)) {
+        throw new MingleError("harness_unavailable", `${body.harness} is not installed here`);
+      }
+    }
+    return c.json(agentView(await mingle.updateAgent(c.req.param("id"), body)));
+  });
 
   app.put("/v1/admin/agents/:id/role", async (c) => {
     const { role } = await c.req.json<{ role: string }>();

@@ -1,151 +1,130 @@
 ---
 name: Mingle
+reference: "Pinky (https://github.com/DIYgod/pinky): its palette, type ramp, spacing and step-by-step guides"
 colors:
   light:
-    bg: "#FFFFFF"
-    surface: "#F7F7F5"
-    border: "#E8E8E4"
-    text: "#1A1A1A"
-    text-secondary: "#6B6B66"
-    text-tertiary: "#A3A39E"
-    accent: "#1A1A1A"
-    on-accent: "#FFFFFF"
-    ok: "#2E9E5B"
-    wait: "#C98A14"
-    error: "#D4483B"
+    bg: "#FFFFFF"        # the page
+    bg2: "#F7F7F8"       # a quiet row, an answer in the activity list
+    bg3: "#EFEFF2"       # hover, the segmented control's track
+    sel: "#E7E7ED"       # the selected sidebar row
+    line: "#EBEBEF"      # dividers, card borders
+    line2: "#D9D9E0"     # control borders
+    ink: "#1D1D22"
+    ink2: "#5B5B64"
+    ink3: "#8A8A93"
+    accent: "#5450D6"    # the one brand color: primary buttons, the current step, focus
+    accent-tint: "#F1F0FD"
+    amber: "#975800"     # waits for someone, with amber-dot / amber-tint / amber-line
+    red: "#C32C18"       # broke, with red-tint / red-line
+    green: "#2F9E5A"     # works, done
+    wing: "#F5F5F7"      # the sidebar and the right panel
+    card: "#FFFFFF"
   dark:
-    bg: "#161616"
-    surface: "#1F1F1E"
-    border: "#2E2E2C"
-    text: "#EDEDEA"
-    text-secondary: "#9C9C96"
-    text-tertiary: "#62625E"
-    accent: "#EDEDEA"
-    on-accent: "#161616"
-    ok: "#4CB878"
-    wait: "#D9A441"
-    error: "#E5695D"
+    bg: "#1C1C1F"
+    bg2: "#212125"
+    bg3: "#2B2B30"
+    sel: "#323238"
+    line: "#2E2E34"
+    line2: "#404047"
+    ink: "#EDEDF2"
+    ink2: "#B3B3BC"
+    ink3: "#85858F"
+    accent: "#9895FF"    # buttons use #5B57E0 behind white text
+    accent-tint: "#262549"
+    amber: "#F7A74E"
+    red: "#F87A60"
+    green: "#4CC38A"
+    wing: "#212125"
+    card: "#29292E"
 typography:
   family-sans: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', sans-serif"
   family-mono: "ui-monospace, 'SF Mono', Menlo, monospace"
-  title: { size: 20px, weight: 600, line: 28px }
-  heading: { size: 15px, weight: 600, line: 22px }
-  body: { size: 14px, weight: 400, line: 22px }
-  small: { size: 12px, weight: 400, line: 18px }
-spacing: { unit: 4px, xs: 4px, sm: 8px, md: 16px, lg: 24px, xl: 40px }
-rounded: { sm: 6px, md: 10px, full: 9999px }
+  caption: 12/16
+  small: 13/18
+  body: 14/20
+  headline: 15/21 semibold
+  title3: 17/24 semibold     # a page header
+  title2: 20/28 semibold     # a page's own title
+  title1: 26/34 bold         # welcome only
+spacing: "a 4 pt grid: 4, 8, 12, 16, 20, 24, 32"
+rounded: { small: 6px, control: 8px, card: 12px, sheet: 16px }
 motion: { fast: 120ms, base: 180ms, easing: "cubic-bezier(0.2, 0, 0, 1)" }
 ---
 
 # Mingle 界面设计规范
 
-控制台的视觉和交互以本文为准。产品和架构见 [`docs/spec.md`](docs/spec.md)。
+控制台的视觉和交互以本文为准，浏览器和桌面应用用同一套。产品和架构见 [`docs/spec.md`](docs/spec.md)。颜色、字号、间距、圆角都取自文件头，组件里不写色值（`web/src/styles.css` 是它的实现）。
+
+参照 [Pinky](https://github.com/DIYgod/pinky)：简洁，但每一步都告诉人现在该做什么、Mingle 在等什么、卡在哪里。
 
 ## 原则
 
-极简。参照 [MiaoYan](https://github.com/tw93/MiaoYan)：留白多，层级少，没有装饰。
-
-1. **内容就是界面。** 一屏只做一件事。能不加的元素不加。
-2. **黑白为主，颜色只表示状态。** 绿是在线，黄是等待，红是出错。除此之外没有彩色。
-3. **用留白和字重分层，不用线框和阴影。**
-4. **安静。** 没有弹窗打断，没有庆祝动画，没有引导气泡。状态变化就地更新。
-5. **像系统自带的应用。** 系统字体，系统的明暗模式，系统的语言。
+1. **一步一步带着走。** 第一次打开、新建 Agent、连接聊天软件、等它回复第一条消息，都是带编号的步骤：做完的打勾，当前这一步展开说明，后面的灰着。用户永远知道下一步是什么。
+2. **能选的不让填。** harness 只列本机装了的；模型从 harness 实时读出来让人选；平台的 App ID、权限、名称能预填就预填。只有平台给的 token 需要粘贴。
+3. **需要人的事放一处。** 出错的连接、等管理员审核、没回复的消息，都在"需要你处理"里，每条写清楚怎么办。
+4. **像 Mac 应用。** 系统字体；侧栏是窗口的毛玻璃，红绿灯和品牌在同一行；设置是圆角分组的行；跟随系统明暗和语言。
+5. **安静。** 没有弹窗、庆祝动画、引导气泡。状态就地变化。
 
 ## 颜色
 
-所有颜色取自文件头的 token，组件里不出现色值。
-
-- `bg` 是页面底色，`surface` 用于侧栏、输入框和悬停。只有这两层。
-- `text` 用于正文和标题，`text-secondary` 用于说明，`text-tertiary` 用于占位和禁用。
-- `accent` 就是文字色。主按钮是黑底白字（暗色下反转）。没有品牌色。
-- `ok` / `wait` / `error` 只用于状态圆点和对应的一行状态文字，不做大面积底色。
-- 明暗跟随系统，可在设置里固定。
-
-## 字体
-
-- 系统字体，不加载网络字体。
-- 四个字号：`title` 20、`heading` 15、`body` 14、`small` 12。不再增加。
-- 字重只有 400 和 600。
-- ID、命令、路径用等宽字体。
-- 中英文混排时在二者之间留一个空格。
+- 一个品牌色 `accent`（靛蓝），只用于主按钮、当前步骤、选中、焦点和文字链接。
+- 状态色：`green` 正常/完成，`amber` 在等人，`red` 坏了。提示框用对应的 tint 底和 line 边。
+- 聊天软件和 harness 用它们自己的标识和品牌色，让人一眼认出（标识来自 Simple Icons 和 OAR；没有标识的用首字）。除此之外不加彩色。
 
 ## 布局
 
-- 间距取 4 的倍数：4、8、16、24、40。
-- 两栏。左侧栏 220px，列出所有 Agent；右侧是当前 Agent。窗口窄于 720px 时侧栏收起。
-- 右侧内容单列，最大宽度 640px，左对齐，不居中成卡片。
-- 圆角 6px（输入框、按钮）和 10px（二维码容器、头像）。
-- 分隔线 1px `border`，只在侧栏与内容之间、列表行之间使用。
-- 没有阴影，没有渐变，没有卡片嵌套。
+- 三栏：左侧栏 220（Agent 列表、新建、设置），中间内容，右侧 320 的面板（需要你处理、聊天软件、任务、提醒）。窗口窄于 1140 时右侧面板并入中间，窄于 768 时侧栏收进抽屉。
+- 页头 52 高，与侧栏的品牌行对齐，可以拖动窗口。左边是名字和状态，右边是"动态 / 设置"切换和"…"菜单。
+- 内容单列，最大宽 680，左对齐。卡片 12 圆角、1px `line` 边。
+- 第一次打开（还没有 Agent）时不显示侧栏，只有欢迎页和新建流程。
 
 ## 组件
 
-**按钮**：高 32px，圆角 6px。主按钮 `accent` 底；次按钮无底色、`border` 描边；文字按钮无描边。一屏最多一个主按钮。
-
-**输入框**：高 32px，`surface` 底，无描边，聚焦时 1px `text` 描边。标签在上方，`small`、`text-secondary`。
-
-**状态圆点**：8px 实心圆，后跟一行状态文字。工作中的圆点缓慢呼吸，其余静止。
-
-**列表行**：高 44px，悬停 `surface`。侧栏的 Agent 行是头像、名字、状态圆点。
-
-**头像**：32px，圆角 10px。未上传时用名字首字，`surface` 底。
-
-**二维码**：200px，白底，四周留白 24px，下方一行说明和剩余有效时间。过期后原地显示"刷新"。
-
-**图标**：线性，1.5px 描边，16px。IM 平台用各自的单色标识，不用彩色 logo。
-
-**空状态**：一行说明加一个按钮，没有插画。
+- **按钮**：34 高（小号 28），8 圆角，中等字重。主按钮 `accent` 底白字，一屏最多一个；默认按钮白底 `line2` 边；危险按钮红字红边；幽灵按钮无边。
+- **输入框**：34 高，`line2` 边，聚焦时 `accent` 边加浅色光圈。标签在上，`small`。
+- **步骤**：24 圆圈。完成是绿底白勾，当前是 `accent` 描边数字，之后是灰边灰字。
+- **分组**：设置类内容用圆角分组的行，左边说明，右边控件。
+- **分段控件**：外观、语言、动态/设置这类二选一或三选一。
+- **提示框**：图标 + 一句标题 + 一句怎么办，amber 或 red。
+- **等待**：转圈 + 一句在等什么（"等待扫码，二维码 60 分钟内有效"）。
 
 ## 页面
 
-**首次打开**：侧栏为空，右侧一句话加"创建 Agent"按钮。
-
-**创建 Agent**：一个单列表单，四项：名字、角色（多行）、大脑（harness 和模型，只列出本机可用的）、加入的 IM（可稍后再加）。底部一个主按钮。创建后直接进入该 Agent 的页面。
-
-**Agent 页面**：从上到下：
-
-1. 头像、名字、状态。
-2. 角色，点击即可编辑，对应 `ROLE.md`。
-3. IM：每个连接一行，显示平台、机器人名、连接状态。末尾"添加"。
-4. 最近活动：最近的消息和动作，按时间倒序，只读。未回复的消息在这里标出。
-5. 任务和提醒：有内容时才显示。
-6. 末尾：打开主目录、暂停、删除。
-
-**接入 IM**：在 Agent 页面内展开，不跳转。扫码类显示二维码和三步说明；凭据类显示输入框和一个指向平台后台的链接。状态就地推进：等待扫码 → 已扫码 → 等待管理员审核 → 已连接。等待审核时写明在等谁，并说明可以关闭页面，通过后会自动连上。
-
-**设置**：语言、外观、开机启动、数据目录、版本。
+- **欢迎**：图标、一句话、三个步骤（创建、连接、说话），一个"开始"按钮，一行隐私说明。
+- **新建 Agent**：三步：起名字；写角色（可选，四个模板：私人助理、群聊帮手、编程搭档、翻译）；选大脑（本机 harness 卡片，带官方图标和版本；模型下拉，默认跟随 harness）。创建后直接进入"连接聊天软件"。
+- **连接聊天软件**：先选平台（图标、名称、"用手机扫码"或"粘贴机器人 token"）。扫码类：二维码、"在这台电脑上打开"（平台支持时）、扫码后确认、等管理员审核，逐步推进。token 类：平台自己的几步说明，第一步带"打开开发者后台"按钮，最后一步是粘贴框。
+- **Agent · 动态**：还没回复过消息时先显示"上手"四步卡片（已创建、连接、打招呼、收到回复），实时推进；然后是最近活动。右侧面板见布局。
+- **Agent · 设置**：聊天软件、角色、大脑（harness 和模型都可改，下一条消息起生效）、文件夹和删除。
+- **设置**：外观、语言、版本、隐私说明。
 
 ## 动效
 
-- 只有两种：淡入淡出和高度展开，120–180ms。
-- 状态变化不闪烁、不弹跳。
+- 淡入、轻微上移、展开，120–180ms。只用位移，不用透明度做入场（WebKit 在窗口不可见时会暂停动画，内容不能卡在不可见）。
 - 尊重系统的"减少动态效果"。
 
 ## 文案
 
-- 短句，陈述事实，不用感叹号，不用"哎呀""太棒了"。
-- 按钮写动作：创建、添加、暂停、删除。
-- 出错时说明发生了什么和下一步，例如"凭据已失效，请重新扫码"。
-- 不向用户暴露 session、token、inputId 这类内部词。
-- 界面里称 Agent，不称机器人、助手或员工。"机器人"只在指 IM 平台上的那个账号时使用。
+- 短句，陈述事实，不用感叹号。
+- 按钮写动作：创建、连接、重试、删除。
+- 出错时说明发生了什么和下一步，例如"凭据已失效。移除这个机器人后重新连接"。
+- 不向用户暴露 session、inputId 这类内部词，也不显示内部错误码。
+- 界面里称 Agent。"机器人"只指 IM 平台上的那个账号。
+- 中文里中英文之间留一个空格（"连接到 Slack"，"连接到飞书"）。
 
 ## 国际化
 
-- 所有文案走消息目录，组件里不写死文字。首批 `en` 和 `zh-CN`。
-- 布局不依赖文案长度：按钮和标签要容得下比中文长一倍的英文。
-- 日期、时间、数字用系统区域格式。
+- 所有文案走 `web/src/i18n.ts`，首批 `en` 和 `zh-CN`。
+- 布局不依赖文案长度。日期、时间用系统区域格式。
 
 ## 无障碍
 
-- 文字与底色对比度不低于 4.5:1。状态除颜色外必有文字。
-- 所有操作可用键盘完成，焦点可见。
+- 对比度不低于 4.5:1；状态除颜色外必有文字。
+- 所有操作可用键盘完成，焦点可见（`accent` 2px）。
 - 可点击区域不小于 28px。
 
 ## 不要
 
-- 不要彩色按钮、彩色标签、彩色图标。
-- 不要阴影、渐变、毛玻璃。
 - 不要模态弹窗；删除这类确认在原地展开。
 - 不要仪表盘、图表、统计数字。
-- 不要新手引导、提示气泡、徽章红点。
 - 不要在控制台里做聊天界面。对话发生在 IM 里。
+- 不要让用户填能自动得到的东西。

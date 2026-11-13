@@ -136,7 +136,11 @@ export function telegramChannel(options: TelegramOptions = {}): Channel {
 
   return {
     platform: "telegram",
-    onboarding: { kind: "credentials", fields: [{ key: "token", labelKey: "telegram.token", secret: true }] },
+    onboarding: {
+      kind: "credentials",
+      setupUrl: "https://t.me/BotFather",
+      fields: [{ key: "token", labelKey: "telegram.token", secret: true }],
+    },
 
     async *onboard(input: Credentials | undefined): AsyncIterable<OnboardingEvent> {
       const token = input?.token?.trim();

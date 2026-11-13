@@ -1,74 +1,151 @@
 @import "tailwindcss";
 
+/* dark: follows the system unless Settings fixes the appearance. */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+  &:where(:root[data-theme="dark"] *) {
+    @slot;
+  }
+}
+
 /* Tokens from DESIGN.md. Components use these names only, never raw colors. */
 :root {
+  color-scheme: light;
   --bg: #ffffff;
-  --surface: #f7f7f5;
-  --border: #e8e8e4;
-  --text: #1a1a1a;
-  --text-secondary: #6b6b66;
-  --text-tertiary: #a3a39e;
-  --accent: #1a1a1a;
-  --on-accent: #ffffff;
-  --ok: #2e9e5b;
-  --wait: #c98a14;
-  --error: #d4483b;
+  --bg2: #f7f7f8;
+  --bg3: #efeff2;
+  --sel: #e7e7ed;
+  --line: #ebebef;
+  --line2: #d9d9e0;
+  --ink: #1d1d22;
+  --ink2: #5b5b64;
+  --ink3: #8a8a93;
+  --accent: #5450d6;
+  --accent-btn: #5450d6;
+  --accent-tint: #f1f0fd;
+  --amber: #975800;
+  --amber-dot: #df8601;
+  --amber-tint: #fff7ed;
+  --amber-line: #f4dcbc;
+  --red: #c32c18;
+  --red-tint: #fef0ed;
+  --red-line: #f0c6bd;
+  --green: #2f9e5a;
+  --wing: #f5f5f7;
+  --card: #ffffff;
+  --group: #f7f7f9;
+  --shadow: 0 1px 2px rgb(18 18 28 / 0.05), 0 4px 12px rgb(18 18 28 / 0.06);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #161616;
-    --surface: #1f1f1e;
-    --border: #2e2e2c;
-    --text: #ededea;
-    --text-secondary: #9c9c96;
-    --text-tertiary: #62625e;
-    --accent: #ededea;
-    --on-accent: #161616;
-    --ok: #4cb878;
-    --wait: #d9a441;
-    --error: #e5695d;
+    color-scheme: dark;
+    --bg: #1c1c1f;
+    --bg2: #212125;
+    --bg3: #2b2b30;
+    --sel: #323238;
+    --line: #2e2e34;
+    --line2: #404047;
+    --ink: #ededf2;
+    --ink2: #b3b3bc;
+    --ink3: #85858f;
+    --accent: #9895ff;
+    --accent-btn: #5b57e0;
+    --accent-tint: #262549;
+    --amber: #f7a74e;
+    --amber-dot: #f7a74e;
+    --amber-tint: #322a23;
+    --amber-line: #5a4530;
+    --red: #f87a60;
+    --red-tint: #3a1e19;
+    --red-line: #723b31;
+    --green: #4cc38a;
+    --wing: #212125;
+    --card: #29292e;
+    --group: #232327;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #161616;
-  --surface: #1f1f1e;
-  --border: #2e2e2c;
-  --text: #ededea;
-  --text-secondary: #9c9c96;
-  --text-tertiary: #62625e;
-  --accent: #ededea;
-  --on-accent: #161616;
-  --ok: #4cb878;
-  --wait: #d9a441;
-  --error: #e5695d;
+  color-scheme: dark;
+  --bg: #1c1c1f;
+  --bg2: #212125;
+  --bg3: #2b2b30;
+  --sel: #323238;
+  --line: #2e2e34;
+  --line2: #404047;
+  --ink: #ededf2;
+  --ink2: #b3b3bc;
+  --ink3: #85858f;
+  --accent: #9895ff;
+  --accent-btn: #5b57e0;
+  --accent-tint: #262549;
+  --amber: #f7a74e;
+  --amber-dot: #f7a74e;
+  --amber-tint: #322a23;
+  --amber-line: #5a4530;
+  --red: #f87a60;
+  --red-tint: #3a1e19;
+  --red-line: #723b31;
+  --green: #4cc38a;
+  --wing: #212125;
+  --card: #29292e;
+  --group: #232327;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
 }
 
 @theme inline {
   --color-bg: var(--bg);
-  --color-surface: var(--surface);
-  --color-border: var(--border);
-  --color-text: var(--text);
-  --color-text-secondary: var(--text-secondary);
-  --color-text-tertiary: var(--text-tertiary);
+  --color-bg2: var(--bg2);
+  --color-bg3: var(--bg3);
+  --color-sel: var(--sel);
+  --color-line: var(--line);
+  --color-line2: var(--line2);
+  --color-ink: var(--ink);
+  --color-ink2: var(--ink2);
+  --color-ink3: var(--ink3);
   --color-accent: var(--accent);
-  --color-on-accent: var(--on-accent);
-  --color-ok: var(--ok);
-  --color-wait: var(--wait);
-  --color-error: var(--error);
+  --color-accent-btn: var(--accent-btn);
+  --color-accent-tint: var(--accent-tint);
+  --color-amber: var(--amber);
+  --color-amber-dot: var(--amber-dot);
+  --color-amber-tint: var(--amber-tint);
+  --color-amber-line: var(--amber-line);
+  --color-red: var(--red);
+  --color-red-tint: var(--red-tint);
+  --color-red-line: var(--red-line);
+  --color-green: var(--green);
+  --color-wing: var(--wing);
+  --color-card: var(--card);
+  --color-group: var(--group);
+  --shadow-card: var(--shadow);
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
-  --text-title: 20px;
-  --text-title--line-height: 28px;
-  --text-heading: 15px;
-  --text-heading--line-height: 22px;
-  --text-body: 14px;
-  --text-body--line-height: 22px;
-  --text-small: 12px;
+  /* The type ramp: every text is one of these. */
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-small: 13px;
   --text-small--line-height: 18px;
-  --radius-sm: 6px;
-  --radius-md: 10px;
+  --text-body: 14px;
+  --text-body--line-height: 20px;
+  --text-headline: 15px;
+  --text-headline--line-height: 21px;
+  --text-title3: 17px;
+  --text-title3--line-height: 24px;
+  --text-title2: 20px;
+  --text-title2--line-height: 28px;
+  --text-title1: 26px;
+  --text-title1--line-height: 34px;
+  /* Radii by the size of the thing rounded. */
+  --radius-small: 6px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-sheet: 16px;
 }
 
 html,
@@ -79,39 +156,65 @@ body,
 
 body {
   background: var(--bg);
-  color: var(--text);
+  color: var(--ink);
   font-family: var(--font-sans);
   font-size: 14px;
-  line-height: 22px;
+  line-height: 20px;
   -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+/* Text people read or copy stays selectable. */
+input,
+textarea,
+.selectable,
+code {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 @layer base {
   :focus-visible {
-    outline: 1px solid var(--text);
-    outline-offset: 2px;
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  button:not(:disabled),
+  a,
+  [role="button"] {
+    cursor: pointer;
   }
 }
 
-/* Controls sitting on a surface (sidebar, inline panels) take the page color so they stay visible.
-   Unlayered on purpose: it must win over the bg-surface utility on the control. */
-.panel :is(input, select, textarea) {
-  background-color: var(--bg);
-}
-
-/* One look for selects in every engine: WebKit (the desktop app's window) draws a beveled
-   native control otherwise. The chevron is two gradients, so it follows the theme. */
+/* One look for selects in every engine; the chevron is two gradients so it follows the theme. */
 select {
   appearance: none;
-  padding-right: 28px;
+  padding-right: 30px;
   background-image:
-    linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%),
-    linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%);
+    linear-gradient(45deg, transparent 50%, var(--ink3) 50%), linear-gradient(135deg, var(--ink3) 50%, transparent 50%);
   background-position:
-    right 14px center,
+    right 15px center,
     right 10px center;
-  background-size: 4px 4px;
+  background-size: 5px 5px;
   background-repeat: no-repeat;
+}
+
+/* In the desktop app the window draws the sidebar's material and the title bar is the page's:
+   the sidebar goes see-through, and the top strip moves the window. */
+:root[data-shell="desktop"] body {
+  background: transparent;
+}
+:root[data-shell="desktop"]:not([data-theme]) .sidebar {
+  background: transparent;
+}
+.drag {
+  --app-region: drag;
+  -webkit-app-region: drag;
+}
+.drag :is(button, a, input, select, textarea) {
+  --app-region: no-drag;
+  -webkit-app-region: no-drag;
 }
 
 @keyframes breathe {
@@ -123,13 +226,34 @@ select {
     opacity: 0.35;
   }
 }
-
 .breathe {
   animation: breathe 1.6s ease-in-out infinite;
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+/* Only movement, never opacity: WebKit pauses animations in a window that is not on screen,
+   and content must never be stuck invisible. */
+@keyframes rise {
+  from {
+    transform: translateY(3px);
+  }
+}
+.rise {
+  animation: rise 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .breathe {
+  .breathe,
+  .spin,
+  .rise {
     animation: none;
   }
   * {
