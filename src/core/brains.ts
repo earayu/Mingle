@@ -72,6 +72,14 @@ export class Brains {
     });
   }
 
+  /** Recover an installation after the console has been closed or navigated away. */
+  activeInstall(harness: string): JobView | undefined {
+    for (const { view } of this.jobs.values()) {
+      if (view.harness === harness && view.kind === "install" && view.state === "running") return view;
+    }
+    return undefined;
+  }
+
   get(id: string): JobView {
     const job = this.jobs.get(id);
     if (!job) throw new MingleError("job_not_found", "start the install or sign-in again", 404);

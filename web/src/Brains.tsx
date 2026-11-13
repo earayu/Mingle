@@ -9,8 +9,8 @@ import { Button, HarnessIcon, Input, LinkButton, Problem, StatusDot, Waiting } f
  */
 
 /** Poll a job until it ends. */
-function useJob(start: (() => Promise<Job>) | null, onEnd: (job: Job) => void) {
-  const [job, setJob] = useState<Job | null>(null);
+function useJob(start: (() => Promise<Job>) | null, onEnd: (job: Job) => void, initialJob?: Job) {
+  const [job, setJob] = useState<Job | null>(initialJob ?? null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new start function starts a new job
   useEffect(() => {
     if (!start) return;
@@ -42,11 +42,17 @@ function useJob(start: (() => Promise<Job>) | null, onEnd: (job: Job) => void) {
 }
 
 /** Install a harness: show what will run, then run it on the person's say-so. */
-export function InstallBrain({ brain, onDone }: { brain: BrainStatus; onDone: () => void }) {
+export function InstallBrain({
+  brain,
+  job,
+  onInstall,
+}: {
+  brain: BrainStatus;
+  job: Job | null;
+  onInstall: () => void;
+}) {
   const { t } = useI18n();
   const [plan, setPlan] = useState<InstallPlan | null>(null);
-  const [start, setStart] = useState<(() => Promise<Job>) | null>(null);
-  const job = useJob(start, (j) => j.state === "done" && onDone());
   useEffect(() => {
     api
       .installPlan(brain.id)
@@ -54,10 +60,10 @@ export function InstallBrain({ brain, onDone }: { brain: BrainStatus; onDone: ()
       .catch(() => setPlan({ kind: "unsupported", detail: "" }));
   }, [brain.id]);
 
-  if (!plan) return <Waiting>{t("brain.reading")}</Waiting>;
   if (job?.state === "running") return <Waiting>{t("brain.installing", { name: brain.name })}</Waiting>;
   if (job?.state === "done")
     return <p className="text-small text-green">{t("brain.installed", { name: brain.name })}</p>;
+  if (!plan) return <Waiting>{t("brain.reading")}</Waiting>;
   return (
     <div className="flex flex-col gap-2.5">
       {plan.kind === "plan" ? (
@@ -70,7 +76,7 @@ export function InstallBrain({ brain, onDone }: { brain: BrainStatus; onDone: ()
             </Problem>
           ) : null}
           <div className="flex items-center gap-2">
-            <Button variant="primary" small onClick={() => setStart(() => () => api.install(brain.id))}>
+            <Button variant="primary" small onClick={onInstall}>
               {job?.state === "failed" ? t("connect.retry") : t("brain.install")}
             </Button>
             <a href={plan.source} target="_blank" rel="noreferrer" className="text-small text-accent hover:underline">
@@ -216,25 +222,39 @@ export function BrainRow({ brain, onChanged }: { brain: BrainStatus; onChanged: 
   const { t } = useI18n();
   const { state, reread } = useSignIn(brain);
   const [open, setOpen] = useState(false);
+  const resumeId = brain.installJob?.id;
+  // Set once: a finished install refreshes the catalog, which drops installJob; the
+  // remembered start function must keep polling, not POST again or forget the outcome.
+  const [startInstall, setStartInstall] = useState<(() => Promise<Job>) | null>(() =>
+    resumeId ? () => api.job(resumeId) : null,
+  );
+  const installJob = useJob(startInstall, (job) => job.state === "done" && onChanged(), brain.installJob);
+  const installing = installJob?.state === "running";
+  const expanded = open || installing || installJob?.state === "failed";
   const signedOut = brain.installed && state?.kind === "signed_out" && brain.canSignIn;
-  const status = !brain.installed
-    ? brain.unsupported
-      ? t("brain.notHere")
-      : t("brain.notInstalled")
-    : state === null
-      ? (brain.version ?? "")
-      : state.kind === "signed_in"
-        ? [brain.version, state.account, state.plan].filter(Boolean).join(" · ")
-        : state.kind === "signed_out"
-          ? t("brain.signedOutShort")
-          : (brain.version ?? "");
-  const action = !brain.installed
-    ? brain.canInstall && !brain.unsupported
+  const status = installing
+    ? t("brain.installing", { name: brain.name })
+    : !brain.installed
+      ? brain.unsupported
+        ? t("brain.notHere")
+        : t("brain.notInstalled")
+      : state === null
+        ? (brain.version ?? "")
+        : state.kind === "signed_in"
+          ? [brain.version, state.account, state.plan].filter(Boolean).join(" · ")
+          : state.kind === "signed_out"
+            ? t("brain.signedOutShort")
+            : (brain.version ?? "");
+  const action =
+    installing || installJob?.state === "failed"
       ? "install"
-      : null
-    : signedOut
-      ? "signIn"
-      : null;
+      : !brain.installed
+        ? brain.canInstall && !brain.unsupported
+          ? "install"
+          : null
+        : signedOut
+          ? "signIn"
+          : null;
   return (
     <div className="flex flex-col gap-3 px-4 py-3">
       <div className="flex items-center gap-3">
@@ -242,25 +262,26 @@ export function BrainRow({ brain, onChanged }: { brain: BrainStatus; onChanged: 
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="font-medium">{brain.name}</span>
           <span className="flex min-w-0 items-center gap-1.5 text-caption text-ink2">
-            {brain.installed ? (
+            {brain.installed && !installing ? (
               <StatusDot state={state?.kind === "signed_out" ? "awaiting_approval" : "connected"} />
             ) : null}
-            <span className="selectable truncate">{status}</span>
+            <span className={installing ? "selectable whitespace-normal wrap-anywhere" : "selectable truncate"}>
+              {status}
+            </span>
           </span>
         </span>
-        {action && !open ? (
+        {action && !expanded ? (
           <Button small onClick={() => setOpen(true)}>
             {t(action === "install" ? "brain.install" : "brain.signIn")}
           </Button>
         ) : null}
       </div>
-      {open && action === "install" ? (
+      {expanded && action === "install" ? (
         <div className="pl-10">
           <InstallBrain
             brain={brain}
-            onDone={() => {
-              onChanged();
-            }}
+            job={installJob}
+            onInstall={() => setStartInstall(() => () => api.install(brain.id))}
           />
         </div>
       ) : null}

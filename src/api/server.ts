@@ -306,7 +306,15 @@ export function createApi(mingle: Mingle): Hono<Env> {
   app.get("/v1/admin/harnesses", async (c) => c.json(await mingle.availableHarnesses()));
   app.get("/v1/admin/harnesses/:id/models", async (c) => c.json(await mingle.harnessModels(c.req.param("id"))));
   /** Every harness OAR knows, installed or not: the console offers to install or sign in the rest. */
-  app.get("/v1/admin/brains", async (c) => c.json((await mingle.options.harness.catalog?.()) ?? []));
+  app.get("/v1/admin/brains", async (c) => {
+    const catalog = (await mingle.options.harness.catalog?.()) ?? [];
+    return c.json(
+      catalog.map((brain) => {
+        const installJob = mingle.brains.activeInstall(brain.id);
+        return { ...brain, ...(installJob ? { installJob } : {}) };
+      }),
+    );
+  });
   app.get("/v1/admin/brains/:id/sign-in", async (c) =>
     c.json((await mingle.options.harness.signInState?.(c.req.param("id"))) ?? { kind: "unknown" }),
   );
