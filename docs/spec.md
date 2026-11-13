@@ -425,7 +425,7 @@ flowchart TD
 ### 8.3 密钥与隐私
 
 - IM 凭据存入系统的凭据存储（见 9.2），数据库只存引用。API 响应和日志不回传任何密钥。
-- harness 的登录态由 harness 自己管理，Mingle 不接触。
+- harness 的登录态由 harness 自己管理，Mingle 不接触。想用 API Key（包括其他兼容服务）的人在 harness 里自己配：shell 环境变量或 harness 的配置文件。Mingle 不保存模型服务的 Key，也不做协议转换（MING-11 的结论：接通容易，但第三方兼容接口质量不一，逐家适配和验证的成本与"完成度优先"不符）。Mingle 只负责两件事：桌面应用读到 shell 里配的变量（见 9.1），以及"没有登录"的提示里说明可以改用 API Key，附官方文档链接。
 - **跨群记忆不隔离。** Agent 在私聊里得知的内容可能在群里被说出来。这是已接受的取舍，换来的是 4.1 的简单模型。`messages` 仍记录来源，将来需要隔离时有据可依。控制台在创建 Agent 时提示这一点。
 - 使用个人 harness 订阅为群内其他人提供服务是否符合各厂商条款，本版不处理。
 
@@ -454,7 +454,7 @@ flowchart TD
 
 - 应用是一个菜单栏程序：窗口里是 `mingle start` 提供的控制台，菜单栏图标里有打开窗口、查看日志、登录时打开、检查更新、退出。关掉窗口 Mingle 继续在后台运行，Dock 图标只在窗口显示时出现。
 - 应用内置 Node.js 24（版本和校验和锁定在 `desktop/scripts/prepare.mjs`）和 Mingle 的构建产物，启动时用它运行 `mingle start --no-open`，进程退出后自动重启，退出应用时先让它正常关闭。核心仍是同一个 Node 进程，桌面壳不碰业务逻辑。
-- 从 Finder 打开的应用拿到的 `PATH` 很短，找不到用户用 Homebrew、npm 装的 harness。所以启动 Mingle 前先读一次用户登录 shell 的 `PATH`。
+- 从 Finder 打开的应用拿到的环境很少：`PATH` 找不到用户用 Homebrew、npm 装的 harness，用户在 `~/.zshrc` 里给 harness 配的 API Key、`ANTHROPIC_BASE_URL`、代理也都没有，harness 会表现为"没有登录"。所以应用用 `mingle start --login-shell-env` 启动 Mingle：Mingle 通过 OAR 的 `userShellEnvironment()` 读一次用户登录 shell 的完整环境并采用（`MINGLE_*` 以应用给的为准），内置的 Node.js 放在 `PATH` 最后兜底。读不到时照常启动，日志里只记原因，不记任何变量值。Windows 应用本来就拿到用户环境，不读。
 - 已经有一个 Mingle 在跑（比如在终端里 `mingle start`），应用直接显示它，不另起一个。
 - 选 mygo 而不是原生 SwiftUI 壳：控制台不用写第二套；托盘、登录项、DMG、签名、公证、带签名的增量自动更新都是现成的。代价是依赖一个年轻的单人项目（2026-09 创建，0.9.0），但壳只有约 300 行，将来换壳成本低。nsh 的强项是跨移动端原生 UI，不是我们的需求。
 - 自动更新：mygo 的 updater 插件（类 Sparkle 的更新窗口），从本仓库的 GitHub Releases 读带签名的更新清单。签名私钥不在仓库里，在 CI 的 `MYGO_UPDATER_PRIVATE_KEY` secret 中。
@@ -468,7 +468,7 @@ macOS、Windows、Linux 都发桌面应用，每个系统都有 x64 和 ARM64 �
 | IM 凭据 | 钥匙串（`/usr/bin/security`） | DPAPI 按当前用户加密后存文件（Credential Manager 底层用的也是它），通过 PowerShell 调用，不需要原生模块 | Secret Service（`secret-tool`：GNOME Keyring、KWallet）；没有时（如无界面的服务器）退回 0600 文件 |
 | Agent 调用的 `mingle` 命令 | sh 脚本 | `mingle.cmd` | sh 脚本 |
 | 桌面应用停止 Mingle | 关闭它的标准输入（三个系统相同；Windows 没有 SIGTERM，而且应用崩溃时 Mingle 也会跟着退出） | 同左 | 同左 |
-| 应用的 PATH | 从登录 shell 读取，找得到 Homebrew、npm 装的 harness | 系统给应用的就是用户 PATH | 从登录 shell 读取 |
+| 应用的环境 | 从登录 shell 读取完整环境，找得到 Homebrew、npm 装的 harness 和 shell 里配的 API Key | 系统给应用的就是用户环境 | 从登录 shell 读取完整环境 |
 | 窗口 | 隐藏标题栏，红绿灯放在侧栏，半透明材质 | 系统标题栏，不透明 | 系统标题栏，不透明 |
 | 托盘图标 | 菜单栏模板图 | 应用图标 | 应用图标，需要 AppIndicator（deb、rpm 已声明依赖） |
 | 安装包 | DMG | NSIS 安装包，装在当前用户目录，不需要管理员权限 | `.deb`、`.rpm`、`.tar.gz`（附 `install.sh`） |

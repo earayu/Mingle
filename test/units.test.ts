@@ -1,8 +1,10 @@
+import { delimiter } from "node:path";
 import { describe, expect, it } from "vitest";
 import { toInbound } from "../src/channels/telegram/telegram.ts";
 import { formatMessage } from "../src/core/format.ts";
 import { split } from "../src/core/outbox.ts";
 import { nextFire, parseDuration } from "../src/core/schedule.ts";
+import { applyShellEnvironment } from "../src/platform/shell-env.ts";
 
 describe("formatMessage", () => {
   it("puts everything an agent needs on one header line", () => {
@@ -132,5 +134,41 @@ describe("telegram toInbound", () => {
     );
     expect(topic).toMatchObject({ chat: { kind: "thread", platformId: "-100:4" } });
     expect(topic?.replyTo).toBeUndefined();
+  });
+});
+
+describe("applyShellEnvironment", () => {
+  const sep = delimiter;
+  it("takes the login shell's variables, so keys set in ~/.zshrc reach the harness", () => {
+    const env: Record<string, string | undefined> = { PATH: "/usr/bin", HOME: "/Users/a", MINGLE_HOME: "/data" };
+    const changed = applyShellEnvironment(
+      env,
+      {
+        PATH: `/opt/homebrew/bin${sep}/usr/bin`,
+        ANTHROPIC_API_KEY: "sk-ant-test",
+        ANTHROPIC_BASE_URL: "https://gateway.example",
+        HOME: "/Users/a",
+        MINGLE_HOME: "/elsewhere",
+        PWD: "/tmp",
+        SHLVL: "2",
+        GONE: null,
+      },
+      "/app/node/bin",
+    );
+    expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-test");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://gateway.example");
+    expect(env.MINGLE_HOME).toBe("/data");
+    expect(env.PWD).toBeUndefined();
+    expect(env.PATH).toBe(`/opt/homebrew/bin${sep}/usr/bin${sep}/app/node/bin`);
+    expect(changed.sort()).toEqual(["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "PATH"]);
+  });
+
+  it("keeps the inherited environment and adds the bundled Node.js when the shell gives nothing", () => {
+    const env: Record<string, string | undefined> = { PATH: `/app/node/bin${sep}/usr/bin`, KEEP: "1" };
+    expect(applyShellEnvironment(env, {}, "/app/node/bin")).toEqual([]);
+    expect(env.PATH).toBe(`/app/node/bin${sep}/usr/bin`);
+    const bare: Record<string, string | undefined> = {};
+    applyShellEnvironment(bare, {}, "/app/node/bin");
+    expect(bare.PATH).toBe("/app/node/bin");
   });
 });

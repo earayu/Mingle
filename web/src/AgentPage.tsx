@@ -14,6 +14,7 @@ import { ModelPicker } from "./NewAgent.tsx";
 import { PlatformIcon } from "./platforms.tsx";
 import {
   AgentStatusText,
+  ApiKeyHint,
   Avatar,
   Button,
   Group,
@@ -283,6 +284,7 @@ function AgentError({ agent }: { agent: AgentView }) {
   return (
     <Problem title={t(`failure.${key}.title` as MessageKey, vars)} tone="red">
       <p>{t(`failure.${key}.body` as MessageKey, vars)}</p>
+      {key === "auth" ? <ApiKeyHint harness={agent.harness} /> : null}
       {agent.statusDetail ? (
         <p className="selectable mt-1 font-mono text-caption text-ink3 wrap-anywhere">{agent.statusDetail}</p>
       ) : null}

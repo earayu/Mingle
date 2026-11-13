@@ -9,6 +9,7 @@ import {
   RuntimeFailureError,
   runtimeBrandIcon,
   type Session,
+  userShellEnvironment,
 } from "@botiverse/oar";
 
 export interface HarnessInfo {
@@ -256,4 +257,19 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
       };
     },
   };
+}
+
+/**
+ * The user's login-shell environment, read once by starting their shell without a
+ * terminal. Contains secrets: never log it. On failure, the reason only (OAR attaches
+ * no shell output), e.g. `unsupported_platform` on Windows, `timed_out`.
+ */
+export async function loginShellEnvironment(): Promise<
+  { readonly env: Readonly<Record<string, string | null>> } | { readonly failed: string }
+> {
+  try {
+    return { env: (await userShellEnvironment()).env };
+  } catch (error) {
+    return { failed: (error as { reason?: string }).reason ?? "unknown" };
+  }
 }
