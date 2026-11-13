@@ -212,7 +212,10 @@ export function BrainPicker({
               <span className="truncate font-medium">{h.name}</span>
               {h.version ? <span className="truncate text-caption text-ink3">{h.version}</span> : null}
               {h.disabled ? (
-                <span className="whitespace-normal wrap-anywhere text-caption text-ink2">
+                <span
+                  className="truncate text-caption text-ink2"
+                  title={`${t("brain.incompatible")} · ${errorText(t, { code: h.disabled.code, next: h.disabled.reason })}`}
+                >
                   {t("brain.incompatible")} · {errorText(t, { code: h.disabled.code, next: h.disabled.reason })}
                 </span>
               ) : null}
