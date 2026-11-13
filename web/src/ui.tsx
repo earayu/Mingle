@@ -461,6 +461,45 @@ export function MoreMenu({
   );
 }
 
+/**
+ * A "?" beside a heading: the detail that would otherwise be a paragraph. Shows on hover,
+ * keyboard focus or a click (touch), and closes on Escape or when the pointer leaves.
+ */
+export function HelpTip({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        aria-label={label}
+        aria-describedby={open ? id : undefined}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+        }}
+        className="flex size-7 items-center justify-center rounded-full text-ink3 transition-colors duration-[120ms] hover:text-ink2 focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        <HelpIcon />
+      </button>
+      {open ? (
+        <span
+          id={id}
+          role="tooltip"
+          className="rise absolute top-full left-0 z-40 mt-1 w-72 max-w-[calc(100vw-48px)] rounded-control border border-line bg-card px-3 py-2 text-small font-normal text-ink2 shadow-card"
+        >
+          {children}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 export function AgentStatusText({ status, detail }: { status: AgentStatus; detail?: string | null }) {
   const { t } = useI18n();
   return (
@@ -542,6 +581,19 @@ export const BackIcon = (p: { className?: string }) => (
 export const FolderIcon = (p: { className?: string }) => (
   <Icon {...p}>
     <path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.5 1.6H13c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2Z" />
+  </Icon>
+);
+export const HelpIcon = (p: { className?: string }) => (
+  <Icon {...p}>
+    <circle cx="8" cy="8" r="6.25" />
+    <path d="M6.3 6.2a1.8 1.8 0 0 1 3.5.5c0 1.2-1.8 1.5-1.8 2.6M8 11.4v.1" />
+  </Icon>
+);
+export const EyeIcon = (p: { className?: string; off?: boolean }) => (
+  <Icon className={p.className}>
+    <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8Z" />
+    <circle cx="8" cy="8" r="1.8" />
+    {p.off ? <path d="M2.5 13.5 13.5 2.5" /> : null}
   </Icon>
 );
 export const ChatIcon = (p: { className?: string }) => (

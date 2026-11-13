@@ -19,10 +19,29 @@ Saturday looks clear.
 \`\`\`
 `;
 
+/**
+ * The names of the variables the owner set for this agent. Never their values: the guide goes into
+ * the transcript and to the model's provider.
+ */
+function envSection(names: readonly string[], platform: NodeJS.Platform): string {
+  const read = platform === "win32" ? "`$env:NAME` in PowerShell, `$NAME` in bash" : "`$NAME`";
+  return `
+## Environment variables set for you
+
+Your owner set these for you: ${names.map((n) => `\`${n}\``).join(", ")}. Read them in your shell as ${read}. They hold secrets such as webhook addresses and API keys: use them in commands, and do not write their values into messages, files or notes.
+`;
+}
+
 /** The operating guide appended to the harness's system prompt; `mingle manual` prints the same text. */
-export function renderManual(name: string, role: string, platform: NodeJS.Platform = process.platform): string {
-  const manual = readFileSync(TEMPLATE, "utf8")
+export function renderManual(
+  name: string,
+  role: string,
+  platform: NodeJS.Platform = process.platform,
+  envNames: readonly string[] = [],
+): string {
+  let manual = readFileSync(TEMPLATE, "utf8")
     .replaceAll("{{name}}", name)
     .replace("{{role}}", role.trim() || "(Your owner has not written a role yet.)");
+  if (envNames.length) manual = `${manual.trimEnd()}\n${envSection(envNames, platform)}`;
   return platform === "win32" ? `${manual.trimEnd()}\n${POWERSHELL}` : manual;
 }

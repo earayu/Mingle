@@ -28,6 +28,8 @@ export interface HarnessInfo {
   readonly icon?: { readonly light: string; readonly dark: string };
   /** Listed but cannot serve Mingle: what is missing and the next step. */
   readonly disabled?: { readonly code: string; readonly reason: string };
+  /** Its shell does not get the session's environment, so an agent's own variables do not reach it. */
+  readonly noEnv?: true;
 }
 
 /** A model the harness will run right now. */
@@ -173,6 +175,8 @@ export interface Harness {
   signIn?(id: string, interaction: SignInInteraction): Promise<{ ok: boolean; detail?: string }>;
   /** The harness's display name ("Claude Code"), for messages to people. */
   name?(id: string): string;
+  /** Whether the harness's shell gets `OpenOptions.env`. Unknown harnesses count as yes. */
+  acceptsEnv?(id: string): boolean;
   /** What can go in `OpenOptions.model`. Asks the harness, so it can take seconds. */
   models?(id: string): Promise<ModelList>;
   open(options: OpenOptions, events: HarnessEvents): Promise<HarnessSession>;
@@ -305,6 +309,8 @@ export function cursorRuntime(vendorDir: string): Runtime {
   } as Runtime;
 }
 
+const refusesEnv = (runtime: Runtime) => "env" in (runtime.refusedSessionOptions ?? {});
+
 /** For a harness whose shell does not get Mingle's environment: the same values, written into the command. */
 function inlineEnvNote(env: Readonly<Record<string, string>>): string {
   const quote = (v: string) => `'${v.replaceAll("'", "'\\''")}'`;
@@ -363,6 +369,7 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
       name: brand?.name ?? id,
       ...(version ? { version } : {}),
       ...(light && dark ? { icon: { light, dark } } : {}),
+      ...(refusesEnv(runtime) ? { noEnv: true as const } : {}),
     };
   };
 
@@ -473,6 +480,14 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
       return { ok: false, detail: result.detail ?? result.reason };
     },
 
+    acceptsEnv(id) {
+      try {
+        return !refusesEnv(lookup(id));
+      } catch {
+        return true;
+      }
+    },
+
     name(id) {
       try {
         return lookup(id).brand?.name ?? id;
@@ -510,7 +525,7 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
       // without the environment.
       const refused = runtime.refusedSessionOptions ?? {};
       const canAppend = !("appendSystemPrompt" in refused);
-      const canEnv = !("env" in refused);
+      const canEnv = !refusesEnv(runtime);
       const instructions = canEnv
         ? options.appendSystemPrompt
         : `${options.appendSystemPrompt}\n${inlineEnvNote(options.env)}`;
