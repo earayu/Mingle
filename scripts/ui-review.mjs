@@ -99,7 +99,7 @@ try {
   );
   const msg = (id, chat, dir, sender, body, state, ago, attachments = null) =>
     insert(
-      "INSERT INTO messages (id, chat_id, direction, platform_id, sender_id, sender_name, body, attachments, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO messages (id, chat_id, direction, platform_id, sender_id, sender_name, body, attachments, triggers, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       id,
       chat,
       dir,
@@ -108,6 +108,7 @@ try {
       sender,
       body,
       attachments,
+      dir === "in" ? 1 : 0,
       state,
       now - ago,
     );
@@ -243,6 +244,10 @@ try {
     agent: (dom, zh) => {
       assert.ok(dom.includes("Saturday") || dom.includes("周六晴"), "agent activity did not render");
       assert.ok(!dom.includes(zh ? "上手" : "Getting started"), "answered agent still shows onboarding");
+      assert.ok(
+        new RegExp(`<button[^>]*>\\s*${zh ? "忽略" : "Ignore"}\\s*</button>`).test(dom),
+        "unanswered message missing its Ignore button",
+      );
     },
     // Wilhelmina's turn failed: failure copy, never the replying spinner text.
     long: (dom, zh) => {
@@ -251,6 +256,10 @@ try {
         "errored agent shows no failure copy",
       );
       assert.ok(!dom.includes(zh ? "正在回复" : "got it and is answering"), "errored agent shows replying");
+      assert.ok(
+        new RegExp(`<button[^>]*>\\s*${zh ? "忽略" : "Ignore"}\\s*</button>`).test(dom),
+        "failed message missing its Ignore button",
+      );
     },
     "onboard-idle": (dom, zh) => {
       assert.ok(dom.includes(zh ? "还没有收到" : "hasn't replied yet"), "idle unanswered agent missing quiet copy");
