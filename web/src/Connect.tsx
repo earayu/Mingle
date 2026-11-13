@@ -106,9 +106,15 @@ function PlatformGrid({
       </div>
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         {platforms.map((p) => {
-          const has = agent.connections.some((c) => c.platform === p.platform);
+          const count = agent.connections.filter((c) => c.platform === p.platform).length;
           const how =
-            p.onboarding?.kind === "qr" ? t("connect.howQr") : p.onboarding ? t("connect.howToken") : t("connect.soon");
+            count > 0
+              ? t("connect.addAnother")
+              : p.onboarding?.kind === "qr"
+                ? t("connect.howQr")
+                : p.onboarding
+                  ? t("connect.howToken")
+                  : t("connect.soon");
           return (
             <button
               key={p.platform}
@@ -124,9 +130,9 @@ function PlatformGrid({
                 </span>
                 <span className="truncate text-small text-ink2">{how}</span>
               </span>
-              {has ? (
+              {count > 0 ? (
                 <span className="shrink-0 rounded-full bg-bg3 px-2 py-0.5 text-caption text-ink2">
-                  {t("connect.added")}
+                  {t("connect.added", { count: String(count) })}
                 </span>
               ) : null}
             </button>

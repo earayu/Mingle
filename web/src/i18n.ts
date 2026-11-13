@@ -222,7 +222,8 @@ const en = {
   "connect.pickBody": "{name} joins as a bot with its own name. You can add more chat apps later.",
   "connect.howQr": "Scan with your phone",
   "connect.howToken": "Paste a bot token",
-  "connect.added": "Added",
+  "connect.added": "{count} added",
+  "connect.addAnother": "Add another bot",
   "connect.many":
     "Add it to more than one. Like a person, it is the same agent everywhere: it remembers what was said in each app and can pass things between them.",
   "connect.flowTitle": "Connect to{platform}",
@@ -564,7 +565,8 @@ const zh: Record<MessageKey, string> = {
   "connect.pickBody": "{name} 会以机器人身份加入，用自己的名字。之后还可以添加更多。",
   "connect.howQr": "用手机扫码",
   "connect.howToken": "粘贴机器人 token",
-  "connect.added": "已添加",
+  "connect.added": "已添加 {count} 个",
+  "connect.addAnother": "再添加一个机器人",
   "connect.many":
     "可以多加几个。像一个真人一样，它在每个聊天软件里都是同一个 Agent：记得在哪里聊过什么，也能在它们之间传话。",
   "connect.flowTitle": "连接到{platform}",
