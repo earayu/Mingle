@@ -11,8 +11,6 @@ import type {
   Credentials,
   InboundAttachment,
   InboundMessage,
-  LiveOptions,
-  LiveReply,
   OnboardingEvent,
   OutboundMessage,
   ReactionState,
@@ -22,13 +20,18 @@ import type {
 /**
  * QQ bots through Tencent's official SDKs: QR binding with qqbot-connector, then the
  * WebSocket gateway with qqbot-nodejs. Direct chats and groups (when @-mentioned).
- * Live replies use QQ's stream_messages, which QQ only allows in direct chats and
- * within five minutes of the message being answered.
+ *
+ * No live reply: QQ's stream_messages showed only its first frame in practice, so the
+ * progress line stayed at "正在思考 · 0 秒" next to the real answer. Direct chats show
+ * "typing…" while the agent works instead, and the answer is sent as a normal reply.
  */
 
 const QR_TTL_MS = 5 * 60_000;
-/** stream_messages must start from an inbound message less than five minutes old. */
-const STREAM_WINDOW_MS = 4.5 * 60_000;
+/** QQ shows "typing…" for at most this long per notice. */
+const TYPING_SECONDS = 60;
+const TYPING_RENEW_MS = 50_000;
+/** Typing notices are passive replies; QQ accepts those for five minutes after the message. */
+const TYPING_WINDOW_MS = 4.5 * 60_000;
 
 const IMAGE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
@@ -72,11 +75,6 @@ export interface QqBotLike {
     source: { localPath: string },
     opts?: { fileName?: string },
   ): Promise<{ message?: { id?: string } }>;
-  openStream(opts: { target: ReplyTarget; throttleMs?: number }): {
-    update(fullText: string): Promise<void>;
-    complete(): Promise<{ id?: string } | undefined>;
-    cancel(): void;
-  };
   api: { getToken(): Promise<string> };
 }
 
@@ -177,13 +175,14 @@ export function qqChannel(options: QqOptions = {}): Channel {
       const bot = create({ appId, appSecret: credentials.appSecret ?? "" });
       const stop = new AbortController();
       /** Reply targets of inbound messages: QQ answers passively by message ID. */
-      const targets = new Map<string, { target: ReplyTarget; at: number }>();
+      const targets = new Map<string, { target: ReplyTarget }>();
       const files = new Map<string, string>();
+      const typing = new Map<string, NodeJS.Timeout>();
 
       bot.on("message", (_ctx, msg) => {
         const inbound = toInbound(msg);
         if (!inbound) return;
-        targets.set(inbound.platformId, { target: msg.replyTarget, at: Date.now() });
+        targets.set(inbound.platformId, { target: msg.replyTarget });
         if (targets.size > 2000) targets.delete(targets.keys().next().value as string);
         msg.attachments?.forEach((a, i) => {
           files.set(`${msg.messageId}:${i}`, a.url);
@@ -276,39 +275,32 @@ export function qqChannel(options: QqOptions = {}): Channel {
           }
         },
 
-        /** QQ has no reactions for bots; in direct chats "typing…" shows the agent is on it. */
+        /**
+         * QQ has no reactions for bots; in direct chats "typing…" shows the agent is on it.
+         * QQ shows it for at most 60 seconds, so it is renewed until the message settles,
+         * within the window in which QQ accepts a passive reply to that message.
+         */
         async react(chat: ChatRef, platformMessageId: string, state: ReactionState) {
+          clearInterval(typing.get(platformMessageId));
+          typing.delete(platformMessageId);
           if (state !== "processing" || chat.kind !== "dm") return;
-          await bot.sendTyping(targetFor(chat, platformMessageId), 60).catch(() => {});
-        },
-
-        async startLive(chat: ChatRef, live: LiveOptions): Promise<LiveReply> {
-          const known = targets.get(live.replyTo);
-          if (chat.kind !== "dm" || !known) throw new Error("QQ streams only in direct chats");
-          const stream = bot.openStream({ target: known.target, throttleMs: 500 });
-          await stream.update(plain(live.initial));
-          return {
-            update: async (markdown) => {
-              await stream.update(plain(markdown)).catch(() => {});
-            },
-            finish: async (markdown) => {
-              if (Date.now() - known.at > STREAM_WINDOW_MS) {
-                stream.cancel();
-                return { kind: "failed", code: "unknown", retryable: false };
-              }
-              try {
-                await stream.update(plain(markdown));
-                const done = await stream.complete();
-                return { kind: "sent", platformId: done?.id ?? `stream-${live.replyTo}` };
-              } catch {
-                return { kind: "failed", code: "unknown", retryable: false };
-              }
-            },
-          };
+          const target = targetFor(chat, platformMessageId);
+          const started = Date.now();
+          const renew = setInterval(() => {
+            if (Date.now() - started > TYPING_WINDOW_MS) {
+              clearInterval(renew);
+              typing.delete(platformMessageId);
+              return;
+            }
+            void bot.sendTyping(target, TYPING_SECONDS).catch(() => {});
+          }, TYPING_RENEW_MS);
+          renew.unref?.();
+          typing.set(platformMessageId, renew);
+          await bot.sendTyping(target, TYPING_SECONDS).catch(() => {});
         },
 
         async setTyping(chat: ChatRef, on: boolean) {
-          if (on && chat.kind === "dm") await bot.sendTyping(targetFor(chat), 60).catch(() => {});
+          if (on && chat.kind === "dm") await bot.sendTyping(targetFor(chat), TYPING_SECONDS).catch(() => {});
         },
 
         async download(attachment: InboundAttachment, toPath: string) {
@@ -326,17 +318,14 @@ export function qqChannel(options: QqOptions = {}): Channel {
         },
 
         async close() {
+          for (const renew of typing.values()) clearInterval(renew);
+          typing.clear();
           stop.abort();
           bot.stop();
         },
       };
     },
   };
-}
-
-/** Progress text uses **bold**; QQ shows plain text. */
-function plain(markdown: string): string {
-  return markdown.replace(/\*\*(.+?)\*\*/g, "$1").replace(/(^|\s)\*(\S.*?)\*(?=\s|$)/g, "$1$2");
 }
 
 /** Map a QQ message to Mingle's shape. Exported for tests. */

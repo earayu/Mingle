@@ -26,6 +26,9 @@ const LOCALES = {
     notInstalled: "Not installed",
     installFailed: "The installer did not finish",
     retry: "Try again",
+    retryMsg: "Retry",
+    ignore: "Ignore",
+    ignored: "Ignored",
   },
   "zh-CN": {
     storage: "zh-CN",
@@ -40,6 +43,9 @@ const LOCALES = {
     notInstalled: "未安装",
     installFailed: "安装没有完成",
     retry: "重试",
+    retryMsg: "重试",
+    ignore: "忽略",
+    ignored: "已忽略",
   },
 };
 
@@ -542,7 +548,7 @@ export async function reviewInteractions({ url, token, slug, singleSlug, chrome,
           await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.settings));
         }
         const count = await until("connection rows", (more) => connTriggers(more).length || null, labels.more);
-        assert(count === 3, `expected 3 connection rows, got ${count}`);
+        assert(count === 4, `expected 4 connection rows, got ${count}`);
         await menuScenario(localeName, labels, width, "agent", count);
 
         assert(
@@ -686,6 +692,98 @@ export async function reviewInteractions({ url, token, slug, singleSlug, chrome,
         console.log(`install ${localeName} ${width}: passed`);
       }
     }
+
+    // --- ignore: a dismissed message keeps its body but loses its actions ---
+    // These run last because they really POST to the seeded Mingle: each message can
+    // only be ignored once, so there is one scenario per entrypoint (a single activity
+    // row at a narrow width, and the Needs you panel at a wide one).
+    const ignoreScenario = async (localeName, labels, width, agentSlug, bodyText, viaNeedsYou) => {
+      const tag = `ignore ${localeName} ${width}`;
+      await metrics(width);
+      await goto(`/a/${agentSlug}`, labels);
+      // The activity row holding this exact message body; runs inside the page.
+      const buttonInRow = (text, wanted) => {
+        const body = [...document.querySelectorAll("p")].find((p) => p.textContent.trim() === text);
+        const row = body?.closest("div.px-4");
+        const el = [...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent.trim() === wanted);
+        if (!el) return null;
+        el.scrollIntoView({ block: "center" });
+        const r = el.getBoundingClientRect();
+        return r.width && r.height ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+      };
+      const buttonInNeedsYou = (wanted) => {
+        const aside = document.querySelector("aside:not(.sidebar)");
+        const el = [...(aside?.querySelectorAll("button") ?? [])].find((b) => b.textContent.trim() === wanted);
+        if (!el) return null;
+        el.scrollIntoView({ block: "center" });
+        const r = el.getBoundingClientRect();
+        return r.width && r.height ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+      };
+      const target = viaNeedsYou
+        ? await until("needs-you ignore button", buttonInNeedsYou, labels.ignore)
+        : await until("activity ignore button", buttonInRow, bodyText, labels.ignore);
+      await clickEl(target);
+
+      // The same row swaps its actions for a neutral label; the body stays.
+      await until(
+        "row shows ignored",
+        (text, ignored, retryMsg, ignore) => {
+          const body = [...document.querySelectorAll("p")].find((p) => p.textContent.trim() === text);
+          const row = body?.closest("div.px-4");
+          if (!row?.textContent.includes(ignored)) return false;
+          const buttons = [...row.querySelectorAll("button")].map((b) => b.textContent.trim());
+          return !buttons.includes(retryMsg) && !buttons.includes(ignore);
+        },
+        bodyText,
+        labels.ignored,
+        labels.retryMsg,
+        labels.ignore,
+      );
+      assert(await call(pageFits), `${tag}: horizontal overflow`);
+      await shot(`${localeName}-${width}-message-ignored`);
+
+      await send("Page.reload");
+      await until("app ready after reload", () => !!document.querySelector('header [role="radiogroup"]'));
+      await until(
+        "ignored survives reload",
+        (text, ignored) => {
+          const body = [...document.querySelectorAll("p")].find((p) => p.textContent.trim() === text);
+          return body?.closest("div.px-4")?.textContent.includes(ignored) ?? false;
+        },
+        bodyText,
+        labels.ignored,
+      );
+
+      // The real API agrees: nothing left needing the owner, the record is ignored.
+      const auth = { headers: { authorization: `Bearer ${token}` } };
+      const summary = await (await fetch(`${url}/v1/admin/summary`, auth)).json();
+      const agentSummary = summary.agents.find((a) => a.slug === agentSlug);
+      assert(
+        agentSummary && agentSummary.failed === 0 && agentSummary.unanswered === 0,
+        `${tag}: summary still counts ${JSON.stringify(agentSummary)}`,
+      );
+      const activity = await (await fetch(`${url}/v1/admin/agents/${agentSlug}/activity`, auth)).json();
+      const record = activity.find((m) => m.body === bodyText);
+      assert(record?.state === "ignored" && record.triggers, `${tag}: message not ignored ${JSON.stringify(record)}`);
+      assert(
+        !activity.some((m) => m.state === "failed" || m.state === "unanswered"),
+        `${tag}: agent still has retryable messages`,
+      );
+    };
+
+    await ignoreScenario("en-US", LOCALES["en-US"], 560, slug, "@Alex 要带多少水？", false);
+    passed++;
+    console.log("ignore en-US 560: passed");
+    await ignoreScenario(
+      "zh-CN",
+      LOCALES["zh-CN"],
+      1440,
+      singleSlug,
+      "Could you summarise this week's article for the club?",
+      true,
+    );
+    passed++;
+    console.log("ignore zh-CN 1440: passed");
     console.log(`${passed} interaction scenarios passed`);
   } finally {
     try {

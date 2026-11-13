@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { InboundMessage, OnboardingEvent } from "../src/channels/channel.ts";
 import { type QqBotLike, type QqInbound, qqChannel, toInbound } from "../src/channels/qq/qq.ts";
 import { until } from "./helpers.ts";
@@ -40,19 +40,6 @@ function fakeBot() {
       calls.push({ op: "file", args });
       throw new Error("no file permission");
     },
-    openStream(opts) {
-      calls.push({ op: "stream", args: [opts] });
-      return {
-        async update(text: string) {
-          calls.push({ op: "update", args: [text] });
-        },
-        async complete() {
-          calls.push({ op: "complete", args: [] });
-          return { id: "s1" };
-        },
-        cancel() {},
-      };
-    },
     api: { getToken: async () => "tok" },
   } as QqBotLike;
   return { bot, calls, push: (msg: QqInbound) => handlers.message?.({}, msg) };
@@ -93,7 +80,7 @@ describe("qq onboarding", () => {
 });
 
 describe("qq connection", () => {
-  it("replies passively, streams in direct chats, and sends images", async () => {
+  it("replies passively, shows typing in direct chats, and sends images", async () => {
     const fake = fakeBot();
     const received: InboundMessage[] = [];
     const connection = await qqChannel({ createBot: () => fake.bot }).connect(
@@ -106,14 +93,8 @@ describe("qq connection", () => {
     await connection.react(received[0]?.chat as never, "m1", "processing");
     expect(fake.calls.at(-1)).toMatchObject({ op: "typing", args: [{ msgId: "m1" }, 60] });
 
-    const live = await connection.startLive?.({ platformId: "u1", kind: "dm" }, { replyTo: "m1", initial: "正在思考" });
-    await live?.update("**正在处理** · 2 秒");
-    expect(await live?.finish("答案")).toMatchObject({ kind: "sent", platformId: "s1" });
-    expect(fake.calls.filter((c) => c.op === "update").map((c) => c.args[0])).toEqual([
-      "正在思考",
-      "正在处理 · 2 秒",
-      "答案",
-    ]);
+    // No live reply on QQ: its stream showed only the first frame.
+    expect(connection.startLive).toBeUndefined();
 
     const sent = await connection.send({
       chat: { platformId: "u1", kind: "dm" },
@@ -126,10 +107,36 @@ describe("qq connection", () => {
       { scope: "c2c", targetId: "u1", msgId: "m1" },
       "图在这",
     ]);
-    await expect(
-      connection.startLive?.({ platformId: "g1", kind: "group" }, { replyTo: "m1", initial: "x" }) as Promise<unknown>,
-    ).rejects.toThrow();
     await connection.close();
+  });
+
+  it("keeps typing shown until the message settles", async () => {
+    const fake = fakeBot();
+    const received: InboundMessage[] = [];
+    const connection = await qqChannel({ createBot: () => fake.bot }).connect(
+      { appId: "app1", appSecret: "sec", name: "Alex" },
+      { onMessage: (m) => received.push(m), onState: () => {}, onMembership: () => {} },
+    );
+    fake.push(dm);
+    await until(() => received.length === 1, 1000);
+    const typed = () => fake.calls.filter((c) => c.op === "typing").length;
+    vi.useFakeTimers();
+    try {
+      await connection.react(received[0]?.chat as never, "m1", "processing");
+      expect(typed()).toBe(1);
+      await vi.advanceTimersByTimeAsync(110_000);
+      expect(typed()).toBe(3);
+      await connection.react(received[0]?.chat as never, "m1", "done");
+      await vi.advanceTimersByTimeAsync(200_000);
+      expect(typed()).toBe(3);
+      // Past QQ's passive-reply window it stops on its own.
+      await connection.react(received[0]?.chat as never, "m1", "processing");
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(typed()).toBe(4 + 5);
+    } finally {
+      vi.useRealTimers();
+      await connection.close();
+    }
   });
 });
 

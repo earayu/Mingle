@@ -18,6 +18,8 @@ const CHINESE: readonly Platform[] = ["wechat", "wecom", "feishu", "dingtalk", "
 const RENDER_EVERY_MS = 1000;
 const TICK_MS = 5000;
 const MAX_STEPS = 4;
+/** Below this many seconds the progress line shows no elapsed time. */
+const SHOW_TIME_AFTER_S = 3;
 
 type Lang = "zh" | "en";
 
@@ -341,8 +343,14 @@ export class LiveReplies {
   render(entry: Pick<Entry, "lang" | "startedAt" | "working" | "steps">): string {
     const t = TEXT[entry.lang];
     const elapsed = Math.max(0, Math.round((this.now() - entry.startedAt) / 1000));
-    const time = elapsed < 60 ? t.seconds(elapsed) : t.minutes(Math.floor(elapsed / 60), elapsed % 60);
-    const lines = [`**${entry.working ? t.working : t.thinking}** · ${time}`];
+    const label = entry.working ? t.working : t.thinking;
+    // The first frame goes out at once; "· 0 s" there says nothing, and on a platform that
+    // keeps showing it, it reads as stuck. The time appears once there is some to show.
+    const lines = [
+      elapsed < SHOW_TIME_AFTER_S
+        ? `**${label}…**`
+        : `**${label}** · ${elapsed < 60 ? t.seconds(elapsed) : t.minutes(Math.floor(elapsed / 60), elapsed % 60)}`,
+    ];
     const recent = entry.steps.slice(-MAX_STEPS);
     if (recent.length > 0) {
       lines.push("");

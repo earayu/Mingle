@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { failureText, LiveReplies, stepKind } from "../src/core/live.ts";
 import { type Failure, type Harness, HarnessError } from "../src/harness/harness.ts";
+import { type InboundState, Store } from "../src/store/store.ts";
 import { messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
 
 let current: Rig | undefined;
@@ -41,6 +42,20 @@ describe("step labels", () => {
       ],
     });
     expect(text).toBe("**正在处理** · 1 分 15 秒\n\n- 查看文件\n- 运行命令 ×3\n- 查资料…");
+  });
+
+  it("shows no elapsed time until there is some to show", () => {
+    let now = 0;
+    const replies = new LiveReplies(
+      () => {},
+      () => now,
+    );
+    const entry = { lang: "zh" as const, startedAt: 0, working: false, steps: [] };
+    expect(replies.render(entry)).toBe("**正在思考…**");
+    now = 2_000;
+    expect(replies.render({ ...entry, lang: "en" })).toBe("**Thinking…**");
+    now = 5_000;
+    expect(replies.render(entry)).toBe("**正在思考** · 5 秒");
   });
 });
 
@@ -97,10 +112,10 @@ describe("live replies", () => {
 
     const live = await until(() => channel.lives[0]);
     expect(live.replyTo).toBe(inbound.platformId);
-    expect(live.updates[0]).toMatch(/^\*\*Thinking\*\* · 0s$/);
+    expect(live.updates[0]).toBe("**Thinking…**");
     await until(() => live.final);
     expect(live.final).toBe("Saturday is clear.");
-    expect(live.updates.some((u) => u.includes("**Working**") && u.includes("Running a command"))).toBe(true);
+    expect(live.updates.some((u) => u.startsWith("**Working") && u.includes("Running a command"))).toBe(true);
     // The answer went into the live reply: no separate message.
     expect(channel.sent).toHaveLength(0);
     expect(channel.reactions).toEqual([`${inbound.platformId}:processing`, `${inbound.platformId}:done`]);
@@ -264,5 +279,196 @@ describe("retrying messages", () => {
     await sleep(400);
     expect(turns).toHaveLength(before);
     expect((await admin("POST", "/v1/admin/agents/a_nope/messages/retry", {})).status).toBe(404);
+  });
+});
+
+describe("ignoring messages", () => {
+  it.each(["failed", "unanswered"] as const)(
+    "marks a %s message ignored without waking the agent or sending anything",
+    async (state) => {
+      current = await rig(
+        async () => {
+          if (state === "failed") throw new Error("test failure");
+        },
+        { live: true },
+      );
+      const { channel, mingle, agentId, turns, admin } = current;
+      channel.receive({
+        text: "is Saturday on?",
+        attachments: [{ id: "att1", name: "map.png", size: 12, mime: "image/png" }],
+      });
+      const chat = await until(() => mingle.store.agentChats(agentId)[0]?.id);
+      await until(() => mingle.store.chatMessages(chat, 10)[0]?.state === state);
+      await until(() => channel.lives[0]?.final !== undefined);
+      const id = mingle.store.chatMessages(chat, 10)[0]?.id as string;
+      const original = mingle.store.message(id);
+      const counts = {
+        turns: turns.length,
+        sent: channel.sent.length,
+        reactions: channel.reactions.length,
+        lives: channel.lives.length,
+      };
+
+      // Duplicates collapse to one; a second click is a no-op.
+      expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/ignore`, { ids: [id, id] })).json).toEqual({
+        ignored: [id],
+      });
+      expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/ignore`, { ids: [id] })).json).toEqual({
+        ignored: [],
+      });
+
+      // Kept in full, just no longer needing the owner.
+      expect(mingle.store.message(id)).toMatchObject({
+        state: "ignored",
+        body: original?.body,
+        attachments: original?.attachments,
+        triggers: true,
+      });
+      const activity = (await admin("GET", `/v1/admin/agents/${agentId}/activity`)).json as {
+        id: string;
+        state: string;
+        triggers: boolean;
+      }[];
+      expect(activity.find((m) => m.id === id)).toMatchObject({ state: "ignored", triggers: true });
+      const summary = (await admin("GET", "/v1/admin/summary")).json as {
+        agents: { id: string; failed: number; unanswered: number }[];
+      };
+      expect(summary.agents.find((a) => a.id === agentId)).toMatchObject({ failed: 0, unanswered: 0 });
+      expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: [id] })).json).toEqual({
+        retried: [],
+        offline: [],
+      });
+
+      // Nothing was delivered, sent or reacted to: ignoring only edits local records.
+      await sleep(350);
+      expect(turns.length).toBe(counts.turns);
+      expect(channel.sent.length).toBe(counts.sent);
+      expect(channel.reactions.length).toBe(counts.reactions);
+      expect(channel.lives.length).toBe(counts.lives);
+      if (state === "failed") expect(mingle.store.agent(agentId)?.status).toBe("error");
+
+      // Persisted: a fresh reader on the same database sees it ignored and not retryable.
+      const reader = new Store(mingle.options.paths.db);
+      try {
+        expect(reader.message(id)?.state).toBe("ignored");
+        expect(reader.retryable(agentId)).toEqual([]);
+      } finally {
+        reader.close();
+      }
+    },
+  );
+
+  it("ignores only this agent's own failed or unanswered inbound messages, even while offline", async () => {
+    current = await rig(async () => {});
+    const { mingle, agentId, admin, url } = current;
+    const store = mingle.store;
+    const connection = await until(() => store.connections(agentId)[0]);
+
+    // A connection Mingle never connected: messages here are offline, retry cannot reach them.
+    const offline = store.createConnection({ agentId, platform: "telegram", secretRef: "mingle-offline" });
+    store.updateConnection(offline.id, { state: "error", botName: "@alex_bot" });
+
+    const chat = store.upsertChat({ connectionId: connection.id, platformId: "-200", kind: "group", name: "Hikes" });
+    const offlineChat = store.upsertChat({
+      connectionId: offline.id,
+      platformId: "-201",
+      kind: "group",
+      name: "Offline chat",
+    });
+    let seq = 0;
+    const inbound = (chatId: string, state: InboundState) => {
+      const message = store.insertInbound({
+        chatId,
+        platformId: `p${++seq}`,
+        senderId: "u1",
+        senderName: "Zhang San",
+        body: `message ${seq}`,
+        attachments: [],
+        replyTo: null,
+        triggers: true,
+        createdAt: Date.now() + seq,
+      });
+      if (!message) throw new Error("insert failed");
+      if (state !== "received") store.setInboundState([message.id], state);
+      return message.id;
+    };
+    const failedId = inbound(chat.id, "failed");
+    const unansweredId = inbound(chat.id, "unanswered");
+    const offlineFailedId = inbound(offlineChat.id, "failed");
+    const receivedId = inbound(chat.id, "received");
+    const deliveredId = inbound(chat.id, "delivered");
+    const repliedId = inbound(chat.id, "replied");
+    const ignoredId = inbound(chat.id, "ignored");
+    // Background chatter that never triggered the agent is stored ignored from the start.
+    const background = store.insertInbound({
+      chatId: chat.id,
+      platformId: `p${++seq}`,
+      senderId: "u2",
+      senderName: "Li Si",
+      body: "background",
+      attachments: [],
+      replyTo: null,
+      triggers: false,
+      createdAt: Date.now() + seq,
+    });
+    const outbound = store.insertOutbound({ chatId: chat.id, body: "outgoing", replyTo: null });
+    store.setOutboundResult(outbound.id, "failed", null);
+
+    // Another agent's failed message belongs to nobody here.
+    const other = store.createAgent({ name: "Bo", slug: "bo", harness: "scripted" });
+    const otherConnection = store.createConnection({ agentId: other.id, platform: "telegram", secretRef: "m-other" });
+    const otherChat = store.upsertChat({ connectionId: otherConnection.id, platformId: "-202", kind: "dm" });
+    const foreignId = inbound(otherChat.id, "failed");
+
+    store.setAgentStatus(agentId, "error", "the turn failed", "unknown");
+
+    const response = await admin("POST", `/v1/admin/agents/${agentId}/messages/ignore`, {
+      ids: [
+        failedId,
+        failedId,
+        unansweredId,
+        offlineFailedId,
+        receivedId,
+        deliveredId,
+        repliedId,
+        ignoredId,
+        outbound.id,
+        foreignId,
+        "m_nope",
+      ],
+    });
+    expect(response.status).toBe(200);
+    expect((response.json as { ignored: string[] }).ignored.sort()).toEqual(
+      [failedId, unansweredId, offlineFailedId].sort(),
+    );
+    for (const id of [failedId, unansweredId, offlineFailedId]) expect(store.message(id)?.state).toBe("ignored");
+    // Every disallowed message is untouched.
+    expect(store.message(receivedId)?.state).toBe("received");
+    expect(store.message(deliveredId)?.state).toBe("delivered");
+    expect(store.message(repliedId)?.state).toBe("replied");
+    expect(store.message(ignoredId)?.state).toBe("ignored");
+    expect(store.message(background?.id ?? "")?.triggers).toBe(false);
+    expect(store.message(outbound.id)?.state).toBe("failed");
+    expect(store.message(foreignId)?.state).toBe("failed");
+    // The agent's own error stays; ignoring never clears it.
+    expect(store.agent(agentId)?.status).toBe("error");
+
+    // An empty list is a valid no-op; malformed bodies are rejected without side effects.
+    expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/ignore`, { ids: [] })).json).toEqual({
+      ignored: [],
+    });
+    for (const body of [{}, { ids: "m1" }, { ids: [1] }, null]) {
+      expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/ignore`, body)).status).toBe(400);
+    }
+    expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/ignore`)).status).toBe(400);
+    expect((await admin("POST", "/v1/admin/agents/a_nope/messages/ignore", { ids: [] })).status).toBe(404);
+    const anonymous = await fetch(`${url}/v1/admin/agents/${agentId}/messages/ignore`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(anonymous.status).toBe(401);
+    expect(store.message(receivedId)?.state).toBe("received");
+    expect(store.message(foreignId)?.state).toBe("failed");
   });
 });

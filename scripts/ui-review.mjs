@@ -89,6 +89,7 @@ try {
   conn("n2", alex.id, "feishu", "Alex 徒步助手", "awaiting_approval", null, null);
   conn("n3", alex.id, "slack", "alex", "error", "credentials_revoked", "u9");
   conn("n4", long.id, "discord", "Wilhelmina#4242", "connected", null, null);
+  conn("n9", alex.id, "telegram", "@alex_second_bot", "reconnecting", null, "u1");
   insert(
     "INSERT INTO chats (id, connection_id, platform_id, kind, name, created_at, updated_at) VALUES ('c1','n1','-1','group','周末徒步 · 北京西山与香山常走路线交流群',?,?)",
     now,
@@ -101,7 +102,7 @@ try {
   );
   const msg = (id, chat, dir, sender, body, state, ago, attachments = null) =>
     insert(
-      "INSERT INTO messages (id, chat_id, direction, platform_id, sender_id, sender_name, body, attachments, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO messages (id, chat_id, direction, platform_id, sender_id, sender_name, body, attachments, triggers, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       id,
       chat,
       dir,
@@ -110,6 +111,7 @@ try {
       sender,
       body,
       attachments,
+      dir === "in" ? 1 : 0,
       state,
       now - ago,
     );
@@ -232,6 +234,7 @@ try {
     // The QR step is not here: it needs a live call to the platform, which headless Chrome's
     // virtual clock outruns. Check it in the desktop app (desktop/README.md) instead.
     ["connect", `/a/${long.slug}/connect`],
+    ["connect-counts", `/a/${alex.slug}/connect`],
     ["connect-slack", `/a/${long.slug}/connect/slack`],
     ["connect-discord", `/a/${long.slug}/connect/discord`],
     ["connect-telegram", `/a/${alex.slug}/connect/telegram`],
@@ -241,12 +244,34 @@ try {
     ["onboard-done", `/a/${doneAgent.slug}`],
     ["no-bot", `/a/${lonelyAgent.slug}`],
   ];
+  const checkPlatformCounts = (dom, zh, expected) => {
+    const buttons = [...dom.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map((match) => match[0]);
+    for (const [platform, count] of expected) {
+      const card = buttons.find((button) => button.includes(`>${platform}</span>`));
+      assert.ok(card, `${platform} card did not render`);
+      assert.ok(!/^<button\b[^>]*\sdisabled(?:[\s=>])/.test(card), `${platform} card is disabled`);
+      if (count > 0) {
+        assert.ok(card.includes(zh ? `已添加 ${count} 个` : `${count} added`), `${platform} count is wrong`);
+        assert.ok(card.includes(zh ? "再添加一个机器人" : "Add another bot"), `${platform} missing add-another action`);
+      } else {
+        assert.ok(!card.includes(zh ? "已添加" : " added"), `${platform} has an unexpected count badge`);
+        assert.ok(
+          !card.includes(zh ? "再添加一个机器人" : "Add another bot"),
+          `${platform} has an unexpected add-another action`,
+        );
+      }
+    }
+  };
   // DOM assertions on the dumped page, per page name. zh = the zh-CN locale run.
   const checks = {
     // Alex answered long ago (m02/m04): no onboarding card.
     agent: (dom, zh) => {
       assert.ok(dom.includes("Saturday") || dom.includes("周六晴"), "agent activity did not render");
       assert.ok(!dom.includes(zh ? "上手" : "Getting started"), "answered agent still shows onboarding");
+      assert.ok(
+        new RegExp(`<button[^>]*>\\s*${zh ? "忽略" : "Ignore"}\\s*</button>`).test(dom),
+        "unanswered message missing its Ignore button",
+      );
     },
     // Wilhelmina's turn failed: failure copy, never the replying spinner text.
     long: (dom, zh) => {
@@ -255,6 +280,10 @@ try {
         "errored agent shows no failure copy",
       );
       assert.ok(!dom.includes(zh ? "正在回复" : "got it and is answering"), "errored agent shows replying");
+      assert.ok(
+        new RegExp(`<button[^>]*>\\s*${zh ? "忽略" : "Ignore"}\\s*</button>`).test(dom),
+        "failed message missing its Ignore button",
+      );
     },
     "onboard-idle": (dom, zh) => {
       assert.ok(dom.includes(zh ? "还没有收到" : "hasn't replied yet"), "idle unanswered agent missing quiet copy");
@@ -284,6 +313,18 @@ try {
       assert.ok(!dom.includes(zh ? "上手" : "Getting started"), "answered agent still shows onboarding");
       assert.ok(!dom.includes(zh ? "正在回复" : "got it and is answering"), "answered agent shows replying");
     },
+    connect: (dom, zh) =>
+      checkPlatformCounts(dom, zh, [
+        ["Discord", 1],
+        ["Telegram", 0],
+      ]),
+    "connect-counts": (dom, zh) =>
+      checkPlatformCounts(dom, zh, [
+        ["Telegram", 2],
+        [zh ? "飞书" : "Feishu", 1],
+        ["Slack", 1],
+        ["Discord", 0],
+      ]),
   };
   const jobs = [];
   for (const locale of LOCALES) {

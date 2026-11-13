@@ -83,6 +83,7 @@ export interface AgentView {
 export interface Activity {
   id: string;
   direction: "in" | "out";
+  triggers: boolean;
   platform: Platform;
   chat: { id: string; kind: "dm" | "group" | "thread"; name: string | null };
   sender: string | null;
@@ -203,6 +204,9 @@ export const api = {
   /** Try again on failed or unanswered messages: these, or all of them. */
   retry: (id: string, ids?: string[]) =>
     call<{ retried: string[]; offline: string[] }>("POST", `/v1/admin/agents/${id}/messages/retry`, ids ? { ids } : {}),
+  /** Dismiss these failed or unanswered messages without sending anything. */
+  ignore: (id: string, ids: string[]) =>
+    call<{ ignored: string[] }>("POST", `/v1/admin/agents/${id}/messages/ignore`, { ids }),
   remove: (id: string) => call("DELETE", `/v1/admin/agents/${id}`),
   openHome: (id: string) => call("POST", `/v1/admin/agents/${id}/open-home`),
   activity: (id: string) => call<Activity[]>("GET", `/v1/admin/agents/${id}/activity?limit=30`),

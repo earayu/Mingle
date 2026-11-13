@@ -367,6 +367,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
       store.agentActivity(agent.id, limit).map((m) => ({
         id: m.id,
         direction: m.direction,
+        triggers: m.triggers,
         platform: m.platform,
         chat: { id: m.chat.id, kind: m.chat.kind, name: m.chat.name },
         // A platform ID is not a name: send null and let the console label the person.
@@ -440,6 +441,15 @@ export function createApi(mingle: Mingle): Hono<Env> {
   app.post("/v1/admin/agents/:id/messages/retry", async (c) => {
     const body = await c.req.json<{ ids?: string[] }>().catch(() => ({}) as { ids?: string[] });
     return c.json(mingle.retryMessages(c.req.param("id"), body.ids));
+  });
+
+  /** Mark failed or unanswered messages as ignored: kept in activity, no longer needing the owner. */
+  app.post("/v1/admin/agents/:id/messages/ignore", async (c) => {
+    const body = await c.req.json<{ ids?: unknown } | null>().catch(() => null);
+    if (!Array.isArray(body?.ids) || !body.ids.every((id) => typeof id === "string")) {
+      throw new MingleError("invalid_message_ids", "provide ids as an array of message IDs", 400);
+    }
+    return c.json({ ignored: mingle.ignoreMessages(c.req.param("id"), body.ids) });
   });
 
   app.delete("/v1/admin/agents/:id", async (c) => {

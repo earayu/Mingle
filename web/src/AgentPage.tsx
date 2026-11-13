@@ -113,6 +113,19 @@ export function AgentPage({
     }
     refresh();
   };
+  const ignore = async (ids: string[]) => {
+    try {
+      const { ignored } = await api.ignore(agent.id, ids);
+      const changed = new Set(ignored);
+      setActivity((items) => items?.map((m) => (changed.has(m.id) ? { ...m, state: "ignored" } : m)) ?? null);
+      setNotice(
+        ignored.length ? t("agent.ignoredNotice", { count: String(ignored.length) }) : t("agent.ignoreUnchanged"),
+      );
+    } catch (error) {
+      setNotice(errorText(t, error));
+    }
+    refresh();
+  };
   const connect = () => onNavigate({ kind: "connect", slug: agent.slug });
   const unanswered = (activity ?? []).filter((m) => m.direction === "in" && m.state === "unanswered");
   const failed = (activity ?? []).filter((m) => m.direction === "in" && m.state === "failed");
@@ -132,6 +145,7 @@ export function AgentPage({
       failed={failed.map((m) => m.id)}
       troubled={troubled}
       onRetry={retry}
+      onIgnore={ignore}
       onConnect={connect}
     />
   ) : null;
@@ -239,7 +253,7 @@ export function AgentPage({
                 {needsYou ? <div className="flex flex-col gap-7 min-[1140px]:hidden">{needsYou}</div> : null}
                 {activity && activity.length > 0 ? (
                   <Section title={t("agent.activity")}>
-                    <ActivityList items={activity} onRetry={retry} />
+                    <ActivityList items={activity} onRetry={retry} onIgnore={ignore} />
                   </Section>
                 ) : null}
                 <div className="flex flex-col gap-7 min-[1140px]:hidden">
@@ -375,6 +389,7 @@ function NeedsYou({
   troubled,
   onConnect,
   onRetry,
+  onIgnore,
 }: {
   agent: AgentView;
   unanswered: string[];
@@ -382,12 +397,13 @@ function NeedsYou({
   troubled: ConnectionView[];
   onConnect: () => void;
   onRetry: (ids: string[]) => Promise<void>;
+  onIgnore: (ids: string[]) => Promise<void>;
 }) {
   const { t } = useI18n();
   // Retrying while the harness still fails only fails again; say so, but let the person try.
-  const retryAction = (ids: string[]) => (
+  const messageActions = (ids: string[]) => (
     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-      <RetryButton onRetry={() => onRetry(ids)} label={t("needs.retry")} />
+      <MessageActions onRetry={() => onRetry(ids)} onIgnore={() => onIgnore(ids)} />
       {agent.status === "error" ? <span className="text-caption text-ink3">{t("needs.retryFirst")}</span> : null}
     </div>
   );
@@ -414,7 +430,7 @@ function NeedsYou({
       ? [
           <Problem key="failed" tone="red" title={t("needs.failed", { count: String(failed.length) })}>
             {t("needs.failedBody", { name: agent.name })}
-            {retryAction(failed)}
+            {messageActions(failed)}
           </Problem>,
         ]
       : []),
@@ -422,7 +438,7 @@ function NeedsYou({
       ? [
           <Problem key="unanswered" title={t("needs.unanswered", { count: String(unanswered.length) })}>
             {t("needs.unansweredBody", { name: agent.name })}
-            {retryAction(unanswered)}
+            {messageActions(unanswered)}
           </Problem>,
         ]
       : []),
@@ -858,24 +874,70 @@ function DeleteConfirm({
   );
 }
 
-/** Disabled while the request runs, so a double click does not send it twice. */
-function RetryButton({ onRetry, label }: { onRetry: () => Promise<void>; label: string }) {
+/** Retry or dismiss a message; disabled while the request runs, so a double click does not send it twice. */
+function MessageActions({
+  onRetry,
+  onIgnore,
+  inline = false,
+}: {
+  onRetry: () => Promise<void>;
+  onIgnore: () => Promise<void>;
+  inline?: boolean;
+}) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
+  const run = async (action: () => Promise<void>) => {
+    setBusy(true);
+    try {
+      await action();
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <Button
-      small
-      disabled={busy}
-      onClick={async () => {
-        setBusy(true);
-        await onRetry().finally(() => setBusy(false));
-      }}
-    >
-      {label}
-    </Button>
+    <span className="inline-flex flex-wrap items-center gap-2">
+      {inline ? (
+        <>
+          <button
+            type="button"
+            disabled={busy}
+            className="min-h-7 px-1 font-medium text-accent hover:underline disabled:opacity-45"
+            onClick={() => run(onRetry)}
+          >
+            {t("agent.retry")}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            className="min-h-7 px-1 font-medium text-ink2 hover:underline disabled:opacity-45"
+            onClick={() => run(onIgnore)}
+          >
+            {t("agent.ignore")}
+          </button>
+        </>
+      ) : (
+        <>
+          <Button small disabled={busy} onClick={() => run(onRetry)}>
+            {t("agent.retry")}
+          </Button>
+          <Button small variant="ghost" disabled={busy} onClick={() => run(onIgnore)}>
+            {t("agent.ignore")}
+          </Button>
+        </>
+      )}
+    </span>
   );
 }
 
-function ActivityList({ items, onRetry }: { items: Activity[]; onRetry: (ids: string[]) => Promise<void> }) {
+function ActivityList({
+  items,
+  onRetry,
+  onIgnore,
+}: {
+  items: Activity[];
+  onRetry: (ids: string[]) => Promise<void>;
+  onIgnore: (ids: string[]) => Promise<void>;
+}) {
   const { t, locale } = useI18n();
   return (
     <Group>
@@ -904,42 +966,26 @@ function ActivityList({ items, onRetry }: { items: Activity[]; onRetry: (ids: st
                 </p>
               ) : null}
               {m.direction === "in" && m.state === "unanswered" ? (
-                <p className="flex items-center gap-1.5 text-caption text-amber">
+                <p className="flex flex-wrap items-center gap-1.5 text-caption text-amber">
                   <StatusDot state="awaiting_approval" />
                   {t("agent.unanswered")}
-                  <RetryLink onRetry={() => onRetry([m.id])} />
+                  <MessageActions inline onRetry={() => onRetry([m.id])} onIgnore={() => onIgnore([m.id])} />
                 </p>
               ) : null}
               {m.direction === "in" && m.state === "failed" ? (
-                <p className="flex items-center gap-1.5 text-caption text-red">
+                <p className="flex flex-wrap items-center gap-1.5 text-caption text-red">
                   <StatusDot state="error" />
                   {t("agent.failed")}
-                  <RetryLink onRetry={() => onRetry([m.id])} />
+                  <MessageActions inline onRetry={() => onRetry([m.id])} onIgnore={() => onIgnore([m.id])} />
                 </p>
+              ) : null}
+              {m.direction === "in" && m.triggers && m.state === "ignored" ? (
+                <p className="text-caption text-ink3">{t("agent.ignored")}</p>
               ) : null}
             </div>
           </div>
         );
       })}
     </Group>
-  );
-}
-
-/** "Retry" inline after a message's state, in the same small type. */
-function RetryLink({ onRetry }: { onRetry: () => Promise<void> }) {
-  const { t } = useI18n();
-  const [busy, setBusy] = useState(false);
-  return (
-    <button
-      type="button"
-      disabled={busy}
-      className="ml-1 font-medium text-accent hover:underline disabled:opacity-45"
-      onClick={async () => {
-        setBusy(true);
-        await onRetry().finally(() => setBusy(false));
-      }}
-    >
-      {t("agent.retry")}
-    </button>
   );
 }

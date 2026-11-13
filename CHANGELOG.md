@@ -14,6 +14,13 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 - Saving the role, removing a bot or an agent, and stopping now report a failure instead of leaving the button stuck.
 - Desktop notifications treat a bot Mingle is retrying as disconnected (one notice after five minutes), not as a new failure on every attempt.
 
+## 0.1.5
+
+- QQ no longer leaves a "正在思考 · 0 秒" message next to every answer: its streaming messages only ever showed their first frame, so QQ private chats now keep "typing…" on while the agent works and get the answer as a normal reply.
+- Live progress replies on the other chat apps start as "Thinking…" and show the elapsed time from 3 seconds on, instead of opening with "0s".
+- Messages the agent failed or did not answer can now be dismissed with "Ignore", next to "Retry" in the activity list and in "Needs you". An ignored message stays in the list but no longer counts as needing you or offers a retry.
+- The chat-app picker shows how many bots an agent already has on each platform — "2 added" — and offers "Add another bot", instead of only "Added".
+
 ## 0.1.4
 
 - A connection's "…" menu is no longer clipped by the card around it, and opens upward when there is no room below.
