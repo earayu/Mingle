@@ -5,9 +5,12 @@ import {
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
   useEffect,
+  useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import type { AgentStatus } from "./api.ts";
 import { useI18n } from "./i18n.ts";
 
@@ -352,7 +355,10 @@ export function PageHeader({
   );
 }
 
-/** A "…" button with a short menu under it. Closes on a choice, Escape or a click elsewhere. */
+/**
+ * A "…" button with a short menu under it. Closes on a choice, Escape or a click elsewhere.
+ * The panel sits in a body portal: rows group inside overflow-hidden cards that would clip it.
+ */
 export function MoreMenu({
   label,
   items,
@@ -361,11 +367,45 @@ export function MoreMenu({
   items: { label: string; onSelect: () => void; danger?: boolean }[];
 }) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
   const box = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const anchor = box.current?.getBoundingClientRect();
+      const panel = menu.current;
+      if (!anchor || !panel) return;
+      const width = panel.offsetWidth;
+      const height = panel.offsetHeight;
+      const margin = 8;
+      const below = anchor.bottom + 4;
+      const top = below + height <= window.innerHeight - margin ? below : anchor.top - height - 4;
+      setPosition({
+        top: Math.max(margin, Math.min(top, window.innerHeight - height - margin)),
+        left: Math.max(margin, Math.min(anchor.right - width, window.innerWidth - width - margin)),
+      });
+    };
+    place();
+    menu.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+    addEventListener("resize", place);
+    addEventListener("scroll", place, true);
+    return () => {
+      removeEventListener("resize", place);
+      removeEventListener("scroll", place, true);
+    };
+  }, [open]);
   useEffect(() => {
     if (!open) return;
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent ? e.key === "Escape" : !box.current?.contains(e.target as Node)) setOpen(false);
+    const close = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== "Escape") return;
+        setOpen(false);
+        box.current?.querySelector("button")?.focus({ preventScroll: true });
+      } else if (!box.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
     };
     addEventListener("mousedown", close);
     addEventListener("keydown", close);
@@ -374,32 +414,49 @@ export function MoreMenu({
       removeEventListener("keydown", close);
     };
   }, [open]);
+  const restore = () => box.current?.querySelector("button")?.focus({ preventScroll: true });
   return (
     <div ref={box} className="relative">
-      <Button variant="ghost" small aria-label={label} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <Button
+        variant="ghost"
+        small
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-controls={open ? menuId : undefined}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
         <MoreIcon />
       </Button>
-      {open ? (
-        <div
-          role="menu"
-          className="rise absolute top-8 right-0 z-30 flex min-w-44 flex-col rounded-control border border-line bg-card p-1 shadow-card"
-        >
-          {items.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                item.onSelect();
-              }}
-              className={`flex h-8 items-center rounded-small px-2.5 text-left text-body hover:bg-bg3 ${item.danger ? "text-red" : ""}`}
+      {open
+        ? createPortal(
+            <div
+              ref={menu}
+              id={menuId}
+              role="menu"
+              aria-label={label}
+              style={position}
+              className="fixed z-50 flex w-44 max-w-[calc(100vw-16px)] max-h-[calc(100vh-16px)] flex-col overflow-y-auto rounded-control border border-line bg-card p-1 shadow-card"
             >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+              {items.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpen(false);
+                    restore();
+                    item.onSelect();
+                  }}
+                  className={`flex min-h-8 shrink-0 items-center rounded-small px-2.5 py-1 text-left text-body wrap-anywhere hover:bg-bg3 ${item.danger ? "text-red" : ""}`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

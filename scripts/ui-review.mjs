@@ -230,6 +230,17 @@ try {
   }
   for (let i = 0; i < jobs.length; i += 4) await Promise.all(jobs.slice(i, i + 4).map((job) => job()));
   console.log(`${jobs.length} screenshots in ${OUT}`);
+
+  // Static shots never click: run the live-browser checks for menus and Manage.
+  const { reviewInteractions } = await import("./ui-interactions.mjs");
+  await reviewInteractions({
+    url,
+    token: adminToken,
+    slug: alex.slug,
+    singleSlug: long.slug,
+    chrome: CHROME,
+    out: OUT,
+  });
 } finally {
   daemon.kill("SIGTERM");
   await new Promise((r) => setTimeout(r, 500));

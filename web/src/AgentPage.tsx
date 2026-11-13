@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Navigate } from "./App.tsx";
 import {
   type Activity,
@@ -54,6 +54,15 @@ export function AgentPage({
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [tab, setTab] = useState<"activity" | "settings">("activity");
+  const connectionsRef = useRef<HTMLElement>(null);
+  const [manageRequest, setManageRequest] = useState(0);
+
+  // "Manage" in the side panel: land on the settings connections, even when already there.
+  useLayoutEffect(() => {
+    if (manageRequest === 0) return;
+    connectionsRef.current?.scrollIntoView({ block: "start" });
+    connectionsRef.current?.focus({ preventScroll: true });
+  }, [manageRequest]);
 
   const refresh = useCallback(() => {
     api
@@ -72,6 +81,7 @@ export function AgentPage({
     setConfirmDelete(false);
     setNotice(null);
     setTab("activity");
+    setManageRequest(0);
   }, [agent.id]);
   usePolling(refresh, 2500);
 
@@ -172,7 +182,14 @@ export function AgentPage({
 
             {tab === "settings" ? (
               <>
-                <Connections agent={agent} onConnect={connect} onChanged={onChanged} />
+                <section
+                  ref={connectionsRef}
+                  aria-label={t("agent.chatApps")}
+                  tabIndex={-1}
+                  className="rounded-card focus:outline-2 focus:outline-offset-4 focus:outline-accent"
+                >
+                  <Connections agent={agent} onConnect={connect} onChanged={onChanged} />
+                </section>
                 <RoleEditor agent={agent} onSaved={onChanged} />
                 <Brain agent={agent} onSaved={onChanged} />
                 <Section title={t("agent.home")}>
@@ -222,7 +239,15 @@ export function AgentPage({
         </div>
         <aside className="hidden w-[320px] shrink-0 flex-col gap-6 overflow-y-auto border-l border-line bg-wing px-4 py-5 min-[1140px]:flex">
           {needsYou}
-          {agent.connections.length ? <ChatAppsSummary agent={agent} onManage={() => setTab("settings")} /> : null}
+          {agent.connections.length ? (
+            <ChatAppsSummary
+              agent={agent}
+              onManage={() => {
+                setTab("settings");
+                setManageRequest((request) => request + 1);
+              }}
+            />
+          ) : null}
           <Work work={work} />
         </aside>
       </div>
