@@ -205,7 +205,11 @@ select {
 :root[data-shell="desktop"] body {
   background: transparent;
 }
-:root[data-shell="desktop"]:not([data-theme]) .sidebar {
+/* Explicit themes reveal the material only after the native appearance matches.
+   Older desktop shells keep the opaque theme-colored fallback. */
+:root[data-shell="desktop"]:not([data-theme]) .sidebar,
+:root[data-shell="desktop"][data-theme="light"][data-native-theme="light"] .sidebar,
+:root[data-shell="desktop"][data-theme="dark"][data-native-theme="dark"] .sidebar {
   background: transparent;
 }
 .drag {

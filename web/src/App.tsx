@@ -7,7 +7,7 @@ import iconUrl from "./icon.svg";
 import { NewAgent } from "./NewAgent.tsx";
 import { onNavigateRequest } from "./online.ts";
 import { usePolling } from "./poll.ts";
-import { applyTheme, SettingsPage, savedTheme } from "./Settings.tsx";
+import { SettingsPage } from "./Settings.tsx";
 import { Avatar, Button, Eyebrow, PlusIcon, SettingsIcon, StatusDot, UpdateIcon } from "./ui.tsx";
 import { updates, useUpdates } from "./updates.ts";
 import { Welcome } from "./Welcome.tsx";
@@ -50,7 +50,6 @@ function pathFor(view: View): string {
 // The desktop app's window injects `window.mygo`. On macOS the window is translucent and the
 // sidebar shows its material; Windows and Linux windows are opaque and keep the usual colours.
 if ("mygo" in window && /Mac/.test(navigator.userAgent)) document.documentElement.dataset.shell = "desktop";
-applyTheme(savedTheme());
 
 export function App() {
   const { locale, localePreference, setLocale } = useLocaleSettings();
