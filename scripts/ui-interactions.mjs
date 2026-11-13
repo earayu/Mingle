@@ -424,38 +424,9 @@ export async function reviewInteractions({ url, token, slug, singleSlug, chrome,
         assert(count === 3, `expected 3 connection rows, got ${count}`);
         await menuScenario(localeName, labels, width, "agent", count);
 
-        // The header menu gets the same portal treatment.
-        await clickEl(
-          await call((more) => {
-            const el = [...document.querySelectorAll("header button[aria-label]")].find(
-              (b) => b.getAttribute("aria-label") === more,
-            );
-            const r = el?.getBoundingClientRect();
-            return r?.width ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
-          }, labels.more),
-        );
-        await until("header menu", () => !!document.querySelector('div[role="menu"]'));
-        const hinfo = await call(menuInfo);
-        assertMenuOnScreen(hinfo, "header menu");
-        const firstItem = await call(() => {
-          const el = document.querySelector('div[role="menu"] [role="menuitem"]');
-          const r = el.getBoundingClientRect();
-          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-        });
-        assert(await call(hitTest, firstItem.x, firstItem.y), "header menu item not clickable at its center");
-        await shot(`${localeName}-${width}-headermenu-open`);
-        await key("Escape", "Escape", 27);
-        await until("header menu closed", menuClosed);
         assert(
-          await call(
-            (more) =>
-              document.activeElement ===
-              [...document.querySelectorAll("header button[aria-label]")].find(
-                (b) => b.getAttribute("aria-label") === more,
-              ),
-            labels.more,
-          ),
-          "Escape did not return focus to header trigger",
+          await call(() => !document.querySelector('header button[aria-haspopup="menu"]')),
+          "redundant agent header menu is still present",
         );
 
         // --- single-connection agent: the reported clipped-menu case ---
