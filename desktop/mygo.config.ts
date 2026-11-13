@@ -32,7 +32,7 @@ export default {
     minimumSystemVersion: "13.0",
     // A menu bar app: no Dock icon until the window shows.
     infoPlist: { LSUIElement: true, CFBundleLocalizations: ["en", "zh-CN"] },
-    // Ad hoc unless a Developer ID is given (CI sets these, see .github/workflows/desktop.yml).
+    // Ad hoc unless a Developer ID is given (CI sets these, see .github/workflows/release.yml).
     signingIdentity: process.env.MACOS_SIGNING_IDENTITY ?? "-",
     ...(process.env.NOTARY_KEYCHAIN
       ? { notarize: { keychainProfile: "notary", keychain: process.env.NOTARY_KEYCHAIN } }
