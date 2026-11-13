@@ -1,6 +1,6 @@
 # Mingle
 
-English · [中文](README_CN.md)
+English · [中文](README_CN.md) · [mingle.build](https://mingle.build)
 
 **Bring your agent companion into the chat apps you already use. Runs on your machine, no server.**
 

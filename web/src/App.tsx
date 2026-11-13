@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AgentPage } from "./AgentPage.tsx";
 import { type AgentView, ApiError, api, captureToken } from "./api.ts";
 import { ConnectPage } from "./Connect.tsx";
-import { detectLocale, I18n, type Locale, translator, useI18n } from "./i18n.ts";
+import { I18n, translator, useI18n, useLocaleSettings } from "./i18n.ts";
 import iconUrl from "./icon.svg";
 import { NewAgent } from "./NewAgent.tsx";
 import { onNavigateRequest } from "./online.ts";
@@ -52,18 +52,10 @@ if ("mygo" in window && /Mac/.test(navigator.userAgent)) document.documentElemen
 applyTheme(savedTheme());
 
 export function App() {
-  const [locale, setLocaleState] = useState<Locale>(detectLocale);
+  const { locale, localePreference, setLocale } = useLocaleSettings();
   const i18n = useMemo(
-    () => ({
-      t: translator(locale),
-      locale,
-      setLocale: (next: Locale) => {
-        localStorage.setItem("mingle.locale", next);
-        document.documentElement.lang = next;
-        setLocaleState(next);
-      },
-    }),
-    [locale],
+    () => ({ t: translator(locale), locale, localePreference, setLocale }),
+    [locale, localePreference, setLocale],
   );
   return (
     <I18n.Provider value={i18n}>

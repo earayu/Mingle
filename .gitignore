@@ -6,3 +6,5 @@ dist/
 .env.*
 web/dist/
 .ui-review/
+site/dist/
+.site-review/

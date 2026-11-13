@@ -28,6 +28,8 @@ func main() {
 	if !mygo.App.RequestSingleInstanceLock() {
 		return // the running app shows its window
 	}
+	// The web console and native controls share the system's supported language.
+	mygo.App.SetLanguages("en", "zh-CN")
 	logs, _ := mygo.App.Path(mygo.PathLogs)
 	resources, _ := mygo.App.Path(mygo.PathResources)
 	d := newDaemon(resources, logs)

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { type Locale, useI18n } from "./i18n.ts";
+import { type LocalePreference, useI18n } from "./i18n.ts";
 import { type OnlineState, online, useOnline } from "./online.ts";
 import { Button, Group, GroupRow, PageHeader, Section, Segmented } from "./ui.tsx";
 import { type UpdateState, updates, useUpdates } from "./updates.ts";
@@ -18,7 +18,7 @@ export function applyTheme(theme: Theme): void {
 }
 
 export function SettingsPage({ version }: { version: string }) {
-  const { t, locale, setLocale } = useI18n();
+  const { t, localePreference, setLocale } = useI18n();
   const [theme, setTheme] = useState<Theme>(savedTheme);
   const update = useUpdates();
   const keep = useOnline();
@@ -45,13 +45,14 @@ export function SettingsPage({ version }: { version: string }) {
                   ]}
                 />
               </GroupRow>
-              <GroupRow>
+              <GroupRow className="flex-wrap">
                 <span className="flex-1">{t("settings.language")}</span>
-                <Segmented<Locale>
+                <Segmented<LocalePreference>
                   label={t("settings.language")}
-                  value={locale}
+                  value={localePreference}
                   onChange={setLocale}
                   options={[
+                    { value: "system", label: t("settings.system") },
                     { value: "zh-CN", label: "简体中文" },
                     { value: "en", label: "English" },
                   ]}

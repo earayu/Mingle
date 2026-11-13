@@ -31,7 +31,7 @@ export default {
   macos: {
     minimumSystemVersion: "13.0",
     // A menu bar app: no Dock icon until the window shows.
-    infoPlist: { LSUIElement: true },
+    infoPlist: { LSUIElement: true, CFBundleLocalizations: ["en", "zh-CN"] },
     // Ad hoc unless a Developer ID is given (CI sets these, see .github/workflows/desktop.yml).
     signingIdentity: process.env.MACOS_SIGNING_IDENTITY ?? "-",
     ...(process.env.NOTARY_KEYCHAIN

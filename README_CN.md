@@ -1,6 +1,6 @@
 # Mingle
 
-[English](README.md) · 中文
+[English](README.md) · 中文 · [官网](https://mingle.build/zh/)
 
 **把你的 Agent 伙伴请进你已经在用的 IM。本地运行，没有服务器。**
 
