@@ -548,7 +548,7 @@ export async function reviewInteractions({ url, token, slug, singleSlug, chrome,
           await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.settings));
         }
         const count = await until("connection rows", (more) => connTriggers(more).length || null, labels.more);
-        assert(count === 3, `expected 3 connection rows, got ${count}`);
+        assert(count === 4, `expected 4 connection rows, got ${count}`);
         await menuScenario(localeName, labels, width, "agent", count);
 
         assert(
