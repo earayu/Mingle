@@ -189,6 +189,33 @@ Raft 的做法更重。从它的源码和 agent 提示词看：忙碌时只给 a
 
 控制台显示：空闲、思考中、工作中、离线、出错，以及当前任务、所在的群、最近活动。电脑休眠或关机时 Agent 离线，这一点在界面上如实展示。上手完成状态保存在 Agent 的 has_replied 标记中：首次成功发出消息后永久完成，升级时从已有成功发送记录回填，不受最近活动条数、重启或移除连接影响；未成功回复时，只有聊天软件已连接且 Agent 正在思考或工作才显示"正在回复"。
 
+### 4.9 入站消息状态
+
+触发 Agent 的入站消息有六种状态：`received`（已收到，待投递）、`delivered`（已交给 Agent）、`replied`（已回复）、`unanswered`（提示过一次仍未回复）、`failed`（出错未回复）、`ignored`（owner 忽略，或本就不触发 Agent 的背景消息）。它是一个显式状态机，规则集中在 [`src/core/inbound.ts`](../src/core/inbound.ts) 的转换表里，所有写入都经过 `Store.moveInbound`：事件只作用于处在它的来源状态的消息，其余消息原样不动，并返回实际变化的 ID，后续动作（实时回复收尾、通知发消息的人、重新投递）只对这些消息执行。
+
+```mermaid
+stateDiagram-v2
+  [*] --> received: 收到触发消息
+  received --> delivered: 投递（deliver）
+  received --> failed: 会话打不开（fail）
+  delivered --> failed: 本轮失败（fail）
+  delivered --> unanswered: 提示一次后仍未回复（give_up）
+  received --> replied: 引用回复 / owner 的 /stop（reply）
+  delivered --> replied: 引用回复或聊天里的普通发送（reply / send）
+  unanswered --> replied: 引用回复或普通发送（reply / send）
+  failed --> replied: 引用回复（reply）
+  failed --> received: owner 重试（retry）
+  unanswered --> received: owner 重试（retry）
+  failed --> ignored: owner 忽略（ignore）
+  unanswered --> ignored: owner 忽略（ignore）
+```
+
+- **终态**：`replied` 和 `ignored`。之后到达的任何事件（迟到的失败、重复的重试、忽略后才到的回复）都不改变它。
+- **非终态都有出路**：`received`、`delivered` 由投递和本轮结束自己推进；`failed`、`unanswered` 由 owner 在控制台重试或忽略，Agent 之后回复也能把它们结束。
+- **出错的消息被回复**：Agent 用 `message reply` 引用一条 `failed` 消息作答时，它变为 `replied`，因为发消息的人已经得到回答，不应再留在"出错未回复"里。`message send` 的普通发送只结束该聊天里 Agent 已经看到的消息（`delivered`、`unanswered`），不结束 `failed`：这条消息可能从未交到 Agent 手里，一条无关的发送不能把它从待处理里藏掉；也不结束还没投递的 `received`。
+- **先到先得**：重试、忽略、迟到的回复以任意顺序到达，第一个生效，后一个只有在它是前者结果的合法下一步时才生效。例如重试后再忽略不生效（消息已回到 `received`）；重试后、重新投递前 Agent 已经回复，投递时发现它不再是 `received`，不再投递。
+- 重试把消息放回 `received` 时清零提示标记，像新消息一样再走一遍。
+
 ## 5. `mingle` CLI：Agent 的行动接口
 
 ### 5.1 为什么是 CLI

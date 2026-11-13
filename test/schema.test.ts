@@ -122,7 +122,7 @@ describe("onboarding completion", () => {
         triggers: true,
         createdAt: Date.now(),
       });
-      store.setInboundState([inbound?.id as string], "replied");
+      store.moveInbound([inbound?.id as string], "reply");
       expect(store.agent(a1.id)?.hasReplied).toBe(false);
 
       store.setOutboundResult(out.id, "sent", "tg-1");

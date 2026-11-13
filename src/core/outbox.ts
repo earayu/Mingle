@@ -128,21 +128,16 @@ export class Outbox {
 
   /** A reply answers the quoted message; a plain send answers everything pending in that chat. */
   private markAnswered(chatId: string, quoted: Message | undefined): void {
-    const ids = quoted
-      ? [quoted.id]
-      : this.store
-          .chatMessages(chatId, 200)
-          .filter(
-            (m) =>
-              m.direction === "in" && (m.state === "delivered" || m.state === "unanswered" || m.state === "failed"),
-          )
-          .map((m) => m.id);
-    const answerable = ids.filter((id) => {
-      const state = this.store.message(id)?.state;
-      return state === "received" || state === "delivered" || state === "unanswered";
-    });
-    this.store.setInboundState(answerable, "replied");
-    for (const id of answerable) this.replies?.settle(id, "answered");
+    const answered = quoted
+      ? this.store.moveInbound([quoted.id], "reply")
+      : this.store.moveInbound(
+          this.store
+            .chatMessages(chatId, 200)
+            .filter((m) => m.direction === "in")
+            .map((m) => m.id),
+          "send",
+        );
+    for (const id of answered) this.replies?.settle(id, "answered");
   }
 }
 

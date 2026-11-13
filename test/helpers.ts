@@ -15,10 +15,12 @@ import type {
   Platform,
   ReactionState,
 } from "../src/channels/channel.ts";
+import type { InboundEvent } from "../src/core/inbound.ts";
 import { Mingle } from "../src/core/mingle.ts";
 import { resolvePaths } from "../src/core/paths.ts";
 import { type Harness, oarHarness } from "../src/harness/harness.ts";
 import { memorySecrets } from "../src/platform/secrets.ts";
+import type { InboundState, Store } from "../src/store/store.ts";
 
 export const CLI_ENTRY = fileURLToPath(new URL("../src/cli/main.ts", import.meta.url));
 
@@ -275,5 +277,20 @@ export async function eventually<T>(check: () => Promise<T | undefined | false>,
     if (value) return value;
     if (Date.now() > deadline) throw new Error("timed out waiting for condition");
     await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+/** Walk a received inbound message to `state` the way Mingle would, through its allowed transitions. */
+export function driveInbound(store: Store, id: string, state: InboundState): void {
+  const path: Record<InboundState, InboundEvent[]> = {
+    received: [],
+    delivered: ["deliver"],
+    failed: ["deliver", "fail"],
+    unanswered: ["deliver", "give_up"],
+    replied: ["deliver", "reply"],
+    ignored: ["deliver", "fail", "ignore"],
+  };
+  for (const event of path[state]) {
+    if (store.moveInbound([id], event).length !== 1) throw new Error(`${id} could not ${event}`);
   }
 }
