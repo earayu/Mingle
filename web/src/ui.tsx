@@ -238,6 +238,32 @@ export function Problem({
   );
 }
 
+/** Official docs for using an API key instead of signing in, for harnesses we can point to. */
+const API_KEY_DOCS: Readonly<Record<string, string>> = {
+  claude: "https://code.claude.com/docs/en/llm-gateway-connect",
+  codex: "https://developers.openai.com/codex/config-advanced",
+};
+
+/**
+ * Under a "not signed in" problem: signing in is not the only way. Says how to use an
+ * API key with this harness and that Mingle needs a restart to see a shell variable.
+ */
+export function ApiKeyHint({ harness }: { harness: string }) {
+  const { t } = useI18n();
+  const docs = API_KEY_DOCS[harness];
+  if (!docs) return null;
+  return (
+    <p className="mt-1">
+      {t(`apiKey.${harness}` as "apiKey.claude")}{" "}
+      <a className="text-accent underline-offset-2 hover:underline" href={docs} target="_blank" rel="noreferrer">
+        {t("apiKey.docs")}
+      </a>
+      <br />
+      {t("apiKey.restart")}
+    </p>
+  );
+}
+
 export type StepState = "later" | "todo" | "now" | "done";
 
 /**

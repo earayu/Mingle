@@ -47,6 +47,7 @@ const OPTIONS = {
   "remove-home": { type: "boolean" },
   "no-open": { type: "boolean" },
   "stop-on-stdin-close": { type: "boolean" },
+  "login-shell-env": { type: "boolean" },
   port: { type: "string" },
 } as const;
 
@@ -474,7 +475,7 @@ async function start(flags: Flags): Promise<void> {
     } catch {}
   };
   // Loaded here so agent commands, which run often, do not pay for OAR and the server.
-  const [{ createApi, listen, serveConsole }, { loadChannels }, { Mingle }, { oarHarness }, { defaultSecrets }] =
+  const [{ createApi, listen, serveConsole }, { loadChannels }, { Mingle }, harnessModule, { defaultSecrets }] =
     await Promise.all([
       import("../api/server.ts"),
       import("../channels/registry.ts"),
@@ -482,6 +483,11 @@ async function start(flags: Flags): Promise<void> {
       import("../harness/harness.ts"),
       import("../platform/secrets.ts"),
     ]);
+  // The desktop app starts us with the bare environment the system gives apps. Take the
+  // user's login-shell environment, so harness setup in ~/.zshrc (API keys, base URLs,
+  // proxies, PATH) works the same as in a terminal.
+  if (flags["login-shell-env"]) await adoptLoginShellEnvironment(harnessModule.loginShellEnvironment, log);
+  const { oarHarness } = harnessModule;
   const mingle = new Mingle({
     paths,
     harness: oarHarness(),
@@ -529,6 +535,22 @@ async function start(flags: Flags): Promise<void> {
     process.stdin.on("end", shutdown).on("close", shutdown).on("error", shutdown);
     process.stdin.resume();
   }
+}
+
+async function adoptLoginShellEnvironment(
+  read: () => Promise<{ readonly env: Readonly<Record<string, string | null>> } | { readonly failed: string }>,
+  log: (line: string) => void,
+): Promise<void> {
+  const { applyShellEnvironment, nodeDir } = await import("../platform/shell-env.ts");
+  const shell = await read();
+  if ("failed" in shell) {
+    // Windows apps already get the user's environment; elsewhere, say why and carry on.
+    if (shell.failed !== "unsupported_platform") log(`could not read the login shell environment (${shell.failed})`);
+    applyShellEnvironment(process.env, {}, nodeDir());
+    return;
+  }
+  const changed = applyShellEnvironment(process.env, shell.env, nodeDir());
+  log(`took ${changed.length} variables from the login shell`);
 }
 
 /** The admin token travels in the fragment, which browsers never send to the server or in Referer headers. */

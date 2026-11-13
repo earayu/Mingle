@@ -210,6 +210,12 @@ const en = {
   "brain.defaultHint": "The harness's own default, which follows its settings.",
   "brain.signedOut": "This harness is not signed in",
   "brain.signedOutBody": "Sign in to it in a terminal once, then choose it again.",
+  "apiKey.claude":
+    "Or use an API key: set ANTHROPIC_API_KEY, or ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN for another Anthropic-compatible service, in your shell profile or Claude Code's settings.json.",
+  "apiKey.codex":
+    "Or use an API key: set OPENAI_API_KEY, or add a provider under model_providers in ~/.codex/config.toml for another Responses API service.",
+  "apiKey.docs": "How to set it up",
+  "apiKey.restart": "Changed your shell profile? Quit Mingle and open it again so it picks up the change.",
   "connect.pickTitle": "Where should it chat?",
   "connect.pickBody": "{name} joins as a bot with its own name. You can add more chat apps later.",
   "connect.howQr": "Scan with your phone",
@@ -490,6 +496,12 @@ const zh: Record<MessageKey, string> = {
   "brain.defaultHint": "跟随 harness 自己的默认设置。",
   "brain.signedOut": "这个 harness 还没登录",
   "brain.signedOutBody": "在终端里登录一次，然后重新选择它。",
+  "apiKey.claude":
+    "也可以用 API Key：在 shell 配置文件或 Claude Code 的 settings.json 里设置 ANTHROPIC_API_KEY；用其他兼容 Anthropic 的服务时，设置 ANTHROPIC_BASE_URL 和 ANTHROPIC_AUTH_TOKEN。",
+  "apiKey.codex":
+    "也可以用 API Key：设置 OPENAI_API_KEY；用其他支持 Responses API 的服务时，在 ~/.codex/config.toml 的 model_providers 里添加一个服务。",
+  "apiKey.docs": "设置方法",
+  "apiKey.restart": "改了 shell 配置文件？退出 Mingle 再打开，改动才会生效。",
   "connect.pickTitle": "让它在哪里聊天？",
   "connect.pickBody": "{name} 会以机器人身份加入，用自己的名字。之后还可以添加更多。",
   "connect.howQr": "用手机扫码",
