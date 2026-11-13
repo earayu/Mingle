@@ -8,6 +8,7 @@
 //   node scripts/releases.ts snapshot <output.json>    freeze the latest release
 //   node scripts/releases.ts check-latest <snapshot>   fail if latest moved on
 //   node scripts/releases.ts verify <snapshot> <dir>   verify downloaded assets
+//   node scripts/releases.ts assemble <tag> <builds-dir> <assets-dir>
 //
 // It is also importable (site/scripts/build.mjs uses validateRelease). No
 // dependencies; runs directly on Node 24.
@@ -15,7 +16,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, readFile, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -329,6 +330,75 @@ export async function verifyArtifacts(release: Release, directory: string, publi
   }
 }
 
+/** Assemble isolated build artifacts without racing over shared release files. */
+export async function assembleArtifacts(tag: string, input: string, output: string): Promise<void> {
+  const version = releaseVersion(tag);
+  const required = new Set(requiredAssets(version, version.includes("-")));
+  const files = new Map<string, { path: string; digest: string }>();
+  const sums = new Map<string, string>();
+  let fragments = 0;
+  async function visit(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(path);
+        continue;
+      }
+      if (!entry.isFile()) throw new Error(`Not a regular build artifact: ${path}`);
+      const name = entry.name;
+      if (name === "SHA256SUMS") {
+        fragments++;
+        const lines = (await readFile(path, "utf8")).split("\n");
+        if (lines.at(-1) === "") lines.pop();
+        const seen = new Set<string>();
+        for (const line of lines) {
+          const match = SHA256_LINE.exec(line);
+          if (!match) throw new Error(`SHA256SUMS: malformed line ${JSON.stringify(line)}`);
+          const [, digest = "", asset = ""] = match;
+          if (seen.has(asset)) throw new Error(`SHA256SUMS: duplicate entry for ${asset}`);
+          seen.add(asset);
+          if (sums.has(asset) && sums.get(asset) !== digest)
+            throw new Error(`SHA256SUMS: conflicting digest for ${asset}`);
+          sums.set(asset, digest);
+        }
+        continue;
+      }
+      if (!ASSET_NAME.test(name) || (!required.has(name) && !/^mingle-.*\.delta$/.test(name)))
+        throw new Error(`Unexpected build artifact: ${name}`);
+      const digest = await sha256File(path);
+      const previous = files.get(name);
+      if (previous) {
+        if ((name !== "install.sh" && name !== "install.ps1") || previous.digest !== digest)
+          throw new Error(`Conflicting build artifact: ${name}`);
+      } else {
+        files.set(name, { path, digest });
+      }
+    }
+  }
+  await visit(input);
+  if (fragments === 0) throw new Error("Missing build SHA256SUMS");
+  for (const name of required) {
+    if (name !== "SHA256SUMS" && !files.has(name)) throw new Error(`Missing build artifact: ${name}`);
+  }
+  for (const [name, digest] of sums) {
+    if (files.get(name)?.digest !== digest) throw new Error(`${name}: digest does not match SHA256SUMS`);
+  }
+  for (const name of files.keys()) {
+    if (!/^update-.*\.json$/.test(name) && !sums.has(name)) throw new Error(`SHA256SUMS: no digest for ${name}`);
+  }
+  // Validate everything before creating output; never overwrite an earlier assembly.
+  await mkdir(output);
+  for (const [name, file] of files) await copyFile(file.path, join(output, name));
+  await writeFile(
+    join(output, "SHA256SUMS"),
+    [...sums]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, digest]) => `${digest}  ${name}\n`)
+      .join(""),
+    "utf8",
+  );
+}
+
 function readJSON(path: string): Promise<unknown> {
   return readFile(path, "utf8").then(JSON.parse);
 }
@@ -341,7 +411,8 @@ function latestRelease(): unknown {
 const usage = `usage:
   node scripts/releases.ts snapshot <output.json>
   node scripts/releases.ts check-latest <snapshot.json>
-  node scripts/releases.ts verify <snapshot.json> <assets-dir>`;
+  node scripts/releases.ts verify <snapshot.json> <assets-dir>
+  node scripts/releases.ts assemble <tag> <builds-dir> <assets-dir>`;
 
 async function main(argv: string[]): Promise<void> {
   const [command, ...args] = argv;
@@ -357,6 +428,11 @@ async function main(argv: string[]): Promise<void> {
     if (releaseFingerprint(snapshot) !== releaseFingerprint(current))
       throw new Error(`latest release moved on: snapshot ${snapshot.tag_name} no longer matches ${current.tag_name}`);
     console.log(`check-latest: still ${current.tag_name}`);
+    return;
+  }
+  if (command === "assemble" && args.length === 3) {
+    await assembleArtifacts(args[0] as string, args[1] as string, args[2] as string);
+    console.log(`assemble: release ${args[0]} artifacts ready`);
     return;
   }
   if (command === "verify" && args.length === 2) {
