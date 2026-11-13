@@ -154,6 +154,9 @@ export const api = {
     call<AgentView>("POST", "/v1/admin/agents", input),
   setRole: (id: string, role: string) => call("PUT", `/v1/admin/agents/${id}/role`, { role }),
   stop: (id: string) => call<{ stopped: boolean }>("POST", `/v1/admin/agents/${id}/stop`),
+  /** Try again on failed or unanswered messages: these, or all of them. */
+  retry: (id: string, ids?: string[]) =>
+    call<{ retried: string[] }>("POST", `/v1/admin/agents/${id}/messages/retry`, ids ? { ids } : {}),
   remove: (id: string) => call("DELETE", `/v1/admin/agents/${id}`),
   openHome: (id: string) => call("POST", `/v1/admin/agents/${id}/open-home`),
   activity: (id: string) => call<Activity[]>("GET", `/v1/admin/agents/${id}/activity?limit=30`),

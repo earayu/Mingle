@@ -7,6 +7,7 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
 - When the agent can't answer (its harness is signed out, out of usage, unpaid, busy, or not installed), the person in the chat is told what happened and what helps, instead of the reply staying on "Thinking". Chat apps without live replies get a short message.
 - The console says the same in plain words, with the next step, and no longer shows "answering…" for a message that failed.
+- Retry a message the agent failed or did not answer, from "Needs you" or next to the message in the activity list. The agent answers in the chat and knows the answer is late.
 
 ## 0.1.0
 

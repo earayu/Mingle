@@ -519,6 +519,39 @@ export class Mingle {
     this.runtimes.get(connection.agentId)?.enqueueMessage(message.id);
   }
 
+  /**
+   * The owner asks the agent to try again on messages it failed or did not answer
+   * (all of them, or `ids`). Only messages whose chat app is online are retried: the
+   * agent could not reply to the others anyway. Returns the IDs retried.
+   */
+  retryMessages(idOrSlug: string, ids?: readonly string[]): string[] {
+    const agent = this.agent(idOrSlug);
+    const runtime = this.runtimes.get(agent.id);
+    if (!runtime) return [];
+    const retried: string[] = [];
+    for (const message of this.store.retryable(agent.id, ids)) {
+      const chat = this.store.chat(message.chatId);
+      const connection = chat && this.store.connection(chat.connectionId);
+      const live = connection && this.live.get(connection.id);
+      if (!chat || !connection || !live) continue;
+      retried.push(message.id);
+      if (message.platformId) {
+        this.replies.open({
+          messageId: message.id,
+          agentId: agent.id,
+          platform: connection.platform,
+          chat: { platformId: chat.platformId, kind: chat.kind, ...(chat.name ? { name: chat.name } : {}) },
+          platformMessageId: message.platformId,
+          senderId: message.senderId ?? "",
+          connection: live,
+        });
+      }
+    }
+    this.store.requeue(retried);
+    runtime.retry(retried);
+    return retried;
+  }
+
   // --------------------------------------------------------------- reminders
 
   fireReminders(now = Date.now()): void {

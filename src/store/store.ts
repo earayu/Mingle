@@ -434,6 +434,24 @@ export class Store {
     return row?.nudged === 1;
   }
 
+  /** Inbound messages of this agent that were given up on (failed or unanswered), oldest first; `ids` narrows it. */
+  retryable(agentId: string, ids?: readonly string[]): Message[] {
+    const rows = this.db
+      .prepare(
+        `SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
+         WHERE n.agent_id = ? AND m.direction = 'in' AND m.state IN ('failed', 'unanswered') ORDER BY m.created_at`,
+      )
+      .all(agentId) as Row[];
+    const wanted = ids && new Set(ids);
+    return rows.map(toMessage).filter((m) => !wanted || wanted.has(m.id));
+  }
+
+  /** Put messages back in the inbox as if just received: delivered again, nudged again if need be. */
+  requeue(ids: readonly string[]): void {
+    const stmt = this.db.prepare("UPDATE messages SET state = 'received', nudged = 0 WHERE id = ?");
+    for (const id of ids) stmt.run(id);
+  }
+
   /** Inbound messages received but never handed to the agent (for example, the process stopped first). */
   undelivered(agentId: string): Message[] {
     const rows = this.db
