@@ -42,6 +42,20 @@ describe("step labels", () => {
     });
     expect(text).toBe("**正在处理** · 1 分 15 秒\n\n- 查看文件\n- 运行命令 ×3\n- 查资料…");
   });
+
+  it("shows no elapsed time until there is some to show", () => {
+    let now = 0;
+    const replies = new LiveReplies(
+      () => {},
+      () => now,
+    );
+    const entry = { lang: "zh" as const, startedAt: 0, working: false, steps: [] };
+    expect(replies.render(entry)).toBe("**正在思考…**");
+    now = 2_000;
+    expect(replies.render({ ...entry, lang: "en" })).toBe("**Thinking…**");
+    now = 5_000;
+    expect(replies.render(entry)).toBe("**正在思考** · 5 秒");
+  });
 });
 
 /** The harness reports every failed turn as `failure`, as a real one does for a sign-in or quota problem. */
@@ -97,10 +111,10 @@ describe("live replies", () => {
 
     const live = await until(() => channel.lives[0]);
     expect(live.replyTo).toBe(inbound.platformId);
-    expect(live.updates[0]).toMatch(/^\*\*Thinking\*\* · 0s$/);
+    expect(live.updates[0]).toBe("**Thinking…**");
     await until(() => live.final);
     expect(live.final).toBe("Saturday is clear.");
-    expect(live.updates.some((u) => u.includes("**Working**") && u.includes("Running a command"))).toBe(true);
+    expect(live.updates.some((u) => u.startsWith("**Working") && u.includes("Running a command"))).toBe(true);
     // The answer went into the live reply: no separate message.
     expect(channel.sent).toHaveLength(0);
     expect(channel.reactions).toEqual([`${inbound.platformId}:processing`, `${inbound.platformId}:done`]);

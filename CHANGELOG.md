@@ -5,6 +5,9 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
 ## Unreleased
 
+- QQ no longer leaves a "正在思考 · 0 秒" message next to every answer: its streaming messages only ever showed their first frame, so QQ private chats now keep "typing…" on while the agent works and get the answer as a normal reply.
+- Live progress replies on the other chat apps start as "Thinking…" and show the elapsed time from 3 seconds on, instead of opening with "0s".
+
 ## 0.1.4
 
 - A connection's "…" menu is no longer clipped by the card around it, and opens upward when there is no room below.
