@@ -17,21 +17,25 @@ afterEach(async () => {
   current = undefined;
 });
 
-/** Run a command in a shell with the session's environment, as a harness does. */
-const shell = (env: Record<string, string>, command: string) =>
+/** Print a variable from a shell with the session's environment, as the agent's commands do. */
+const readInShell = (env: Record<string, string>, name: string) =>
   new Promise<string>((resolve, reject) => {
-    execFile("sh", ["-c", command], { env: { ...process.env, ...env } }, (error, stdout) =>
-      error ? reject(error) : resolve(stdout.trim()),
+    const [file, args] =
+      process.platform === "win32"
+        ? ["powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `[Console]::Out.Write($env:${name})`]]
+        : ["sh", ["-c", `printf '%s' "$${name}"`]];
+    execFile(file as string, args as string[], { env: { ...process.env, ...env } }, (error, stdout) =>
+      error ? reject(error) : resolve(stdout.replace(/\r\n/g, "\n")),
     );
   });
 
-/** A rig whose agent answers every message with what `echo $NAME` prints in its shell. */
+/** A rig whose agent answers every message with what its shell prints for `$NAME`. */
 async function echoing(name: string, extra: Parameters<typeof rig>[1] = {}) {
   const seen: ScriptedTurn["options"][] = [];
   const r = await rig(async (t) => {
     seen.push(t.options);
     const env = t.options.env as Record<string, string>;
-    const value = await shell(env, `printf '%s' "$${name}"`);
+    const value = await readInShell(env, name);
     for (const id of messageIds(t.input)) await runCli(env, ["message", "reply", id], value || "(unset)");
   }, extra);
   return { r, seen };
