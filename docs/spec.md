@@ -586,6 +586,7 @@ docs/             文档
 | 飞书管理员审核 | 用 `bot/v3/info` 的 `activate_status` 判断：不为 2 时连接显示"等待管理员审核"，每 30 秒检查一次，通过后自动连上。逻辑有测试覆盖；需要审核的租户尚未实测 |
 | Mingle 端到端，Codex 0.167.1 | 通过。第二个人的问题在 Codex 执行命令期间插入，Codex 先回答了插入的问题，再回"On it."，最后给出第一个任务的结果；三条消息全部标为已回复 |
 | Mingle 端到端，Claude Code | 通过（`test/e2e.test.ts`）。Agent 读了注入的指南，用 `mingle message reply` 引用回复；第二个人在它执行 15 秒命令期间发问，两件事分别回复，四条消息全部标为已回复 |
+| 跨平台构建与 v0.1.0 发布 | 通过（2026-11-13）。CI 在 macOS、Ubuntu、Windows 上跑完整测试，桌面壳能交叉编译到六个目标。发布流水线一次产出：macOS 的 DMG（两种芯片）、Windows 的 NSIS 安装包（x64、ARM64）、Linux 的 deb、rpm 和 tar.gz，以及六个平台的更新清单。下载的 Apple 芯片 DMG 经 `spctl` 判定为 "Notarized Developer ID"，公证票据已装订，`codesign --verify --deep --strict` 通过，内置的 Mingle 报告版本 0.1.0 |
 
 ### 12.2 仍待验证
 
@@ -601,6 +602,8 @@ docs/             文档
 | Slack 端到端 | 预填建应用链接能否打开（该链接格式不在 Slack 官方文档里）、Socket Mode 收发、线程回复、`markdown` 块渲染、文件上传 | 一个 Slack 工作区 |
 | Telegram 端到端 | 长轮询收发、引用回复、表情回执 | 一个 bot token |
 | Discord 端到端 | Gateway 收发、resume、引用回复、表情、实时编辑、文件上传、邀请链接（假定应用 ID 等于机器人用户 ID，新建应用都是这样） | 一个 Discord bot token 和一个测试服务器 |
+| Windows、Linux 实机 | 安装、托盘、开机自启、自动更新；凭据走 DPAPI、Secret Service；Codex 在 PowerShell 里按指南调用 `mingle` | 一台 Windows 和一台 Linux 桌面机 |
+| 自动更新 | 已安装的 0.1.0 能收到下一个正式版并完成增量更新 | 发出 0.1.1 |
 | 离线补推 | 各平台长连接断开期间的消息是否补推、补推多久 | 已接入的机器人 |
 
 ## 13. 未决问题
