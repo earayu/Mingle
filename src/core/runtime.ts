@@ -44,6 +44,8 @@ export class AgentRuntime {
   private chain: Promise<void> = Promise.resolve();
   private status: AgentStatus | undefined;
   private disposed = false;
+  /** Messages the owner asked to try again; their next delivery says so. */
+  private readonly retried = new Set<string>();
 
   private readonly agentId: string;
   private readonly deps: RuntimeDeps;
@@ -70,6 +72,14 @@ export class AgentRuntime {
   enqueueMessage(messageId: string): void {
     this.pending.push({ kind: "message", id: messageId });
     this.schedule();
+  }
+
+  /** Deliver messages again that were given up on. The store already has them back as received. */
+  retry(messageIds: readonly string[]): void {
+    for (const id of messageIds) {
+      this.retried.add(id);
+      this.enqueueMessage(id);
+    }
   }
 
   /** Input that is not a chat message: a reminder firing, or a note from Mingle itself. */
@@ -175,7 +185,10 @@ export class AgentRuntime {
     const chat = message && store.chat(message.chatId);
     const connection = chat && store.connection(chat.connectionId);
     if (!message || !chat || !connection) return "";
-    return formatMessage(message, chat, connection.platform, { ownerId: connection.ownerId });
+    const text = formatMessage(message, chat, connection.platform, { ownerId: connection.ownerId });
+    if (!this.retried.delete(messageId)) return text;
+    // An old message coming back: the agent should know it is late, not treat it as new.
+    return `[mingle] Retry: ${message.id} was not answered when it arrived (see its time). Reply to it now, and say briefly that the answer is late.\n${text}`;
   }
 
   private async ensureSession(): Promise<HarnessSession> {

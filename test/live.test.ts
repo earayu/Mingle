@@ -200,3 +200,67 @@ describe("live replies", () => {
     expect(mingle.store.agent(agentId)).toMatchObject({ status: "error", statusFailure: "not_installed" });
   });
 });
+
+describe("retrying messages", () => {
+  /** A harness that fails while `broken`, then answers every message, saying what it was told. */
+  const answering = (state: { broken: boolean }) => async (t: Parameters<Parameters<typeof rig>[0]>[0]) => {
+    if (state.broken) throw new Error("Not logged in · Please run /login");
+    for (const id of messageIds(t.input)) {
+      await runCli(t.options.env as Record<string, string>, ["message", "reply", id], "Sorry for the wait: yes.");
+    }
+  };
+
+  it("answers a failed message once the owner retries it, telling the agent it is late", async () => {
+    const state = { broken: true };
+    current = await rig(answering(state), { live: true, wrap: failingAs("auth", "Not logged in · Please run /login") });
+    const { channel, mingle, agentId, turns, admin } = current;
+    const inbound = channel.receive({ text: "is Saturday on?" });
+    const chat = await until(() => mingle.store.agentChats(agentId)[0]?.id);
+    await until(() => mingle.store.chatMessages(chat, 10)[0]?.state === "failed");
+    await until(() => channel.lives[0]?.final);
+
+    state.broken = false;
+    const { json } = await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, {});
+    const id = mingle.store.chatMessages(chat, 10)[0]?.id as string;
+    expect(json).toEqual({ retried: [id] });
+
+    // A new live reply opens on the same message and becomes the answer.
+    await until(() => channel.lives[1]?.final);
+    expect(channel.lives[1]).toMatchObject({ replyTo: inbound.platformId, final: "Sorry for the wait: yes." });
+    expect(turns.at(-1)?.input).toMatch(new RegExp(`^\\[mingle\\] Retry: ${id} was not answered`));
+    expect(turns.at(-1)?.input).toContain("is Saturday on?");
+    expect(mingle.store.message(id)?.state).toBe("replied");
+    expect(channel.reactions.slice(-2)).toEqual([`${inbound.platformId}:processing`, `${inbound.platformId}:done`]);
+    // The error clears once the turn that answered it ends.
+    await until(() => mingle.store.agent(agentId)?.status === "idle");
+  });
+
+  it("retries an unanswered message, and does nothing for messages that were answered", async () => {
+    const state = { ignore: true };
+    current = await rig(async (t) => {
+      if (state.ignore) return;
+      await answering({ broken: false })(t);
+    });
+    const { channel, mingle, agentId, turns, admin } = current;
+    channel.receive({ text: "one" });
+    const chat = await until(() => mingle.store.agentChats(agentId)[0]?.id);
+    await until(() => mingle.store.chatMessages(chat, 10)[0]?.state === "unanswered");
+    const id = mingle.store.chatMessages(chat, 10)[0]?.id as string;
+
+    state.ignore = false;
+    expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: [id] })).json).toEqual({
+      retried: [id],
+    });
+    await until(() => mingle.store.message(id)?.state === "replied");
+    expect(channel.sent.map((m) => m.text)).toEqual(["Sorry for the wait: yes."]);
+
+    // Already answered: a second click is a no-op, with no new turn.
+    const before = turns.length;
+    expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: [id] })).json).toEqual({
+      retried: [],
+    });
+    await sleep(400);
+    expect(turns).toHaveLength(before);
+    expect((await admin("POST", "/v1/admin/agents/a_nope/messages/retry", {})).status).toBe(404);
+  });
+});
