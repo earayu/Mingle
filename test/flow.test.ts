@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { scriptedRuntime } from "@botiverse/oar/testing";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Harness, HarnessSession } from "../src/harness/harness.ts";
+import { oarHarness } from "../src/harness/harness.ts";
 import { messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
 
 /**
@@ -248,6 +251,8 @@ describe("agent settings", () => {
   it("renames the agent and changes its model; a new model keeps the session", async () => {
     current = await rig(async () => {});
     const { mingle, agentId } = current;
+    // Startup opens a session now; wait for its id before simulating an older one.
+    await until(() => mingle.store.agent(agentId)?.sessionId);
     mingle.store.setSessionId(agentId, "s-1");
     const renamed = await current.admin("PATCH", `/v1/admin/agents/${agentId}`, { name: " Alex 2 ", model: "sonnet" });
     expect(renamed.status).toBe(200);
@@ -264,5 +269,194 @@ describe("agent settings", () => {
     current = await rig(async () => {});
     const refused = await current.admin("PATCH", `/v1/admin/agents/${current.agentId}`, { harness: "nope" });
     expect(refused.json).toMatchObject({ error: "harness_unavailable" });
+  });
+
+  /** A real adapter over the scripted runtime, with extra/blocked list entries. */
+  const wrappedHarness = (disabled: Record<string, { code: string; reason: string }>): Harness => {
+    const inner = oarHarness({ require: () => scriptedRuntime({ id: "scripted", turn: async () => {} }) });
+    return {
+      ...inner,
+      available: async () => [
+        ...[...(await inner.available()), { id: "scripted", name: "Scripted" }, { id: "other-ok", name: "Other" }].map(
+          (h) => {
+            const d = disabled[h.id];
+            return d ? { ...h, disabled: d } : h;
+          },
+        ),
+        // Extra entries that exist only as disabled choices.
+        ...Object.entries(disabled)
+          .filter(([id]) => id !== "scripted" && id !== "other-ok")
+          .map(([id, d]) => ({ id, name: id, disabled: d })),
+      ],
+    };
+  };
+
+  const blocked = {
+    harness_opencode_version: {
+      code: "harness_opencode_version",
+      reason: "This OpenCode version is not compatible with Mingle. Use OpenCode 1.x or choose another harness.",
+    },
+  };
+
+  it("rejects creating an agent on a disabled harness", async () => {
+    current = await rig(async () => {}, { harnessAdapter: wrappedHarness(blocked) });
+    const before = current.mingle.store.agents().length;
+    const created = await current.admin("POST", "/v1/admin/agents", {
+      name: "Bob",
+      harness: "harness_opencode_version",
+    });
+    expect(created.status).toBe(400);
+    expect(created.json).toMatchObject({ error: "harness_opencode_version" });
+    expect(current.mingle.store.agents()).toHaveLength(before);
+  });
+
+  it("rejects switching to a disabled harness and keeps every setting", async () => {
+    current = await rig(async () => {}, { harnessAdapter: wrappedHarness(blocked) });
+    const { mingle, agentId } = current;
+    const before = mingle.store.agent(agentId);
+    const refused = await current.admin("PATCH", `/v1/admin/agents/${agentId}`, {
+      harness: "harness_opencode_version",
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.json).toMatchObject({ error: "harness_opencode_version" });
+    const after = mingle.store.agent(agentId);
+    expect(after?.harness).toBe(before?.harness);
+    expect(after?.model).toBe(before?.model);
+    expect(after?.sessionId).toBe(before?.sessionId);
+    expect(mingle.store.connections(agentId)).toHaveLength(1);
+  });
+
+  it("rejects a model-only change while the current harness is disabled", async () => {
+    current = await rig(async () => {}, {
+      harnessAdapter: wrappedHarness({ scripted: blocked.harness_opencode_version }),
+    });
+    const { mingle, agentId } = current;
+    const refused = await current.admin("PATCH", `/v1/admin/agents/${agentId}`, { model: "sonnet" });
+    expect(refused.status).toBe(400);
+    expect(refused.json).toMatchObject({ error: "harness_opencode_version" });
+    expect(mingle.store.agent(agentId)?.model).toBeNull();
+  });
+
+  it("still allows name and role edits and deleting a blocked agent", async () => {
+    current = await rig(async () => {}, {
+      harnessAdapter: wrappedHarness({ scripted: blocked.harness_opencode_version }),
+    });
+    const { admin, agentId, mingle } = current;
+    const renamed = await admin("PATCH", `/v1/admin/agents/${agentId}`, { name: "Alex 2" });
+    expect(renamed.status).toBe(200);
+    expect(renamed.json).toMatchObject({ name: "Alex 2" });
+    expect((await admin("PUT", `/v1/admin/agents/${agentId}/role`, { role: "fixture role" })).status).toBe(200);
+    expect((await admin("DELETE", `/v1/admin/agents/${agentId}`)).status).toBe(200);
+    expect(mingle.store.agent(agentId)).toBeUndefined();
+  });
+
+  it("switches to a compatible harness when one is offered", async () => {
+    current = await rig(async () => {}, { harnessAdapter: wrappedHarness(blocked) });
+    const { mingle, agentId } = current;
+    const switched = await current.admin("PATCH", `/v1/admin/agents/${agentId}`, { harness: "other-ok" });
+    expect(switched.status).toBe(200);
+    expect(mingle.store.agent(agentId)?.harness).toBe("other-ok");
+    await until(() => mingle.store.agent(agentId)?.sessionId);
+  });
+});
+
+describe("eager session startup", () => {
+  const stubSession = (id: string, dispose: () => void = () => {}): HarnessSession => ({
+    id,
+    resumed: false,
+    deliver: async () => ({ outcome: "prompted" }),
+    abort: async () => {},
+    dispose: async () => dispose(),
+  });
+
+  const stubHarness = (open: Harness["open"]): Harness => ({
+    available: async () => [{ id: "scripted", name: "Scripted" }],
+    open,
+  });
+
+  it("opens the session at start, before any message, and reuses it for the first input", async () => {
+    const deliveries: string[] = [];
+    const open = vi.fn(async () => ({
+      ...stubSession("s-start"),
+      deliver: async (text: string) => {
+        deliveries.push(text);
+        return { outcome: "prompted" as const };
+      },
+    }));
+    current = await rig(async () => {}, { harnessAdapter: stubHarness(open) });
+    await until(() => open.mock.calls.length === 1);
+    expect(current.turns).toHaveLength(0);
+    expect(current.channel.sent).toHaveLength(0);
+
+    current.channel.receive({ text: "hello" });
+    await until(() => deliveries.length === 1);
+    expect(open).toHaveBeenCalledOnce(); // The startup session was reused, not reopened.
+    expect(deliveries[0]).toContain("hello");
+  });
+
+  it("surfaces an undeclared startup failure before the first message", async () => {
+    let fail = true;
+    const open = vi.fn(async () => {
+      if (fail) throw new Error("fixture startup failure");
+      return stubSession("s-recovered");
+    });
+    current = await rig(async () => {}, { harnessAdapter: stubHarness(open) });
+    await until(() => current?.mingle.store.agent(current.agentId)?.status === "error");
+    expect(current.mingle.store.agent(current.agentId)?.statusDetail).toContain("fixture startup failure");
+    expect(current.channel.sent).toHaveLength(0);
+
+    // A brain-side change reopens and clears the error on success.
+    fail = false;
+    const renamed = await current.admin("PATCH", `/v1/admin/agents/${current.agentId}`, { name: "Alex 2" });
+    expect(renamed.status).toBe(200);
+    await until(() => current?.mingle.store.agent(current.agentId)?.status === "idle");
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("drains input retained during a failed startup once the brain recovers", async () => {
+    let failing = true;
+    const deliveries: string[] = [];
+    const open = vi.fn(async () => {
+      if (failing) throw new Error("fixture startup failure");
+      return {
+        ...stubSession("s-recovered"),
+        deliver: async (text: string) => {
+          deliveries.push(text);
+          return { outcome: "prompted" as const };
+        },
+      };
+    });
+    current = await rig(async () => {}, { harnessAdapter: stubHarness(open) });
+    const { mingle, agentId, channel, admin } = current;
+    await until(() => mingle.store.agent(agentId)?.status === "error");
+
+    const inbound = channel.receive({ text: "retained input" });
+    // Delivery tries and fails again on the same dead brain; the message stays received.
+    await until(() => open.mock.calls.length === 2);
+    const chat = mingle.store.agentChats(agentId)[0]?.id as string;
+    const stored = mingle.store.messageByPlatformId(chat, inbound.platformId);
+    expect(stored?.state).toBe("received");
+
+    failing = false;
+    const patched = await admin("PATCH", `/v1/admin/agents/${agentId}`, { model: "fixture-model" });
+    expect(patched.status).toBe(200);
+    await until(() => deliveries.length === 1, 10_000);
+    expect(deliveries[0]).toContain("retained input");
+    expect(open).toHaveBeenCalledTimes(3); // startup + failed delivery + recovery reopen
+  });
+
+  it("dispose waits for a pending open and tears down the arrived session once", async () => {
+    const gate = Promise.withResolvers<HarnessSession>();
+    let disposed = 0;
+    const open = vi.fn(() => gate.promise);
+    current = await rig(async () => {}, { harnessAdapter: stubHarness(open) });
+    const { mingle, agentId } = current;
+    await until(() => open.mock.calls.length === 1);
+    const stopped = mingle.runtime(agentId)?.dispose() as Promise<void>;
+    gate.resolve(stubSession("s-late", () => disposed++));
+    await stopped;
+    expect(disposed).toBe(1); // The late session was dropped inside open(), not kept.
+    expect(mingle.store.agent(agentId)?.sessionId).toBeNull();
+    expect(mingle.store.agent(agentId)?.status).toBe("offline");
   });
 });

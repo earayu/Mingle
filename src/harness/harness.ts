@@ -8,7 +8,9 @@ import {
   type Runtime,
   runtimeBrandIcon,
   type Session,
+  UnsupportedOptionError,
 } from "@botiverse/oar";
+import { MingleError } from "../core/errors.ts";
 
 export interface HarnessInfo {
   readonly id: string;
@@ -16,6 +18,8 @@ export interface HarnessInfo {
   readonly version?: string;
   /** SVG data URLs of the harness's mark, from OAR's offline brand set. */
   readonly icon?: { readonly light: string; readonly dark: string };
+  /** Listed but cannot serve Mingle: what is missing and the next step. */
+  readonly disabled?: { readonly code: string; readonly reason: string };
 }
 
 /** A model the harness will run right now. */
@@ -77,11 +81,51 @@ export interface RuntimeSource {
   list?(): readonly Runtime[];
 }
 
+/**
+ * Whether an installed harness can serve Mingle, from the runtime's own
+ * declarations. Mingle needs `appendSystemPrompt` (role and operating guide)
+ * and a non-empty `env` (API address and token), so a declared refusal of
+ * either blocks it. OAR's declarations do not cover OpenCode's version
+ * difference (1.x supports appended prompts, 2.x refuses them), so OpenCode
+ * also gets a version check here.
+ */
+function incompatibility(runtime: Runtime, install: AvailableInstallation): HarnessInfo["disabled"] {
+  if (runtime.refusedSessionOptions?.appendSystemPrompt !== undefined) {
+    return {
+      code: "harness_prompt_unsupported",
+      reason: "This harness cannot receive the agent's role and operating guide. Choose another harness.",
+    };
+  }
+  if (runtime.refusedSessionOptions?.env !== undefined) {
+    return {
+      code: "harness_env_unsupported",
+      reason: "This harness cannot receive the connection settings needed to reply in chat. Choose another harness.",
+    };
+  }
+  if (runtime.id === "opencode") {
+    const version = install.via === "executable" ? install.version?.trim() : undefined;
+    // OAR 0.97 supports prompt injection on OpenCode 1.x only. Its public
+    // refusal map omits this version-specific restriction.
+    if (!version || !/^(?:opencode\s+)?v?1\.\d+\.\d+(?:\S*)$/u.test(version)) {
+      return {
+        code: "harness_opencode_version",
+        reason: "This OpenCode version is not compatible with Mingle. Use OpenCode 1.x or choose another harness.",
+      };
+    }
+  }
+  return undefined;
+}
+
+function requireCompatible(runtime: Runtime, install: AvailableInstallation): void {
+  const issue = incompatibility(runtime, install);
+  if (issue) throw new MingleError(issue.code, issue.reason);
+}
+
 export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
   async function installation(runtime: Runtime): Promise<AvailableInstallation> {
     const found = await runtime.installation?.();
     if (found?.kind !== "available") {
-      throw new Error(`${runtime.id} is not installed on this computer`);
+      throw new MingleError("harness_unavailable", `${runtime.id} is not installed on this computer`);
     }
     return found;
   }
@@ -103,11 +147,13 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
         const brand = runtime.brand;
         const light = brand ? runtimeBrandIcon(brand, "light") : null;
         const dark = brand ? runtimeBrandIcon(brand, "dark") : null;
+        const disabled = incompatibility(runtime, found);
         out.push({
           id,
           name: brand?.name ?? id,
           ...(version ? { version } : {}),
           ...(light && dark ? { icon: { light, dark } } : {}),
+          ...(disabled ? { disabled } : {}),
         });
       }
       return out;
@@ -116,6 +162,7 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
     async models(id) {
       const runtime = source.require(id);
       const install = await installation(runtime);
+      requireCompatible(runtime, install);
       if (!runtime.listModels) return { kind: "unsupported" };
       const result = await runtime.listModels(install, { timeoutMs: 20_000 });
       if (result.kind !== "ok") return { kind: result.kind };
@@ -134,6 +181,7 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
     async open(options, events) {
       const runtime = source.require(options.harness);
       const install = await installation(runtime);
+      requireCompatible(runtime, install);
       const base = {
         cwd: options.cwd,
         appendSystemPrompt: options.appendSystemPrompt,
@@ -142,16 +190,28 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes): Harness {
       };
       let session: Session;
       let resumed = false;
-      if (options.resume) {
-        try {
-          session = await runtime.session(install, { ...base, resume: options.resume });
-          resumed = true;
-        } catch (error) {
-          if ((error as Error).name !== "SessionNotFoundError") throw error;
+      try {
+        if (options.resume) {
+          try {
+            session = await runtime.session(install, { ...base, resume: options.resume });
+            resumed = true;
+          } catch (error) {
+            if ((error as Error).name !== "SessionNotFoundError") throw error;
+            session = await runtime.session(install, base);
+          }
+        } else {
           session = await runtime.session(install, base);
         }
-      } else {
-        session = await runtime.session(install, base);
+      } catch (error) {
+        // A refusal the declarations did not cover (like OpenCode's version split):
+        // report it as incompatibility, not as a raw harness error.
+        if (error instanceof UnsupportedOptionError) {
+          throw new MingleError(
+            "harness_incompatible",
+            "This harness cannot apply the settings Mingle needs. Choose another harness.",
+          );
+        }
+        throw error;
       }
 
       session.events((event) => {

@@ -90,6 +90,8 @@ export interface Harness {
   name: string;
   version?: string;
   icon?: { light: string; dark: string };
+  /** Listed but cannot serve Mingle: what is missing and the next step. */
+  disabled?: { code: string; reason: string };
 }
 
 export interface Model {
