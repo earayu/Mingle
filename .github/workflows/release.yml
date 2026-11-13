@@ -39,13 +39,14 @@ jobs:
             test "$tag" = "v$version" || { echo "::error::tag $tag does not match package.json $version"; exit 1; }
             grep -q "^## $version\b" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## $version' section"; exit 1; }
           fi
-          mac='{"name":"macOS","os":"macos-latest","platform":"darwin/arm64,darwin/amd64"}'
+          mac_arm='{"name":"macOS-arm64","os":"macos-latest","platform":"darwin/arm64"}'
+          mac_intel='{"name":"macOS-amd64","os":"macos-latest","platform":"darwin/amd64"}'
           win='{"name":"Windows","os":"ubuntu-latest","platform":"windows/amd64,windows/arm64"}'
           linux='{"name":"Linux","os":"ubuntu-latest","platform":"linux/amd64,linux/arm64"}'
           prerelease=false
           case "$version" in *-*) prerelease=true ;; esac
-          if [ -n "$tag" ] && [ "$prerelease" = true ]; then rows="[$mac]"; else rows="[$mac,$win,$linux]"; fi
-          smoke_mac='{"name":"macOS","os":"macos-latest","artifact":"mingle-macOS","glob":"*.dmg","arch":"arm64"}'
+          if [ -n "$tag" ] && [ "$prerelease" = true ]; then rows="[$mac_arm,$mac_intel]"; else rows="[$mac_arm,$mac_intel,$win,$linux]"; fi
+          smoke_mac='{"name":"macOS","os":"macos-latest","artifact":"mingle-macOS-arm64","glob":"*.dmg","arch":"arm64"}'
           smoke_win='{"name":"Windows","os":"windows-latest","artifact":"mingle-Windows","glob":"*.exe","arch":"amd64"}'
           smoke_linux='{"name":"Linux","os":"ubuntu-latest","artifact":"mingle-Linux","glob":"*.tar.gz","arch":"amd64"}'
           if [ -n "$tag" ] && [ "$prerelease" = true ]; then smoke_rows="[$smoke_mac]"; else smoke_rows="[$smoke_mac,$smoke_win,$smoke_linux]"; fi
@@ -86,9 +87,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      # mygo -upload merges one shared SHA256SUMS and shared install scripts
-      # with --clobber; parallel legs could race, so uploads are serialized.
-      max-parallel: 1
+      # Build targets independently; only the upload job writes shared release assets.
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
@@ -111,7 +110,7 @@ jobs:
       # Without a Developer ID the app is signed ad hoc: it runs, but Gatekeeper
       # blocks it on other Macs until the user allows it in System Settings.
       - name: Import the Developer ID certificate and notary credentials
-        if: matrix.name == 'macOS'
+        if: startsWith(matrix.platform, 'darwin/')
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -149,7 +148,7 @@ jobs:
       - name: Stage Mingle and Node.js
         run: node desktop/scripts/prepare.mjs --platform "${{ matrix.platform }}"
 
-      - name: Build, sign and upload
+      - name: Build and sign
         working-directory: desktop
         env:
           GH_TOKEN: ${{ github.token }}
@@ -164,12 +163,11 @@ jobs:
             # before this build starts.
             draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" || { echo "::error::cannot inspect release $RELEASE_TAG"; exit 1; }
             [ "$draft" = true ] || { echo "::error::release $RELEASE_TAG is already published; refusing to modify it"; exit 1; }
-            upload=-upload
           fi
-          go tool mygo build -platform "${{ matrix.platform }}" $upload
+          go tool mygo build -platform "${{ matrix.platform }}"
 
       - name: Verify the macOS signatures
-        if: matrix.name == 'macOS' && needs.plan.outputs.tag != '' && needs.plan.outputs.prerelease == 'false'
+        if: startsWith(matrix.platform, 'darwin/') && needs.plan.outputs.tag != '' && needs.plan.outputs.prerelease == 'false'
         run: |
           for image in desktop/build/darwin-*/*.dmg; do
             mount="$(mktemp -d)"
@@ -192,6 +190,12 @@ jobs:
             desktop/build/*/*.tar.gz
             desktop/build/*/*.deb
             desktop/build/*/*.rpm
+            desktop/build/*/*.delta
+            desktop/build/*/update-*.json
+            desktop/build/*/install.sh
+            desktop/build/*/install.ps1
+            desktop/build/SHA256SUMS
+          compression-level: 0
           if-no-files-found: error
 
   # Unpack each platform's installer and check the bundled Mingle actually runs:
@@ -221,11 +225,44 @@ jobs:
           export MINGLE_EXPECTED_VERSION="$(node -p 'require("./package.json").version')"
           node scripts/package-smoke.mjs "$file"
 
+  # One writer assembles checksums and shared scripts after parallel builds.
+  upload:
+    needs: [plan, build, smoke]
+    if: needs.plan.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mingle-*
+          path: ${{ runner.temp }}/release-builds
+      - name: Assemble and upload the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          node scripts/releases.ts assemble "$TAG" "$RUNNER_TEMP/release-builds" "$RUNNER_TEMP/release-upload"
+          draft="$(gh release view "$TAG" --json isDraft --jq .isDraft)" || { echo "::error::cannot inspect release $TAG"; exit 1; }
+          [ "$draft" = true ] || { echo "::error::release $TAG is already published; refusing to modify it"; exit 1; }
+          files=()
+          manifests=()
+          for file in "$RUNNER_TEMP/release-upload"/*; do
+            case "${file##*/}" in
+              update-*.json) manifests+=("$file") ;;
+              *) files+=("$file") ;;
+            esac
+          done
+          gh release upload "$TAG" --clobber "${files[@]}"
+          gh release upload "$TAG" --clobber "${manifests[@]}"
+
   # Downloads every uploaded asset and verifies sizes, SHA256SUMS digests and
   # the Ed25519 signatures the update manifests record for each archive and
   # delta, against the release metadata.
   verify:
-    needs: [plan, build, smoke]
+    needs: [plan, upload]
     if: needs.plan.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
