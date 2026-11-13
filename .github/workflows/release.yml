@@ -15,6 +15,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -22,6 +26,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
       tag: ${{ steps.plan.outputs.tag }}
+      smoke_matrix: ${{ steps.plan.outputs.smoke_matrix }}
     steps:
       - uses: actions/checkout@v4
       - id: plan
@@ -40,8 +45,13 @@ jobs:
           prerelease=false
           case "$version" in *-*) prerelease=true ;; esac
           if [ -n "$tag" ] && [ "$prerelease" = true ]; then rows="[$mac]"; else rows="[$mac,$win,$linux]"; fi
+          smoke_mac='{"name":"macOS","os":"macos-latest","artifact":"mingle-macOS","glob":"*.dmg","arch":"arm64"}'
+          smoke_win='{"name":"Windows","os":"windows-latest","artifact":"mingle-Windows","glob":"*.exe","arch":"amd64"}'
+          smoke_linux='{"name":"Linux","os":"ubuntu-latest","artifact":"mingle-Linux","glob":"*.tar.gz","arch":"amd64"}'
+          if [ -n "$tag" ] && [ "$prerelease" = true ]; then smoke_rows="[$smoke_mac]"; else smoke_rows="[$smoke_mac,$smoke_win,$smoke_linux]"; fi
           {
             echo "matrix={\"include\":$rows}"
+            echo "smoke_matrix={\"include\":$smoke_rows}"
             echo "prerelease=$prerelease"
             echo "tag=$tag"
           } >> "$GITHUB_OUTPUT"
@@ -56,10 +66,18 @@ jobs:
           version="${TAG#v}"
           # The release notes are the version's section of CHANGELOG.md.
           awk -v v="$version" '$0 ~ "^## "v"( |$)" {on=1; next} /^## / {on=0} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-          if ! gh release view "$TAG" > /dev/null 2>&1; then
+          # Fail closed: a published release is immutable, and auth/network
+          # errors must stop the run rather than be read as "release missing".
+          if draft="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>"$RUNNER_TEMP/view.err")"; then
+            [ "$draft" = true ] || { echo "::error::release $TAG is already published; refusing to modify it"; exit 1; }
+          elif grep -qiE 'not found|HTTP ?404' "$RUNNER_TEMP/view.err"; then
             flags=""
             if [ "$PRERELEASE" = true ]; then flags="--prerelease"; fi
             gh release create "$TAG" --draft --verify-tag $flags --title "Mingle $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            echo "::error::cannot inspect release $TAG"
+            cat "$RUNNER_TEMP/view.err"
+            exit 1
           fi
 
   build:
@@ -68,6 +86,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # mygo -upload merges one shared SHA256SUMS and shared install scripts
+      # with --clobber; parallel legs could race, so uploads are serialized.
+      max-parallel: 1
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
@@ -98,7 +119,17 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
         run: |
+          # A formal release must not ship ad hoc signed: require the full
+          # signing material up front. Untagged and prerelease builds may
+          # still fall back to ad hoc.
+          if [ -n "$RELEASE_TAG" ] && [ "$PRERELEASE" = false ]; then
+            for name in MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+              test -n "${!name}" || { echo "::error::Formal releases require $name"; exit 1; }
+            done
+          fi
           if [ -z "$MACOS_CERTIFICATE" ]; then echo "no certificate: ad hoc signing"; exit 0; fi
           keychain="$RUNNER_TEMP/signing.keychain-db"
           password="$(openssl rand -base64 24)"
@@ -123,9 +154,34 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
-          if [ -n "${{ needs.plan.outputs.tag }}" ]; then upload=-upload; fi
+          if [ -n "$RELEASE_TAG" ]; then
+            # Tagged builds sign the update archives and deltas recorded in
+            # the manifests; without the key there is nothing valid to upload.
+            test -n "$MYGO_UPDATER_PRIVATE_KEY" || { echo "::error::Tagged builds require MYGO_UPDATER_PRIVATE_KEY"; exit 1; }
+            # Refuse reruns targeting a release that is already published
+            # before this build starts.
+            draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" || { echo "::error::cannot inspect release $RELEASE_TAG"; exit 1; }
+            [ "$draft" = true ] || { echo "::error::release $RELEASE_TAG is already published; refusing to modify it"; exit 1; }
+            upload=-upload
+          fi
           go tool mygo build -platform "${{ matrix.platform }}" $upload
+
+      - name: Verify the macOS signatures
+        if: matrix.name == 'macOS' && needs.plan.outputs.tag != '' && needs.plan.outputs.prerelease == 'false'
+        run: |
+          for image in desktop/build/darwin-*/*.dmg; do
+            mount="$(mktemp -d)"
+            trap 'hdiutil detach "$mount" -quiet || true; rmdir "$mount"' EXIT
+            hdiutil attach "$image" -nobrowse -readonly -mountpoint "$mount"
+            codesign --verify --deep --strict "$mount/Mingle.app"
+            spctl --assess --type execute --verbose=2 "$mount/Mingle.app"
+            xcrun stapler validate "$image"
+            hdiutil detach "$mount" -quiet
+            rmdir "$mount"
+            trap - EXIT
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -146,37 +202,52 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { name: macOS, os: macos-latest, artifact: mingle-macOS, glob: "*.dmg", arch: arm64 }
-          - { name: Windows, os: windows-latest, artifact: mingle-Windows, glob: "*.exe", arch: amd64 }
-          - { name: Linux, os: ubuntu-latest, artifact: mingle-Linux, glob: "*.tar.gz", arch: amd64 }
+      matrix: ${{ fromJSON(needs.plan.outputs.smoke_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # Prereleases build macOS only; the other legs find no artifact and skip.
       - uses: actions/download-artifact@v4
-        continue-on-error: true
         with:
           name: ${{ matrix.artifact }}
           path: artifacts
       - name: Smoke the installer
         shell: bash
         run: |
-          if [ -z "$(find artifacts -type f 2>/dev/null | head -1)" ]; then
-            echo "no artifact for ${{ matrix.name }} (prereleases build macOS only); skipping"
-            exit 0
-          fi
           file="$(find artifacts -type f -name '${{ matrix.glob }}' | grep ${{ matrix.arch }} | head -1)"
           test -n "$file" || { echo "no ${{ matrix.arch }} ${{ matrix.glob }} in artifacts"; find artifacts -type f; exit 1; }
           echo "smoke: $file"
+          export MINGLE_EXPECTED_VERSION="$(node -p 'require("./package.json").version')"
           node scripts/package-smoke.mjs "$file"
+
+  # Downloads every uploaded asset and verifies sizes, SHA256SUMS digests and
+  # the Ed25519 signatures the update manifests record for each archive and
+  # delta, against the release metadata.
+  verify:
+    needs: [plan, build, smoke]
+    if: needs.plan.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Verify the complete draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          # Drafts are not reachable via /releases/tags/<tag>; resolve the
+          # release's own API URL instead.
+          release_api="$(gh release view "$TAG" --json apiUrl --jq .apiUrl)"
+          gh api "$release_api" > "$RUNNER_TEMP/release.json"
+          gh release download "$TAG" --dir "$RUNNER_TEMP/release-assets"
+          node scripts/releases.ts verify "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/release-assets"
 
   # Test builds go out at once, as prereleases; releases wait in draft for a maintainer.
   publish-prerelease:
-    needs: [plan, build, smoke]
+    needs: [plan, verify]
     if: needs.plan.outputs.tag != '' && needs.plan.outputs.prerelease == 'true'
     runs-on: ubuntu-latest
     steps:

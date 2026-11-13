@@ -1,0 +1,70 @@
+name: Website
+
+# mingle.build is a static-assets Cloudflare Worker (site/wrangler.jsonc). Every
+# trigger rebuilds the site from a snapshot of the published "latest" GitHub
+# release — never from package.json — and re-checks that snapshot is still
+# latest immediately before deploying. That aborts runs whose release moved
+# between snapshot and deploy; a change landing after the check cannot be
+# atomically prevented, and a manual rerun repairs it.
+on:
+  release:
+    types: [published, edited]
+  push:
+    branches: [main]
+    paths: ["site/**", "scripts/releases.ts", ".github/workflows/website.yml"]
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name != 'release' || (!github.event.release.draft && !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check deployment credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::Configure CLOUDFLARE_API_TOKEN for the existing mingle-build Worker'; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo '::error::Configure CLOUDFLARE_ACCOUNT_ID'; exit 1; }
+      - name: Capture the published release
+        run: node scripts/releases.ts snapshot "$RUNNER_TEMP/latest-release.json"
+      - name: Build both languages from the snapshot
+        run: node site/scripts/build.mjs --release "$RUNNER_TEMP/latest-release.json"
+      - name: Save the release snapshot and generated site
+        uses: actions/upload-artifact@v4
+        with:
+          name: website
+          path: |
+            site/dist
+            ${{ runner.temp }}/latest-release.json
+          if-no-files-found: error
+      - name: Deploy the existing static site
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.161.0"
+          packageManager: npm
+          preCommands: node scripts/releases.ts check-latest "$RUNNER_TEMP/latest-release.json"
+          command: deploy --config site/wrangler.jsonc

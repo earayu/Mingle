@@ -511,8 +511,9 @@ docs/             文档
 ### 9.4 分发
 
 - **首版**：npm 包，命令行启动，浏览器打开控制台。
-- **桌面应用**：三个系统的安装包都带自动更新，由 `.github/workflows/release.yml` 构建。正式版（`v0.2.0`）构建全部平台，进草稿 Release，维护者装一遍后发布；测试版（`v0.2.0-beta.1`）只构建 macOS，自动发布为 Pre-release，已安装的应用不会更新到它。完整流程和签名所需的 secret 见 [发布流程](releasing.md)。没有证书时，macOS 是 ad hoc 签名，Windows 不签名，首次打开都需要用户放行。Homebrew cask 待有 Developer ID 后再加。
+- **桌面应用**：三个系统的安装包都带自动更新，由 `.github/workflows/release.yml` 构建。正式版（`v0.2.0`）构建全部平台，进草稿 Release，维护者装一遍后发布；测试版（`v0.2.0-beta.1`）只构建 macOS，自动发布为 Pre-release，已安装的应用不会更新到它。完整流程和签名所需的 secret 见 [发布流程](releasing.md)。正式标签要求 Developer ID 签名和公证，缺 secret 直接失败；只有手动构建和测试版允许 ad hoc 签名，Windows 安装包不签名，首次打开都需要用户放行。Homebrew cask 待有 Developer ID 后再加。
 - **Mac App Store 上不了。** 上架要求应用沙箱，而沙箱内的进程及其子进程不能执行用户自己安装的 `claude`、`codex`，也读不到 `~/.claude` 之类的登录态和用户的代码目录。Mingle 的核心就是拉起这些 harness，这一点和 MiaoYan 这类只读写用户所选文件夹的应用不同。
+- **官网与发布同源**：GitHub 上已发布的 Latest Release 是"当前正式版"的唯一事实来源。网站（`site/`，Cloudflare Worker 纯静态资源，没有后端、没有遥测）由 `.github/workflows/website.yml` 构建：先用 `scripts/releases.ts snapshot` 冻结 Latest 的完整元数据，再从这份快照渲染全部下载链接，部署前用 `check-latest` 复核 Latest 没有中途变掉。正式版在草稿里由 verify 作业校验全部安装包的大小、SHA256SUMS，以及更新清单中记录的更新包／增量包 Ed25519 签名，之后仍由维护者手动发布；测试版自动发布为 Pre-release，与正式渠道隔离，网站和已安装应用都不会看到它。桌面端实际的自动升级链路（已安装应用收到新版本）尚未实测。
 - npm 包名 `mingle-app`（`mingle` 已被占用），命令名 `mingle`。
 - 开源，MIT 许可。
 

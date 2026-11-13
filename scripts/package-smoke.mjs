@@ -69,6 +69,9 @@ async function checkVersion(nodeBin, entry) {
   const { stdout } = await run(nodeBin, [entry, "--version"], { timeout: 30_000 });
   const version = stdout.trim();
   if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`--version printed ${JSON.stringify(version)}`);
+  const expected = process.env.MINGLE_EXPECTED_VERSION;
+  if (expected && version !== expected)
+    throw new Error(`--version printed ${JSON.stringify(version)}, expected ${JSON.stringify(expected)}`);
   console.log(`  --version: ${version}`);
 }
 

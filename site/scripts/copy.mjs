@@ -169,9 +169,8 @@ export const copy = {
     end: {
       title: "Bring your agent to the group chat.",
       lead: "Free, open source, and on your own computer.",
-      unsigned:
-        "The apps aren't signed yet. On macOS, allow Mingle in System Settings → Privacy & Security the first time. On Windows, choose More info → Run anyway.",
-      allReleases: "All releases",
+      installation: "See this release's notes for signing details and installation instructions.",
+      releaseNotes: "Release notes",
     },
     footer: {
       disclaimer:
@@ -328,9 +327,8 @@ export const copy = {
     end: {
       title: "把你的 Agent 拉进群吧。",
       lead: "免费、开源，运行在你自己的电脑上。",
-      unsigned:
-        "应用暂未签名。macOS 第一次打开时，在“系统设置 → 隐私与安全性”里允许 Mingle；Windows 上选择“更多信息 → 仍要运行”。",
-      allReleases: "所有版本",
+      installation: "签名情况和安装说明见本版本的发布说明。",
+      releaseNotes: "发布说明",
     },
     footer: {
       disclaimer: "Mingle 与本页提到的聊天软件和模型服务商没有关联，相关名称和标识归其所有者。",
