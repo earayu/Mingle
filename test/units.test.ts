@@ -5,6 +5,7 @@ import { formatMessage } from "../src/core/format.ts";
 import { split } from "../src/core/outbox.ts";
 import { nextFire, parseDuration } from "../src/core/schedule.ts";
 import { applyShellEnvironment } from "../src/platform/shell-env.ts";
+import { type LocalePreference, localePreference, resolveLocale } from "../web/src/locale.ts";
 
 describe("formatMessage", () => {
   it("puts everything an agent needs on one header line", () => {
@@ -170,5 +171,44 @@ describe("applyShellEnvironment", () => {
     const bare: Record<string, string | undefined> = {};
     applyShellEnvironment(bare, {}, "/app/node/bin");
     expect(bare.PATH).toBe("/app/node/bin");
+  });
+});
+
+describe("language preference", () => {
+  // absent storage, a legacy stored "system", and invalid values all mean follow the system
+  it.each([[null], ["system"], ["fr"], [""]])("localePreference(%j) is system", (saved) => {
+    expect(localePreference(saved)).toBe("system");
+  });
+
+  it.each(["en", "zh-CN"])("localePreference(%s) keeps the explicit choice", (saved) => {
+    expect(localePreference(saved)).toBe(saved);
+  });
+
+  it.each([
+    [["zh-CN"], "zh-CN"],
+    [["zh-Hans-CN"], "zh-CN"],
+    [["zh-TW"], "zh-CN"],
+    [["ZH_cn"], "zh-CN"],
+    [["en-GB", "zh-CN"], "en"],
+    [["zh-CN", "en-US"], "zh-CN"],
+    [["fr-FR", "zh-CN", "en"], "zh-CN"],
+    [["de-DE", "en-US", "zh-CN"], "en"],
+    [[], "en"],
+    [["fr-FR"], "en"],
+    [["zho", "english"], "en"],
+  ])("system resolves %j to %s", (languages, expected) => {
+    expect(resolveLocale("system", languages)).toBe(expected);
+  });
+
+  it.each([
+    ["en" as LocalePreference, ["zh-CN", "zh-TW"], "en"],
+    ["zh-CN" as LocalePreference, ["en-GB", "en-US"], "zh-CN"],
+  ])("an explicit %s choice wins over a %j list", (preference, languages, expected) => {
+    expect(resolveLocale(preference, languages)).toBe(expected);
+  });
+
+  it("switching back to system resolves the current list", () => {
+    const preference = localePreference(null);
+    expect(resolveLocale(preference, ["en-GB"])).toBe("en");
   });
 });
