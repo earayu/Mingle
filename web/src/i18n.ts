@@ -1,4 +1,5 @@
-import { createContext, useContext } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { type Locale, type LocalePreference, localePreference, resolveLocale } from "./locale.ts";
 
 const en = {
   "app.title": "Mingle",
@@ -606,13 +607,56 @@ const zh: Record<MessageKey, string> = {
   "agent.manage": "管理",
 };
 
-export type Locale = "en" | "zh-CN";
+export type { Locale, LocalePreference } from "./locale.ts";
+
 export const catalogs: Record<Locale, Record<MessageKey, string>> = { en, "zh-CN": zh };
 
-export function detectLocale(): Locale {
-  const saved = localStorage.getItem("mingle.locale");
-  if (saved === "en" || saved === "zh-CN") return saved;
-  return navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+interface LocaleRuntime {
+  readonly locale?: string;
+  on(event: string, listener: () => void): () => void;
+}
+
+function localeRuntime(): LocaleRuntime | undefined {
+  return (window as { mygo?: LocaleRuntime }).mygo;
+}
+
+export function savedLocale(): LocalePreference {
+  return localePreference(localStorage.getItem("mingle.locale"));
+}
+
+export function detectLocale(preference: LocalePreference = savedLocale()): Locale {
+  const native = localeRuntime()?.locale;
+  const languages = native ? [native] : navigator.languages?.length ? navigator.languages : [navigator.language];
+  return resolveLocale(preference, languages);
+}
+
+/** Keep the chosen preference separate from the language it currently resolves to. */
+export function useLocaleSettings() {
+  const [preference, setPreference] = useState<LocalePreference>(savedLocale);
+  const [locale, setResolvedLocale] = useState<Locale>(() => detectLocale(preference));
+  const setLocale = useCallback((next: LocalePreference) => {
+    if (next === "system") localStorage.removeItem("mingle.locale");
+    else localStorage.setItem("mingle.locale", next);
+    setPreference(next);
+    const resolved = detectLocale(next);
+    document.documentElement.lang = resolved;
+    setResolvedLocale(resolved);
+  }, []);
+  useEffect(() => {
+    const sync = () => {
+      const resolved = detectLocale(preference);
+      document.documentElement.lang = resolved;
+      setResolvedLocale(resolved);
+    };
+    const off = localeRuntime()?.on("mygo:locale", sync);
+    window.addEventListener("languagechange", sync);
+    sync();
+    return () => {
+      off?.();
+      window.removeEventListener("languagechange", sync);
+    };
+  }, [preference]);
+  return { locale, localePreference: preference, setLocale };
 }
 
 /** A known error code in the user's language; otherwise the server's own English explanation. */
@@ -627,9 +671,15 @@ export function errorText(t: Translate, error: unknown): string {
 
 export type Translate = (key: MessageKey, vars?: Record<string, string>) => string;
 
-export const I18n = createContext<{ t: Translate; locale: Locale; setLocale: (l: Locale) => void }>({
+export const I18n = createContext<{
+  t: Translate;
+  locale: Locale;
+  localePreference: LocalePreference;
+  setLocale: (l: LocalePreference) => void;
+}>({
   t: (key) => en[key],
   locale: "en",
+  localePreference: "system",
   setLocale: () => {},
 });
 
