@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { type Locale, useI18n } from "./i18n.ts";
+import { type OnlineState, online, useOnline } from "./online.ts";
 import { Button, Group, GroupRow, PageHeader, Section, Segmented } from "./ui.tsx";
 import { type UpdateState, updates, useUpdates } from "./updates.ts";
 
@@ -20,6 +21,7 @@ export function SettingsPage({ version }: { version: string }) {
   const { t, locale, setLocale } = useI18n();
   const [theme, setTheme] = useState<Theme>(savedTheme);
   const update = useUpdates();
+  const keep = useOnline();
   return (
     <>
       <PageHeader title={t("settings.title")} />
@@ -57,6 +59,13 @@ export function SettingsPage({ version }: { version: string }) {
               </GroupRow>
             </Group>
           </Section>
+          {keep ? (
+            <Section title={t("online.title")}>
+              <Group>
+                <OnlineRows state={keep} />
+              </Group>
+            </Section>
+          ) : null}
           <Section title={t("settings.about")}>
             <Group>
               <GroupRow>
@@ -126,5 +135,63 @@ function UpdateRows({ update }: { update: UpdateState }) {
         </GroupRow>
       ) : null}
     </>
+  );
+}
+
+/** The desktop app's settings that keep the agents online, in Settings and in the agent page's card. */
+export function OnlineRows({ state, notifications = true }: { state: OnlineState; notifications?: boolean }) {
+  const { t } = useI18n();
+  return (
+    <>
+      <ToggleRow
+        label={t("online.openAtLogin")}
+        hint={t("online.openAtLoginHint")}
+        checked={state.openAtLogin}
+        onChange={(on) => online.setOpenAtLogin(on)}
+      />
+      <ToggleRow
+        label={t("online.keepAwake")}
+        hint={t(state.platform === "darwin" ? "online.keepAwakeHintMac" : "online.keepAwakeHint")}
+        checked={state.keepAwake}
+        onChange={(on) => online.setKeepAwake(on)}
+      />
+      {notifications ? (
+        <ToggleRow
+          label={t("online.notifications")}
+          hint={t("online.notificationsHint")}
+          checked={state.notifications}
+          onChange={(on) => online.setNotifications(on)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function ToggleRow({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <GroupRow>
+      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span>{label}</span>
+          <span className="text-small text-ink2">{hint}</span>
+        </span>
+        <input
+          type="checkbox"
+          className="size-4 shrink-0 accent-[var(--accent-btn)]"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+      </label>
+    </GroupRow>
   );
 }

@@ -278,6 +278,30 @@ export function createApi(mingle: Mingle): Hono<Env> {
   };
 
   app.get("/v1/admin/status", (c) => c.json({ version: VERSION, agents: store.agents().map(agentView) }));
+
+  /**
+   * Every agent in a line, for the desktop app's menu bar icon (docs/spec.md 9.1): its state, what it
+   * works on, and what needs the owner. Counts and titles only: no message content or people.
+   */
+  app.get("/v1/admin/summary", (c) =>
+    c.json({
+      version: VERSION,
+      agents: store.agents().map((agent) => {
+        const connections = store.connections(agent.id);
+        const given = store.retryable(agent.id);
+        return {
+          id: agent.id,
+          slug: agent.slug,
+          name: agent.name,
+          status: agent.status,
+          task: store.tasks(agent.id, false).find((t) => t.status === "in_progress")?.title ?? null,
+          connections: connections.map((n) => ({ id: n.id, platform: n.platform, bot: n.botName, state: n.state })),
+          failed: given.filter((m) => m.state === "failed").length,
+          unanswered: given.filter((m) => m.state === "unanswered").length,
+        };
+      }),
+    }),
+  );
   app.get("/v1/admin/harnesses", async (c) => c.json(await mingle.availableHarnesses()));
   app.get("/v1/admin/harnesses/:id/models", async (c) => c.json(await mingle.harnessModels(c.req.param("id"))));
 

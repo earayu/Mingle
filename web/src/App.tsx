@@ -5,6 +5,7 @@ import { ConnectPage } from "./Connect.tsx";
 import { detectLocale, I18n, type Locale, translator, useI18n } from "./i18n.ts";
 import iconUrl from "./icon.svg";
 import { NewAgent } from "./NewAgent.tsx";
+import { onNavigateRequest } from "./online.ts";
 import { applyTheme, SettingsPage, savedTheme } from "./Settings.tsx";
 import { Avatar, Button, Eyebrow, PlusIcon, SettingsIcon, StatusDot, UpdateIcon } from "./ui.tsx";
 import { updates, useUpdates } from "./updates.ts";
@@ -100,9 +101,16 @@ function Shell() {
     };
     addEventListener("popstate", onPop);
     addEventListener("hashchange", onHash);
+    // The menu bar icon opens an agent's page in the desktop app.
+    const offNavigate = onNavigateRequest((path) => {
+      history.pushState(null, "", path);
+      setView(viewFromPath());
+      setMenuOpen(false);
+    });
     return () => {
       removeEventListener("popstate", onPop);
       removeEventListener("hashchange", onHash);
+      offNavigate();
     };
   }, []);
 
