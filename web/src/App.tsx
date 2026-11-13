@@ -44,8 +44,9 @@ function pathFor(view: View): string {
   }
 }
 
-// The desktop app's window injects `window.mygo`; there the sidebar shows the window's material.
-if ("mygo" in window) document.documentElement.dataset.shell = "desktop";
+// The desktop app's window injects `window.mygo`. On macOS the window is translucent and the
+// sidebar shows its material; Windows and Linux windows are opaque and keep the usual colours.
+if ("mygo" in window && /Mac/.test(navigator.userAgent)) document.documentElement.dataset.shell = "desktop";
 applyTheme(savedTheme());
 
 export function App() {

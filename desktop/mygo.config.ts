@@ -18,6 +18,15 @@ export default {
   updates: {
     publicKey: "sPkcU9YfvgSNIpGsaSHyvJgx+Tf/jCRJpjOdlzHIOGM=",
     github: "earayu/Mingle",
+    // Release notes for the update window: the version's section of the root changelog.
+    changelog: "../CHANGELOG.md",
+  },
+  linux: {
+    comment: "Agent companions in the chat apps you already use",
+    categories: ["Network", "Chat"],
+    // The tray icon needs an AppIndicator implementation.
+    depends: ["libayatana-appindicator3-1"],
+    formats: ["deb", "rpm"],
   },
   macos: {
     minimumSystemVersion: "13.0",

@@ -1,6 +1,11 @@
 # Staged by scripts/prepare.mjs
 resources/mingle/
+resources/darwin/
 resources/darwin-*/
+resources/linux/
+resources/linux-*/
+resources/windows/
+resources/windows-*/
 .cache/
 build/
 .mygo/

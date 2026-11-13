@@ -89,7 +89,8 @@ export class Mingle {
   }
 
   get cliPath(): string {
-    return join(this.options.paths.bin, "mingle");
+    // Windows runs a .cmd by name; elsewhere a shell script.
+    return join(this.options.paths.bin, process.platform === "win32" ? "mingle.cmd" : "mingle");
   }
 
   /** Start everything. `apiUrl` is where the HTTP API listens; agents' CLI calls go there. */
@@ -531,7 +532,10 @@ export class Mingle {
   // --------------------------------------------------------------------- cli
 
   private writeCliWrapper(): void {
-    const script = `#!/bin/sh\nexec "${process.execPath}" "${this.options.cliEntry}" "$@"\n`;
+    const script =
+      process.platform === "win32"
+        ? `@echo off\r\n"${process.execPath}" "${this.options.cliEntry}" %*\r\n`
+        : `#!/bin/sh\nexec "${process.execPath}" "${this.options.cliEntry}" "$@"\n`;
     writeFileSync(this.cliPath, script);
     chmodSync(this.cliPath, 0o755);
   }

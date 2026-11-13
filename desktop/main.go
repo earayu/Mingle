@@ -7,6 +7,7 @@ package main
 import (
 	_ "embed"
 	"log"
+	"runtime"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -14,7 +15,12 @@ import (
 )
 
 //go:embed resources/tray.png
-var trayIcon []byte
+var trayTemplate []byte
+
+//go:embed resources/icon.png
+var appIcon []byte
+
+const isMac = runtime.GOOS == "darwin"
 
 func main() {
 	if !mygo.App.RequestSingleInstanceLock() {
@@ -48,20 +54,12 @@ func main() {
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { d.stop() })
 
 	mygo.App.WhenReady(func() {
-		mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
-			{Label: "Mingle", Submenu: []*mygo.MenuItem{
-				{Role: mygo.RoleAbout},
-				updater.MenuItem(),
-				mygo.Separator(),
-				{Role: mygo.RoleHide},
-				mygo.Separator(),
-				{Role: mygo.RoleQuit},
-			}},
-			{Role: mygo.RoleEditMenu},
-			{Role: mygo.RoleWindowMenu},
-		}))
+		// macOS has an app menu; on Windows and Linux it would be a menu bar in the window.
+		if isMac {
+			setAppMenu()
+		}
 
-		win = mygo.NewWindow(mygo.WindowOptions{
+		options := mygo.WindowOptions{
 			Title:     "Mingle",
 			Width:     1180,
 			Height:    800,
@@ -69,16 +67,20 @@ func main() {
 			MinHeight: 520,
 			Hidden:    true,
 			StateKey:  "main",
-			// The console draws its own title bar: the traffic lights sit in the sidebar's
-			// brand row, centred in its 52 points, and the sidebar shows the window's material.
-			TitleBarStyle:        mygo.TitleBarHidden,
-			TrafficLightPosition: &mygo.Point{X: 18, Y: 19},
-			Transparent:          true,
-			Vibrancy:             mygo.VibrancySidebar,
 			// Trusted, so the page gets the title bar's insets and can move the window.
 			Page: mygo.PageOptions{TrustedOrigins: []string{origin}},
 			URL:  "data:text/html;charset=utf-8," + loadingPage(t.starting),
-		})
+		}
+		if isMac {
+			// The console draws its own title bar: the traffic lights sit in the sidebar's
+			// brand row, centred in its 52 points, and the sidebar shows the window's material.
+			// Windows and Linux keep their own title bar and its buttons.
+			options.TitleBarStyle = mygo.TitleBarHidden
+			options.TrafficLightPosition = &mygo.Point{X: 18, Y: 19}
+			options.Transparent = true
+			options.Vibrancy = mygo.VibrancySidebar
+		}
+		win = mygo.NewWindow(options)
 		// Closing the window keeps Mingle running in the menu bar.
 		win.OnClose(func(e *mygo.CloseEvent) {
 			if quitting {
@@ -100,10 +102,15 @@ func main() {
 			item.Checked = mygo.App.OpenAtLogin()
 		}
 		status := &mygo.MenuItem{Label: t.starting, Disabled: true}
+		// macOS tints a template image for the menu bar; other trays show the app icon.
+		icon := appIcon
+		if isMac {
+			icon = trayTemplate
+		}
 		tray, err := mygo.NewTray(mygo.TrayOptions{
 			ID:             "mingle",
-			Icon:           trayIcon,
-			IconIsTemplate: true,
+			Icon:           icon,
+			IconIsTemplate: isMac,
 			ToolTip:        "Mingle",
 			Menu: mygo.NewMenu([]*mygo.MenuItem{
 				status,
@@ -137,6 +144,21 @@ func main() {
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func setAppMenu() {
+	mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
+		{Label: "Mingle", Submenu: []*mygo.MenuItem{
+			{Role: mygo.RoleAbout},
+			updater.MenuItem(),
+			mygo.Separator(),
+			{Role: mygo.RoleHide},
+			mygo.Separator(),
+			{Role: mygo.RoleQuit},
+		}},
+		{Role: mygo.RoleEditMenu},
+		{Role: mygo.RoleWindowMenu},
+	}))
 }
 
 type strings_ struct {

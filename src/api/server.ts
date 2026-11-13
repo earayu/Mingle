@@ -325,7 +325,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   app.post("/v1/admin/agents/:id/open-home", (c) => {
     const agent = mingle.agent(c.req.param("id"));
-    const opener = process.platform === "darwin" ? "open" : "xdg-open";
+    const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
     execFile(opener, [mingle.homeDir(agent)], () => {});
     return c.json({ ok: true });
   });

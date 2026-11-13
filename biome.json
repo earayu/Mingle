@@ -12,6 +12,9 @@
       "!desktop/build-e2e",
       "!desktop/.e2e-home",
       "!desktop/resources/mingle",
+      "!desktop/resources/darwin*",
+      "!desktop/resources/linux*",
+      "!desktop/resources/windows*",
       "!desktop/.cache",
       "!desktop/.mygo"
     ]

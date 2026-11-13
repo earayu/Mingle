@@ -46,6 +46,7 @@ const OPTIONS = {
   "role-file": { type: "string" },
   "remove-home": { type: "boolean" },
   "no-open": { type: "boolean" },
+  "stop-on-stdin-close": { type: "boolean" },
   port: { type: "string" },
 } as const;
 
@@ -522,6 +523,12 @@ async function start(flags: Flags): Promise<void> {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  // The desktop app holds our stdin open and closes it to stop us. Windows has no
+  // SIGTERM, and this also stops Mingle when the app itself dies.
+  if (flags["stop-on-stdin-close"]) {
+    process.stdin.on("end", shutdown).on("close", shutdown).on("error", shutdown);
+    process.stdin.resume();
+  }
 }
 
 /** The admin token travels in the fragment, which browsers never send to the server or in Referer headers. */

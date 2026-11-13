@@ -24,7 +24,7 @@ M3 进行中，进度见 `docs/spec.md` 11.1–11.3。已实现：存储、Agent
 - `src/harness/harness.ts`：唯一引用 OAR 的地方
 - `src/channels/`：`channel.ts` 是适配器接口，每个平台一个目录
 - `web/`：控制台，React + Vite + Tailwind。视觉只用 `web/src/styles.css` 里来自 `DESIGN.md` 的 token；文案只走 `web/src/i18n.ts`，中英文两份都要加
-- `desktop/`：macOS 桌面应用，mygo（Go）写的菜单栏壳，内置 Node 运行 `mingle start`，见 `docs/spec.md` 9.1。`desktop/scripts/prepare.mjs` 把 Mingle 和 Node.js 放进 `desktop/resources/`
+- `desktop/`：桌面应用（macOS、Windows、Linux），mygo（Go）写的托盘壳，内置 Node 运行 `mingle start`，见 `docs/spec.md` 9.1。`desktop/scripts/prepare.mjs` 把 Mingle 和 Node.js 放进 `desktop/resources/`
 - `spikes/`：技术验证脚本，不属于产品代码
 
 ## 不可违背的产品约束

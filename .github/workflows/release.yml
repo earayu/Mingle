@@ -1,0 +1,149 @@
+name: Release
+
+# The tag decides what ships (docs/releasing.md):
+#   v1.2.0           a release: every platform, uploaded to a draft release. A maintainer
+#                    installs it, then publishes the draft, and installed apps update to it.
+#   v1.2.0-beta.1    a test build (also -rc.N, -alpha.N): macOS only, published at once as
+#                    a prerelease. Installed apps never update to prereleases.
+# Run it by hand (Actions → Release → Run workflow) to build every platform without
+# uploading anything; the apps are kept as workflow artifacts.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        name: Decide the platforms
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          tag=""
+          if [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
+            tag="$GITHUB_REF_NAME"
+            test "$tag" = "v$version" || { echo "::error::tag $tag does not match package.json $version"; exit 1; }
+            grep -q "^## $version\b" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## $version' section"; exit 1; }
+          fi
+          mac='{"name":"macOS","os":"macos-latest","platform":"darwin/arm64,darwin/amd64"}'
+          win='{"name":"Windows","os":"ubuntu-latest","platform":"windows/amd64,windows/arm64"}'
+          linux='{"name":"Linux","os":"ubuntu-latest","platform":"linux/amd64,linux/arm64"}'
+          prerelease=false
+          case "$version" in *-*) prerelease=true ;; esac
+          if [ -n "$tag" ] && [ "$prerelease" = true ]; then rows="[$mac]"; else rows="[$mac,$win,$linux]"; fi
+          {
+            echo "matrix={\"include\":$rows}"
+            echo "prerelease=$prerelease"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create the draft release
+        if: steps.plan.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          PRERELEASE: ${{ steps.plan.outputs.prerelease }}
+        run: |
+          version="${TAG#v}"
+          # The release notes are the version's section of CHANGELOG.md.
+          awk -v v="$version" '$0 ~ "^## "v"( |$)" {on=1; next} /^## / {on=0} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            flags=""
+            if [ "$PRERELEASE" = true ]; then flags="--prerelease"; fi
+            gh release create "$TAG" --draft --verify-tag $flags --title "Mingle $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+
+  build:
+    needs: plan
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+
+      - name: Install NSIS, for the Windows installers
+        if: matrix.name == 'Windows'
+        run: sudo apt-get update && sudo apt-get install -y nsis
+
+      # Without a Developer ID the app is signed ad hoc: it runs, but Gatekeeper
+      # blocks it on other Macs until the user allows it in System Settings.
+      - name: Import the Developer ID certificate and notary credentials
+        if: matrix.name == 'macOS'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ]; then echo "no certificate: ad hoc signing"; exit 0; fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -base64 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain
+          xcrun notarytool store-credentials notary --keychain "$keychain" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          echo "NOTARY_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "MACOS_SIGNING_IDENTITY=$MACOS_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Stage Mingle and Node.js
+        run: node desktop/scripts/prepare.mjs --platform "${{ matrix.platform }}"
+
+      - name: Build, sign and upload
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          if [ -n "${{ needs.plan.outputs.tag }}" ]; then upload=-upload; fi
+          go tool mygo build -platform "${{ matrix.platform }}" $upload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mingle-${{ matrix.name }}
+          path: |
+            desktop/build/*/*.dmg
+            desktop/build/*/*-setup-*.exe
+            desktop/build/*/*.tar.gz
+            desktop/build/*/*.deb
+            desktop/build/*/*.rpm
+          if-no-files-found: error
+
+  # Test builds go out at once, as prereleases; releases wait in draft for a maintainer.
+  publish-prerelease:
+    needs: [plan, build]
+    if: needs.plan.outputs.tag != '' && needs.plan.outputs.prerelease == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${{ needs.plan.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease

@@ -420,7 +420,7 @@ flowchart TD
 
 ### 8.3 密钥与隐私
 
-- IM 凭据存入 macOS Keychain，数据库只存引用。API 响应和日志不回传任何密钥。
+- IM 凭据存入系统的凭据存储（见 9.2），数据库只存引用。API 响应和日志不回传任何密钥。
 - harness 的登录态由 harness 自己管理，Mingle 不接触。
 - **跨群记忆不隔离。** Agent 在私聊里得知的内容可能在群里被说出来。这是已接受的取舍，换来的是 4.1 的简单模型。`messages` 仍记录来源，将来需要隔离时有据可依。控制台在创建 Agent 时提示这一点。
 - 使用个人 harness 订阅为群内其他人提供服务是否符合各厂商条款，本版不处理。
@@ -457,7 +457,19 @@ flowchart TD
 
 ### 9.2 平台
 
-只承诺 macOS。Keychain、开机自启等系统相关能力放在接口后面，核心不写 macOS 专属代码，保留将来在 Linux 小主机上无界面运行的可能。
+macOS、Windows、Linux 都发桌面应用，每个系统都有 x64 和 ARM64 两种构建。macOS 是主力平台，测试版只发 macOS。核心不写某个系统专属的代码，系统相关的部分都在接口后面：
+
+| 能力 | macOS | Windows | Linux |
+|---|---|---|---|
+| IM 凭据 | 钥匙串（`/usr/bin/security`） | DPAPI 按当前用户加密后存文件（Credential Manager 底层用的也是它），通过 PowerShell 调用，不需要原生模块 | Secret Service（`secret-tool`：GNOME Keyring、KWallet）；没有时（如无界面的服务器）退回 0600 文件 |
+| Agent 调用的 `mingle` 命令 | sh 脚本 | `mingle.cmd` | sh 脚本 |
+| 桌面应用停止 Mingle | 关闭它的标准输入（三个系统相同；Windows 没有 SIGTERM，而且应用崩溃时 Mingle 也会跟着退出） | 同左 | 同左 |
+| 应用的 PATH | 从登录 shell 读取，找得到 Homebrew、npm 装的 harness | 系统给应用的就是用户 PATH | 从登录 shell 读取 |
+| 窗口 | 隐藏标题栏，红绿灯放在侧栏，半透明材质 | 系统标题栏，不透明 | 系统标题栏，不透明 |
+| 托盘图标 | 菜单栏模板图 | 应用图标 | 应用图标，需要 AppIndicator（deb、rpm 已声明依赖） |
+| 安装包 | DMG | NSIS 安装包，装在当前用户目录，不需要管理员权限 | `.deb`、`.rpm`、`.tar.gz`（附 `install.sh`） |
+
+Mingle 也可以不装桌面应用，在 Linux 小主机上用 `mingle start` 无界面运行。
 
 ### 9.3 代码结构
 
@@ -479,7 +491,7 @@ docs/             文档
 ### 9.4 分发
 
 - **首版**：npm 包，命令行启动，浏览器打开控制台。
-- **桌面应用**：DMG（Apple 芯片和 Intel 各一个），带自动更新。打 `v<版本>` 标签后由 `.github/workflows/desktop.yml` 构建并上传到草稿 Release，发布草稿即推送更新。有 Developer ID 证书时签名并公证；没有时是 ad hoc 签名，别的 Mac 上首次打开要在系统设置里放行。Homebrew cask 待首个正式版后再加。
+- **桌面应用**：三个系统的安装包都带自动更新，由 `.github/workflows/release.yml` 构建。正式版（`v0.2.0`）构建全部平台，进草稿 Release，维护者装一遍后发布；测试版（`v0.2.0-beta.1`）只构建 macOS，自动发布为 Pre-release，已安装的应用不会更新到它。完整流程和签名所需的 secret 见 [发布流程](releasing.md)。没有证书时，macOS 是 ad hoc 签名，Windows 不签名，首次打开都需要用户放行。Homebrew cask 待有 Developer ID 后再加。
 - **Mac App Store 上不了。** 上架要求应用沙箱，而沙箱内的进程及其子进程不能执行用户自己安装的 `claude`、`codex`，也读不到 `~/.claude` 之类的登录态和用户的代码目录。Mingle 的核心就是拉起这些 harness，这一点和 MiaoYan 这类只读写用户所选文件夹的应用不同。
 - npm 包名 `mingle-app`（`mingle` 已被占用），命令名 `mingle`。
 - 开源，MIT 许可。

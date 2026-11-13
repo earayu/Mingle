@@ -13,10 +13,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -30,8 +30,11 @@ type daemon struct {
 	onReady func(url, token string)
 	onDown  func(reason string)
 
-	mu       sync.Mutex
-	cmd      *exec.Cmd
+	mu  sync.Mutex
+	cmd *exec.Cmd
+	// stdin is Mingle's standard input, which it watches: closing it stops Mingle on
+	// every system (Windows has no SIGTERM), and the OS closes it if this app dies.
+	stdin    io.Closer
 	done     chan struct{} // closed when cmd exits
 	stopping bool
 }
@@ -51,7 +54,11 @@ func newDaemon(resources, logs string) *daemon {
 	d := &daemon{home: home, logs: logs}
 	// The packaged app ships Node.js and Mingle among its resources. A development
 	// build (`go run`, `mygo dev`) uses the Node.js on PATH and the repository's build.
-	d.node = filepath.Join(resources, "node", "bin", "node")
+	exe := ""
+	if runtime.GOOS == "windows" {
+		exe = ".exe"
+	}
+	d.node = filepath.Join(resources, "node", "bin", "node"+exe)
 	d.entry = filepath.Join(resources, "mingle", "dist", "cli", "main.js")
 	if _, err := os.Stat(d.entry); err != nil {
 		d.entry = filepath.Join(resources, "..", "..", "dist", "cli", "main.js")
@@ -151,8 +158,13 @@ func (d *daemon) startAndWait() error {
 	}
 	defer logFile.Close()
 
-	cmd := exec.Command(d.node, d.entry, "start", "--no-open", "--port", strconv.Itoa(d.port))
+	cmd := exec.Command(d.node, d.entry, "start", "--no-open", "--stop-on-stdin-close", "--port", strconv.Itoa(d.port))
 	cmd.Env = append(os.Environ(), "PATH="+userPath(filepath.Dir(d.node)))
+	hideWindow(cmd)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
 	// The console URL with the admin token goes to stdout; keep it out of the log file.
 	cmd.Stdout = io.Discard
 	cmd.Stderr = logFile
@@ -166,7 +178,7 @@ func (d *daemon) startAndWait() error {
 		return fmt.Errorf("could not start Mingle: %w", err)
 	}
 	done := make(chan struct{})
-	d.cmd, d.done = cmd, done
+	d.cmd, d.stdin, d.done = cmd, stdin, done
 	d.mu.Unlock()
 
 	exited := make(chan error, 1)
@@ -180,8 +192,14 @@ func (d *daemon) startAndWait() error {
 		case err := <-exited:
 			return exitError(err)
 		case <-deadline:
-			_ = cmd.Process.Signal(syscall.SIGTERM)
-			return exitError(<-exited)
+			_ = stdin.Close()
+			select {
+			case err := <-exited:
+				return exitError(err)
+			case <-time.After(8 * time.Second):
+				_ = cmd.Process.Kill()
+				return exitError(<-exited)
+			}
 		case <-time.After(200 * time.Millisecond):
 		}
 		if rt, ok := d.runtime(); ok && rt.PID == cmd.Process.Pid && healthy(rt.URL) {
@@ -203,7 +221,7 @@ func exitError(err error) error {
 func (d *daemon) stop() {
 	d.mu.Lock()
 	d.stopping = true
-	cmd, done := d.cmd, d.done
+	cmd, stdin, done := d.cmd, d.stdin, d.done
 	d.mu.Unlock()
 	if cmd == nil {
 		return
@@ -213,7 +231,7 @@ func (d *daemon) stop() {
 		return
 	default:
 	}
-	_ = cmd.Process.Signal(syscall.SIGTERM)
+	_ = stdin.Close()
 	select {
 	case <-done:
 	case <-time.After(8 * time.Second):
@@ -221,14 +239,21 @@ func (d *daemon) stop() {
 	}
 }
 
-// userPath is the PATH of the user's login shell. Apps opened from Finder get a
-// minimal PATH, which would hide the harnesses (claude, codex) installed with
-// Homebrew, npm or the like. The bundled Node.js goes last, as a fallback.
+// userPath is the PATH of the user's login shell. Apps opened from Finder or a
+// Linux desktop get a minimal PATH, which would hide the harnesses (claude, codex)
+// installed with Homebrew, npm or the like. Windows apps already get the user's
+// PATH. The bundled Node.js goes last, as a fallback.
 func userPath(fallbackDir string) string {
 	path := os.Getenv("PATH")
+	if runtime.GOOS == "windows" {
+		return appendDir(path, fallbackDir)
+	}
 	shell := os.Getenv("SHELL")
 	if shell == "" {
-		shell = "/bin/zsh"
+		shell = "/bin/sh"
+		if runtime.GOOS == "darwin" {
+			shell = "/bin/zsh"
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -241,10 +266,18 @@ func userPath(fallbackDir string) string {
 			}
 		}
 	}
-	for _, dir := range strings.Split(path, ":") {
-		if dir == fallbackDir {
+	return appendDir(path, fallbackDir)
+}
+
+func appendDir(path, dir string) string {
+	sep := string(os.PathListSeparator)
+	for _, d := range strings.Split(path, sep) {
+		if strings.EqualFold(d, dir) {
 			return path
 		}
 	}
-	return path + ":" + fallbackDir
+	if path == "" {
+		return dir
+	}
+	return path + sep + dir
 }

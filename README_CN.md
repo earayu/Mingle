@@ -11,7 +11,9 @@
 
 ## 状态
 
-早期开发中。核心流程已能用 Claude Code 或 Codex 端到端跑通，可以用本地网页控制台、macOS 桌面应用或命令行管理。八个 IM 都已接入，飞书在真实租户上验证过，其余对着平台接口和测试验证。还没有发布版本。用法见 [README.md](README.md)，桌面应用用 `pnpm desktop:build` 在本机构建。
+早期开发中。核心流程已能用 Claude Code 或 Codex 端到端跑通，可以用本地网页控制台、桌面应用或命令行管理。八个 IM 都已接入，飞书在真实租户上验证过，其余对着平台接口和测试验证。
+
+macOS、Windows、Linux 的桌面应用在 [Releases](https://github.com/earayu/Mingle/releases/latest) 下载。目前还没有签名：macOS 首次打开要在"系统设置 → 隐私与安全性"里放行，Windows 要点"更多信息 → 仍要运行"。用法见 [README.md](README.md)，发布流程见 [docs/releasing.md](docs/releasing.md)。
 
 ## 文档
 
