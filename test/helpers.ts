@@ -161,6 +161,7 @@ export async function rig(
   turn: (t: ScriptedTurn) => Promise<void>,
   options: {
     harness?: string;
+    model?: string | null;
     real?: boolean;
     coalesceMs?: number;
     live?: boolean;
@@ -200,6 +201,7 @@ export async function rig(
     name: "Alex",
     role: "You help a group of friends plan weekend hikes. Keep replies to one or two sentences.",
     harness: options.harness ?? "scripted",
+    model: options.model ?? null,
   });
   await mingle.addConnection(agent.id, "telegram", { token: "fake" });
   return {

@@ -138,9 +138,45 @@ jobs:
             desktop/build/*/*.rpm
           if-no-files-found: error
 
+  # Unpack each platform's installer and check the bundled Mingle actually runs:
+  # `mingle --version` prints, and `mingle start` serves /v1/health.
+  smoke:
+    needs: [plan, build]
+    name: smoke ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS, os: macos-latest, artifact: mingle-macOS, glob: "*.dmg", arch: arm64 }
+          - { name: Windows, os: windows-latest, artifact: mingle-Windows, glob: "*.exe", arch: amd64 }
+          - { name: Linux, os: ubuntu-latest, artifact: mingle-Linux, glob: "*.tar.gz", arch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Prereleases build macOS only; the other legs find no artifact and skip.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifacts
+      - name: Smoke the installer
+        shell: bash
+        run: |
+          if [ -z "$(find artifacts -type f 2>/dev/null | head -1)" ]; then
+            echo "no artifact for ${{ matrix.name }} (prereleases build macOS only); skipping"
+            exit 0
+          fi
+          file="$(find artifacts -type f -name '${{ matrix.glob }}' | grep ${{ matrix.arch }} | head -1)"
+          test -n "$file" || { echo "no ${{ matrix.arch }} ${{ matrix.glob }} in artifacts"; find artifacts -type f; exit 1; }
+          echo "smoke: $file"
+          node scripts/package-smoke.mjs "$file"
+
   # Test builds go out at once, as prereleases; releases wait in draft for a maintainer.
   publish-prerelease:
-    needs: [plan, build]
+    needs: [plan, build, smoke]
     if: needs.plan.outputs.tag != '' && needs.plan.outputs.prerelease == 'true'
     runs-on: ubuntu-latest
     steps:
