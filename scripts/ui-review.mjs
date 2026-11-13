@@ -225,7 +225,6 @@ try {
     ["long", `/a/${long.slug}`],
     ["new", "/new"],
     ["home", "/"],
-    ["menu", `/a/${alex.slug}?menu=1`],
     ["settings", "/settings"],
     // The QR step is not here: it needs a live call to the platform, which headless Chrome's
     // virtual clock outruns. Check it in the desktop app (desktop/README.md) instead.

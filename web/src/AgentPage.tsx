@@ -144,20 +144,6 @@ export function AgentPage({
                 {t("agent.stop")}
               </Button>
             ) : null}
-            <MoreMenu
-              label={t("agent.more")}
-              items={[
-                { label: t("agent.openHome"), onSelect: () => api.openHome(agent.id) },
-                {
-                  label: t("agent.delete"),
-                  danger: true,
-                  onSelect: () => {
-                    setTab("settings");
-                    setConfirmDelete(true);
-                  },
-                },
-              ]}
-            />
           </>
         }
       />
