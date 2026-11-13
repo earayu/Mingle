@@ -1,21 +1,9 @@
 import { useState } from "react";
 import { type LocalePreference, useI18n } from "./i18n.ts";
 import { type OnlineState, online, useOnline } from "./online.ts";
+import { applyTheme, savedTheme, type Theme } from "./theme.ts";
 import { Button, Group, GroupRow, PageHeader, Section, Segmented } from "./ui.tsx";
 import { type UpdateState, updates, useUpdates } from "./updates.ts";
-
-export type Theme = "system" | "light" | "dark";
-
-export function savedTheme(): Theme {
-  const saved = localStorage.getItem("mingle.theme");
-  return saved === "light" || saved === "dark" ? saved : "system";
-}
-
-export function applyTheme(theme: Theme): void {
-  if (theme === "system") delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = theme;
-  localStorage.setItem("mingle.theme", theme);
-}
 
 export function SettingsPage({ version }: { version: string }) {
   const { t, localePreference, setLocale } = useI18n();
@@ -36,7 +24,7 @@ export function SettingsPage({ version }: { version: string }) {
                   value={theme}
                   onChange={(next) => {
                     setTheme(next);
-                    applyTheme(next);
+                    void applyTheme(next);
                   }}
                   options={[
                     { value: "system", label: t("settings.system") },

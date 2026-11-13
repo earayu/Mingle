@@ -55,7 +55,7 @@ func main() {
 		mygo.App.Focus()
 	}
 	tray := newTrayController(t, logs, updates, show)
-	mygo.Bind(updates, newOnline(tray))
+	mygo.Bind(updates, newOnline(tray), &Appearance{})
 	mygo.App.OnSecondInstance(func([]string, string) { show() })
 	mygo.App.OnActivate(func(bool) { show() })
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { quitting = true })

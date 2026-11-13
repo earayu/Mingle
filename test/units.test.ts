@@ -1,15 +1,17 @@
+/// <reference lib="dom" />
 import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toInbound } from "../src/channels/telegram/telegram.ts";
 import { formatMessage } from "../src/core/format.ts";
 import { split } from "../src/core/outbox.ts";
 import { nextFire, parseDuration } from "../src/core/schedule.ts";
 import { applyShellEnvironment } from "../src/platform/shell-env.ts";
 import { type LocalePreference, localePreference, resolveLocale } from "../web/src/locale.ts";
+import { applyTheme, savedTheme } from "../web/src/theme.ts";
 
 describe("formatMessage", () => {
   it("puts everything an agent needs on one header line", () => {
@@ -214,6 +216,73 @@ describe("language preference", () => {
   it("switching back to system resolves the current list", () => {
     const preference = localePreference(null);
     expect(resolveLocale(preference, ["en-GB"])).toBe("en");
+  });
+});
+
+describe("appearance", () => {
+  let dataset: Record<string, string>;
+  let storage: Map<string, string>;
+  beforeEach(() => {
+    dataset = {};
+    storage = new Map();
+    vi.stubGlobal("document", { documentElement: { dataset } });
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    vi.stubGlobal("window", {});
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(["light", "dark", "system"] as const)("restores %s and synchronizes native appearance", async (theme) => {
+    storage.set("mingle.theme", theme);
+    const call = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("window", { mygo: { call } });
+    await applyTheme(savedTheme());
+    expect(dataset.theme).toBe(theme === "system" ? undefined : theme);
+    expect(dataset.nativeTheme).toBe(theme);
+    expect(call).toHaveBeenCalledWith("Appearance.SetTheme", theme);
+    expect(storage.get("mingle.theme")).toBe(theme);
+  });
+
+  it("returns to system without storing a resolved light or dark choice", async () => {
+    await applyTheme("dark");
+    await applyTheme("system");
+    expect(dataset.theme).toBeUndefined();
+    expect(dataset.nativeTheme).toBeUndefined();
+    expect(savedTheme()).toBe("system");
+    storage.set("mingle.theme", "invalid");
+    expect(savedTheme()).toBe("system");
+  });
+
+  it("keeps explicit colors with an older shell and recovers on the next request", async () => {
+    const call = vi.fn().mockRejectedValueOnce(new Error("unknown method")).mockResolvedValue(undefined);
+    vi.stubGlobal("window", { mygo: { call } });
+    await applyTheme("light");
+    expect(dataset.theme).toBe("light");
+    expect(dataset.nativeTheme).toBeUndefined();
+    await applyTheme("dark");
+    expect(dataset.nativeTheme).toBe("dark");
+  });
+
+  it("serializes rapid selections so a slow native reply cannot win", async () => {
+    const first = Promise.withResolvers<void>();
+    const call = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(undefined);
+    vi.stubGlobal("window", { mygo: { call } });
+    const dark = applyTheme("dark");
+    await Promise.resolve();
+    const light = applyTheme("light");
+    expect(dataset.theme).toBe("light");
+    expect(dataset.nativeTheme).toBeUndefined();
+    expect(call).toHaveBeenCalledTimes(1);
+    first.resolve();
+    await Promise.all([dark, light]);
+    expect(call.mock.calls).toEqual([
+      ["Appearance.SetTheme", "dark"],
+      ["Appearance.SetTheme", "light"],
+    ]);
+    expect(dataset.nativeTheme).toBe("light");
+    expect(savedTheme()).toBe("light");
   });
 });
 

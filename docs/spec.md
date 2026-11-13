@@ -467,6 +467,7 @@ flowchart TD
 - **平台差异**：macOS 点图标弹菜单；Windows 左键打开窗口、右键弹菜单，第一次关窗时发一条通知，说明 Mingle 仍在托盘里运行、怎样退出、怎样把图标固定到任务栏（Windows 用户习惯关窗即退出），只提示一次。
 - **系统通知**只发需要人处理的事：连接出错、断开重连超过 5 分钟、管理员审核通过、Agent 有消息没能回复。应用启动时已经存在的问题不通知，只在菜单里显示。点通知打开对应 Agent 的页面。默认打开，设置页可关。回复本身由聊天软件通知，Mingle 不重复。
 - 应用的偏好（保持唤醒、通知、卡片和提示是否已看过）存在应用数据目录的 `mingle-desktop.json`。控制台通过桌面壳绑定的 `Online` 服务（`desktop/online.go`）和 `mingle:online` 事件读写；菜单栏要打开某个页面时，发 `mingle:navigate` 事件给控制台。
+- 外观偏好仍由控制台保存在本地；启动和切换时通过桌面壳的 `Appearance.SetTheme` 同步原生外观，让侧栏毛玻璃、窗口控件和页面使用同一明暗模式。选择“跟随系统”会清除手动外观覆盖。
 - 应用内置 Node.js 24（版本和校验和锁定在 `desktop/scripts/prepare.mjs`）和 Mingle 的构建产物，启动时用它运行 `mingle start --no-open`，进程退出后自动重启，退出应用时先让它正常关闭。核心仍是同一个 Node 进程，桌面壳不碰业务逻辑。
 - 从 Finder 打开的应用拿到的环境很少：`PATH` 找不到用户用 Homebrew、npm 装的 harness，用户在 `~/.zshrc` 里给 harness 配的 API Key、`ANTHROPIC_BASE_URL`、代理也都没有，harness 会表现为"没有登录"。所以应用用 `mingle start --login-shell-env` 启动 Mingle：Mingle 通过 OAR 的 `userShellEnvironment()` 读一次用户登录 shell 的完整环境并采用（`MINGLE_*` 以应用给的为准），内置的 Node.js 放在 `PATH` 最后兜底。读不到时照常启动，日志里只记原因，不记任何变量值。Windows 应用本来就拿到用户环境，不读。
 - 已经有一个 Mingle 在跑（比如在终端里 `mingle start`），应用直接显示它，不另起一个。
