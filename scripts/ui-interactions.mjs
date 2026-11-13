@@ -21,6 +21,11 @@ const LOCALES = {
     remove: "Remove",
     keep: "Keep",
     chatApps: "Chat apps",
+    install: "Install",
+    installing: "Installing",
+    notInstalled: "Not installed",
+    installFailed: "The installer did not finish",
+    retry: "Try again",
   },
   "zh-CN": {
     storage: "zh-CN",
@@ -30,8 +35,68 @@ const LOCALES = {
     remove: "移除",
     keep: "保留",
     chatApps: "聊天软件",
+    install: "安装",
+    installing: "正在安装",
+    notInstalled: "未安装",
+    installFailed: "安装没有完成",
+    retry: "重试",
   },
 };
+
+// A window.fetch replacement that mocks only the two fake harnesses used by the
+// install-resume scenario; every other request still reaches the real Mingle. The
+// fixture lives in sessionStorage so a full page reload keeps the same fake job.
+const INSTALL_MOCK = String.raw`(() => {
+  const KEY = "mingle.install-review";
+  const read = () => JSON.parse(sessionStorage.getItem(KEY) ?? '{"job":null,"installed":false,"starts":0}');
+  const write = (s) => sessionStorage.setItem(KEY, JSON.stringify(s));
+  const json = (payload, status) =>
+    new Response(JSON.stringify(payload), { status: status ?? 200, headers: { "content-type": "application/json" } });
+  const brains = (s) => {
+    const list = [
+      { id: "install-test", name: "Install Test", installed: s.installed, canInstall: true, canSignIn: false },
+      { id: "other-test", name: "Other Test", installed: false, canInstall: true, canSignIn: false },
+    ];
+    if (s.job && s.job.state === "running") list[0].installJob = s.job;
+    return list;
+  };
+  const real = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const path = typeof input === "string" ? input : input.url;
+    const method = (init && init.method) || "GET";
+    if (method === "GET" && path === "/v1/admin/brains") return Promise.resolve(json(brains(read())));
+    if (method === "GET" && path === "/v1/admin/brains/install-test/install-plan")
+      return Promise.resolve(
+        json({ kind: "plan", steps: ["echo test-install"], source: "https://example.com/install" }),
+      );
+    if (method === "GET" && path === "/v1/admin/brains/other-test/install-plan")
+      return Promise.resolve(json({ kind: "unsupported", detail: "not offered here" }));
+    if (method === "GET" && /^\/v1\/admin\/brains\/(install-test|other-test)\/sign-in$/.test(path))
+      return Promise.resolve(json({ kind: "unknown" }));
+    if (method === "POST" && path === "/v1/admin/brains/install-test/install") {
+      const s = read();
+      s.starts += 1;
+      if (!s.job || s.job.state !== "running") {
+        s.job = {
+          id: s.starts > 1 ? "j-install-test-" + s.starts : "j-install-test",
+          kind: "install",
+          harness: "install-test",
+          state: "running",
+          events: [],
+        };
+      }
+      write(s);
+      return Promise.resolve(json(s.job));
+    }
+    const jobMatch = /^\/v1\/admin\/jobs\/(.+)$/.exec(path);
+    if (method === "GET" && jobMatch) {
+      const s = read();
+      if (s.job && s.job.id === jobMatch[1]) return Promise.resolve(json(s.job));
+      return Promise.resolve(json({ error: "job_not_found" }, 404));
+    }
+    return real(input, init);
+  };
+})()`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -110,9 +175,11 @@ export async function reviewInteractions({ url, token, slug, singleSlug, chrome,
 
     await send("Page.enable");
     await send("Runtime.enable");
+    // The fake-harness mock must exist in every document, full reloads included.
+    await send("Page.addScriptToEvaluateOnNewDocument", { source: INSTALL_MOCK });
 
     // Run a function in the page; page errors and timeouts are real failures.
-    const prelude = `const connTriggers=(more)=>[...document.querySelectorAll("button[aria-label]")].filter((b)=>b.getAttribute("aria-label")===more&&!b.closest("header")&&!b.closest("aside"));`;
+    const prelude = `const connTriggers=(more)=>[...document.querySelectorAll("button[aria-label]")].filter((b)=>b.getAttribute("aria-label")===more&&!b.closest("header")&&!b.closest("aside"));const brainRow=(name)=>{const el=[...document.querySelectorAll("span.font-medium")].find((s)=>s.textContent.trim()===name);return el?el.closest(".divide-y > *"):null;};`;
     const call = async (fn, ...args) => {
       const { result, exceptionDetails } = await send("Runtime.evaluate", {
         expression: `(()=>{${prelude}return (${fn.toString()})(${args.map((a) => JSON.stringify(a)).join(",")})})()`,
@@ -203,6 +270,60 @@ export async function reviewInteractions({ url, token, slug, singleSlug, chrome,
       el.scrollTop += delta;
       return true;
     };
+    // Settings harness rows: brainRow (in the prelude) finds the row by its exact name.
+    const rowHas = (name, wanted) => {
+      const row = brainRow(name);
+      return !!row && row.textContent.includes(wanted);
+    };
+    const rowHasButton = (name, wanted) => {
+      const row = brainRow(name);
+      return !!row && [...row.querySelectorAll("button")].some((b) => b.textContent.trim() === wanted);
+    };
+    const rowButtonCenter = (name, wanted) => {
+      const row = brainRow(name);
+      const el = [...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent.trim() === wanted);
+      if (!el) return null;
+      el.scrollIntoView({ block: "center" });
+      const r = el.getBoundingClientRect();
+      return r.width && r.height ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+    };
+    const rowSettled = (name, installing, notInstalled, install) => {
+      const row = brainRow(name);
+      return (
+        !!row &&
+        !row.textContent.includes(installing) &&
+        !row.textContent.includes(notInstalled) &&
+        ![...row.querySelectorAll("button")].some((b) => b.textContent.trim() === install)
+      );
+    };
+    const pageFits = () => document.scrollingElement.scrollWidth <= innerWidth;
+
+    // Fixture state for the install mock, kept in sessionStorage so reloads keep it.
+    const resetFixture = () =>
+      call(() =>
+        sessionStorage.setItem("mingle.install-review", JSON.stringify({ job: null, installed: false, starts: 0 })),
+      );
+    const readFixture = () => call(() => JSON.parse(sessionStorage.getItem("mingle.install-review") ?? "{}"));
+    const setFixtureJob = (state, installed) =>
+      call(
+        (st, inst) => {
+          const s = JSON.parse(sessionStorage.getItem("mingle.install-review") ?? "{}");
+          if (s.job) s.job = { ...s.job, state: st };
+          else s.job = { id: "j-install-test", kind: "install", harness: "install-test", state: st, events: [] };
+          if (inst !== undefined) s.installed = inst;
+          sessionStorage.setItem("mingle.install-review", JSON.stringify(s));
+          return s.job;
+        },
+        state,
+        installed,
+      );
+    // Move inside the SPA without a reload, as the sidebar does.
+    const spaNav = (path) =>
+      call((p) => {
+        history.pushState(null, "", p);
+        dispatchEvent(new PopStateEvent("popstate"));
+        return location.pathname;
+      }, path);
 
     const goto = async (path, labels) => {
       await send("Page.navigate", { url: `${url}${path}#token=${token}` });
@@ -492,6 +613,106 @@ export async function reviewInteractions({ url, token, slug, singleSlug, chrome,
         );
         passed++;
         console.log(`interactions ${localeName} ${width}: passed`);
+      }
+    }
+
+    // --- install resume: a running harness install survives leaving Settings ---
+    // The mock (INSTALL_MOCK, injected into every document) answers only for the two
+    // fake harnesses; the real Mingle serves everything else. Its sessionStorage
+    // fixture survives reloads, so the checks below cover SPA navigation and F5 alike.
+    // The settings header is a plain title (no tab radiogroup); the mocked rows are
+    // the readiness signal, which also proves the locale took.
+    const settingsReady = (labels) => until("settings ready", rowHas, "Other Test", labels.notInstalled);
+    const gotoSettings = async (labels) => {
+      await send("Page.navigate", { url: `${url}/settings#token=${token}` });
+      await until("page load", () => document.readyState === "complete" && !!document.querySelector("header"));
+      await call((locale) => localStorage.setItem("mingle.locale", locale), labels.storage);
+      await send("Page.reload");
+      await settingsReady(labels);
+    };
+
+    const installScenario = async (localeName, labels, width) => {
+      const tag = `install ${localeName} ${width}`;
+      await metrics(width);
+      await resetFixture();
+      await gotoSettings(labels);
+      await until("install row", rowHas, "Install Test", labels.notInstalled);
+
+      // Outer Install opens the plan; its own Install button starts the job.
+      await clickEl(await until("outer install button", rowButtonCenter, "Install Test", labels.install));
+      await clickEl(await until("confirm install button", rowButtonCenter, "Install Test", labels.install));
+      await until("installing", rowHas, "Install Test", labels.installing);
+      assert(!(await call(rowHas, "Install Test", labels.notInstalled)), `${tag}: still shows Not installed`);
+      assert(!(await call(rowHasButton, "Install Test", labels.install)), `${tag}: install button still shown`);
+      assert(await call(rowHas, "Other Test", labels.notInstalled), `${tag}: Other Test lost its row`);
+      assert((await readFixture()).starts === 1, `${tag}: installer did not start exactly once`);
+
+      // Leaving Settings to an agent page and coming back keeps the progress.
+      await spaNav(`/a/${slug}`);
+      await until(
+        "agent page replaces settings",
+        (path) =>
+          location.pathname === path &&
+          !brainRow("Install Test") &&
+          !!document.querySelector('header [role="radiogroup"]'),
+        `/a/${slug}`,
+      );
+      await spaNav("/settings");
+      await until("installing after navigation", rowHas, "Install Test", labels.installing);
+      assert(!(await call(rowHas, "Install Test", labels.notInstalled)), `${tag}: nav shows Not installed`);
+      assert(!(await call(rowHasButton, "Install Test", labels.install)), `${tag}: nav shows install button`);
+      assert((await readFixture()).starts === 1, `${tag}: navigation started a second install`);
+
+      // A full reload must recover the same way: catalog carries installJob, no new POST.
+      await send("Page.reload");
+      await settingsReady(labels);
+      await until("installing after reload", rowHas, "Install Test", labels.installing);
+      assert(!(await call(rowHas, "Install Test", labels.notInstalled)), `${tag}: reload shows Not installed`);
+      assert(!(await call(rowHasButton, "Install Test", labels.install)), `${tag}: reload shows install button`);
+      assert((await readFixture()).starts === 1, `${tag}: reload started a second install`);
+      assert(await call(pageFits), `${tag}: horizontal overflow while installing`);
+      await shot(`${localeName}-${width}-install-resumed`);
+
+      // Finish: the row settles to installed with no leftover action.
+      await setFixtureJob("done", true);
+      await until("installed", rowSettled, "Install Test", labels.installing, labels.notInstalled, labels.install);
+
+      // A recovered job can still fail after the binary becomes visible: the catalog
+      // already reports installed, but the running job keeps the row on the install path.
+      await resetFixture();
+      await setFixtureJob("running", true);
+      await send("Page.reload");
+      await settingsReady(labels);
+      await until("installing resumes", rowHas, "Install Test", labels.installing);
+      assert(!(await call(rowHas, "Install Test", labels.notInstalled)), `${tag}: installed catalog still wins`);
+      assert(!(await call(rowHasButton, "Install Test", labels.install)), `${tag}: running job still owns row`);
+      await setFixtureJob("failed");
+      await until("failure shown", rowHas, "Install Test", labels.installFailed);
+      await until("retry button", rowHasButton, "Install Test", labels.retry);
+      assert(await call(pageFits), `${tag}: horizontal overflow on failure`);
+      await shot(`${localeName}-${width}-install-failed`);
+
+      // Retry POSTs once; the catalog refresh after done must not POST again.
+      await clickEl(await call(rowButtonCenter, "Install Test", labels.retry));
+      await until("installing after retry", rowHas, "Install Test", labels.installing);
+      assert((await readFixture()).starts === 1, `${tag}: retry POSTed more than once`);
+      await setFixtureJob("done", true);
+      await until(
+        "installed after retry",
+        rowSettled,
+        "Install Test",
+        labels.installing,
+        labels.notInstalled,
+        labels.install,
+      );
+      assert((await readFixture()).starts === 1, `${tag}: catalog refresh re-POSTed`);
+    };
+
+    for (const [localeName, labels] of Object.entries(LOCALES)) {
+      for (const width of [1024, 560]) {
+        await installScenario(localeName, labels, width);
+        passed++;
+        console.log(`install ${localeName} ${width}: passed`);
       }
     }
     console.log(`${passed} interaction scenarios passed`);

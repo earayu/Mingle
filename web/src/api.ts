@@ -113,6 +113,8 @@ export interface BrainStatus extends Harness {
   unsupported?: string;
   canInstall: boolean;
   canSignIn: boolean;
+  /** An installation still running in the local Mingle process. */
+  installJob?: Job;
 }
 
 export type SignInState =
