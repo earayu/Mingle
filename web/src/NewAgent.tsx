@@ -1,6 +1,7 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { Navigate } from "./App.tsx";
-import { api, type Harness, type ModelList } from "./api.ts";
+import { api, type BrainStatus, type ModelList } from "./api.ts";
+import { BrainRow, SignInBrain, useSignIn } from "./Brains.tsx";
 import { errorText, type MessageKey, useI18n } from "./i18n.ts";
 import {
   ApiKeyHint,
@@ -33,19 +34,20 @@ export function NewAgent({
   const [role, setRole] = useState("");
   const [harness, setHarness] = useState("");
   const [model, setModel] = useState("");
-  const [harnesses, setHarnesses] = useState<Harness[] | null>(null);
+  const [harnesses, setHarnesses] = useState<BrainStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
+  const loadBrains = useCallback(() => {
     api
-      .harnesses()
+      .brains()
       .then((list) => {
         setHarnesses(list);
-        setHarness((current) => current || list.find((h) => !h.disabled)?.id || "");
+        setHarness((current) => current || list.find((b) => b.installed)?.id || "");
       })
       .catch(() => setHarnesses([]));
   }, []);
+  useEffect(loadBrains, [loadBrains]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -103,6 +105,7 @@ export function NewAgent({
         </Step>
         <Step n={3} state={named ? "now" : "todo"} open title={t("new.step3")} hint={t("new.step3Hint")}>
           <BrainPicker
+            onBrainsChanged={loadBrains}
             harnesses={harnesses}
             harness={harness}
             model={model}
@@ -153,21 +156,29 @@ export function NewAgent({
   );
 }
 
-/** Installed harnesses as choices, and the models the chosen one offers right now. */
+/**
+ * Installed harnesses as choices, and the models the chosen one offers right now. The ones
+ * not installed are a click away: each installs with its vendor's own installer.
+ */
 export function BrainPicker({
   harnesses,
   harness,
   model,
   onHarness,
   onModel,
+  onBrainsChanged,
 }: {
-  harnesses: Harness[] | null;
+  harnesses: BrainStatus[] | null;
   harness: string;
   model: string;
   onHarness: (id: string) => void;
   onModel: (id: string) => void;
+  onBrainsChanged: () => void;
 }) {
   const { t } = useI18n();
+  const [more, setMore] = useState(false);
+  const chosen = harnesses?.find((h) => h.id === harness);
+  const { state: signIn, reread } = useSignIn(chosen);
   if (harnesses === null) {
     return (
       <p className="flex items-center gap-2 text-small text-ink2">
@@ -175,36 +186,17 @@ export function BrainPicker({
       </p>
     );
   }
-  if (harnesses.length === 0) {
-    return (
-      <Problem title={t("brain.none")}>
-        {t("brain.noneBody")}{" "}
-        <a
-          className="text-accent underline-offset-2 hover:underline"
-          href="https://claude.com/claude-code"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Claude Code
-        </a>
-        {" · "}
-        <a
-          className="text-accent underline-offset-2 hover:underline"
-          href="https://developers.openai.com/codex/cli"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Codex
-        </a>
-      </Problem>
-    );
-  }
-  const selected = harnesses.find((h) => h.id === harness);
+  const installed = harnesses.filter((h) => h.installed);
+  const others = harnesses.filter((h) => !h.installed && !h.unsupported);
+  const selected = installed.find((h) => h.id === harness);
   return (
     <div className="flex flex-col gap-3">
-      {!harnesses.some((h) => !h.disabled) ? <Problem title={t("brain.noneCompatible")} /> : null}
+      {installed.length === 0 ? <Problem title={t("brain.none")}>{t("brain.noneInstall")}</Problem> : null}
+      {installed.length > 0 && !installed.some((h) => !h.disabled) ? (
+        <Problem title={t("brain.noneCompatible")} />
+      ) : null}
       <div role="radiogroup" aria-label={t("create.brain")} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {harnesses.map((h) => (
+        {installed.map((h) => (
           // biome-ignore lint/a11y/useSemanticElements: a styled choice; a native radio cannot take this look
           <button
             key={h.id}
@@ -228,7 +220,36 @@ export function BrainPicker({
           </button>
         ))}
       </div>
-      {selected && !selected.disabled ? <ModelPicker harness={harness} value={model} onChange={onModel} /> : null}
+      {others.length ? (
+        more || installed.length === 0 ? (
+          <div className="overflow-hidden rounded-card border border-line">
+            <div className="divide-y divide-line">
+              {others.map((b) => (
+                <BrainRow key={b.id} brain={b} onChanged={onBrainsChanged} />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setMore(true)}
+            className="self-start text-small text-accent hover:underline"
+          >
+            {t("brain.more", { count: String(others.length) })}
+          </button>
+        )
+      ) : null}
+      {chosen && signIn?.kind === "signed_out" && chosen.canSignIn ? (
+        <Problem title={t("brain.signedOut")}>
+          <div className="flex flex-col gap-2 pt-1">
+            <span>{t("brain.signInBody", { name: chosen.name })}</span>
+            <SignInBrain brain={chosen} onDone={reread} />
+          </div>
+        </Problem>
+      ) : null}
+      {selected && !selected.disabled && signIn?.kind !== "signed_out" ? (
+        <ModelPicker harness={harness} value={model} onChange={onModel} />
+      ) : null}
     </div>
   );
 }

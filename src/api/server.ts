@@ -305,6 +305,26 @@ export function createApi(mingle: Mingle): Hono<Env> {
   );
   app.get("/v1/admin/harnesses", async (c) => c.json(await mingle.availableHarnesses()));
   app.get("/v1/admin/harnesses/:id/models", async (c) => c.json(await mingle.harnessModels(c.req.param("id"))));
+  /** Every harness OAR knows, installed or not: the console offers to install or sign in the rest. */
+  app.get("/v1/admin/brains", async (c) => c.json((await mingle.options.harness.catalog?.()) ?? []));
+  app.get("/v1/admin/brains/:id/sign-in", async (c) =>
+    c.json((await mingle.options.harness.signInState?.(c.req.param("id"))) ?? { kind: "unknown" }),
+  );
+  app.get("/v1/admin/brains/:id/install-plan", async (c) =>
+    c.json((await mingle.options.harness.installPlan?.(c.req.param("id"))) ?? { kind: "unsupported", detail: "" }),
+  );
+  app.post("/v1/admin/brains/:id/install", (c) => c.json(mingle.brains.install(c.req.param("id"))));
+  app.post("/v1/admin/brains/:id/sign-in", (c) => c.json(mingle.brains.signIn(c.req.param("id"))));
+  app.get("/v1/admin/jobs/:id", (c) => c.json(mingle.brains.get(c.req.param("id"))));
+  app.post("/v1/admin/jobs/:id/answer", async (c) => {
+    const { value } = await c.req.json<{ value: string }>();
+    mingle.brains.answer(c.req.param("id"), String(value ?? ""));
+    return c.json({ ok: true });
+  });
+  app.delete("/v1/admin/jobs/:id", (c) => {
+    mingle.brains.cancel(c.req.param("id"));
+    return c.json({ ok: true });
+  });
 
   /** Every first-batch platform, with how to connect it, or null when it is not built yet. */
   app.get("/v1/admin/platforms", (c) => {

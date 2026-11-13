@@ -490,7 +490,8 @@ async function start(flags: Flags): Promise<void> {
   const { oarHarness } = harnessModule;
   const mingle = new Mingle({
     paths,
-    harness: oarHarness(),
+    // Harness SDKs Mingle does not ship (Cursor's) are installed here on request.
+    harness: oarHarness(undefined, { vendorDir: resolve(paths.home, "vendor") }),
     channels: await loadChannels(),
     secrets: defaultSecrets(resolve(paths.home, "secrets.json")),
     cliEntry: fileURLToPath(import.meta.url),

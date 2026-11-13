@@ -218,6 +218,8 @@ export async function rig(
     coalesceMs: options.coalesceMs ?? 150,
     reminderTickMs: 60_000,
     retryDelaysMs: [10],
+    // MINGLE_E2E_LOG=1 prints what Mingle logs, to see why a real harness did not answer.
+    ...(process.env.MINGLE_E2E_LOG ? { log: (line: string) => console.log(`[mingle] ${line}`) } : {}),
   });
   const server = await listen(createApi(mingle), 0);
   await mingle.start(server.url);

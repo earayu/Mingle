@@ -178,19 +178,58 @@ describe("declared option refusals", () => {
     return runtime;
   };
 
-  it("blocks a runtime that refuses appendSystemPrompt", async () => {
-    const runtime = refused({ appendSystemPrompt: "fixture refusal" });
-    const harness = oarHarness({ require: () => runtime });
-    const entry = (await harness.available()).find((h) => h.id === "codex");
-    expect(entry?.disabled?.code).toBe("harness_prompt_unsupported");
-    await expect(open("codex", runtime)).rejects.toMatchObject({ code: "harness_prompt_unsupported" });
+  /** A runtime refusing `options`, recording what it was opened with and what it was sent. */
+  const recording = (options: Record<string, string>) => {
+    const opened: Record<string, unknown>[] = [];
+    const sent: string[] = [];
+    const runtime = {
+      ...scriptedRuntime({ id: "codex", turn: () => {} }),
+      refusedSessionOptions: options,
+      installation: async () => ({ kind: "available", via: "bundled" }),
+      session: async (_install: unknown, sessionOptions: Record<string, unknown>) => {
+        opened.push(sessionOptions);
+        return {
+          ...fakeSession(),
+          deliver: async (text: string) => {
+            sent.push(text);
+            return { landed: "prompted" };
+          },
+        } as unknown as Session;
+      },
+    } as unknown as Runtime;
+    return { runtime, opened, sent };
+  };
+
+  it("carries the guide in the first message when the harness refuses an appended prompt", async () => {
+    const { runtime, opened, sent } = recording({ appendSystemPrompt: "fixture refusal" });
+    const entry = (await oarHarness({ require: () => runtime }).available()).find((h) => h.id === "codex");
+    expect(entry?.disabled).toBeUndefined();
+    const session = await open("codex", runtime);
+    expect(opened[0]).not.toHaveProperty("appendSystemPrompt");
+    expect(opened[0]?.env).toEqual(ENV);
+    await session.deliver("hello", "i1");
+    await session.deliver("again", "i2");
+    expect(sent[0]).toContain(PROMPT.trim());
+    expect(sent[0]?.endsWith("hello")).toBe(true);
+    expect(sent[1]).toBe("again"); // only once
   });
 
-  it("blocks a runtime that refuses env", async () => {
-    const runtime = refused({ env: "fixture refusal" });
-    const entry = (await oarHarness({ require: () => runtime }).available()).find((h) => h.id === "codex");
-    expect(entry?.disabled?.code).toBe("harness_env_unsupported");
-    await expect(open("codex", runtime)).rejects.toMatchObject({ code: "harness_env_unsupported" });
+  it("writes the CLI's settings into the guide when the harness refuses an environment", async () => {
+    const { runtime, opened, sent } = recording({ appendSystemPrompt: "fixture", env: "fixture refusal" });
+    const session = await open("codex", runtime);
+    expect(opened[0]).not.toHaveProperty("env");
+    await session.deliver("hello", "i1");
+    for (const [key, value] of Object.entries(ENV).filter(([k]) => k.startsWith("MINGLE_"))) {
+      expect(sent[0]).toContain(`${key}='${value}'`);
+    }
+  });
+
+  it("does not repeat the guide in a resumed session", async () => {
+    const { runtime, sent } = recording({ appendSystemPrompt: "fixture refusal" });
+    const session = await open("codex", runtime, "s-old");
+    expect(session.resumed).toBe(true);
+    await session.deliver("hello", "i1");
+    expect(sent[0]).toBe("hello");
   });
 
   it("does not block a refusal Mingle never sends", async () => {
@@ -202,7 +241,7 @@ describe("declared option refusals", () => {
     await session.dispose();
   });
 
-  it("marks the real cursor runtime disabled from its own public declaration", async () => {
+  it("offers the real cursor runtime despite its declared refusals", async () => {
     // Cursor is not in the default registry; its public constructor declares the refusals.
     const cursor = createCursorRuntime({ sdk: {} as never });
     const sessionSpy = vi.fn(async () => fakeSession());
@@ -212,10 +251,11 @@ describe("declared option refusals", () => {
       session: sessionSpy,
     };
     const harness = oarHarness({ require: () => runtime });
-    const entry = (await harness.available()).find((h) => h.id === "cursor");
-    expect(entry?.disabled?.code).toBe("harness_prompt_unsupported");
-    await expect(open("cursor", runtime)).rejects.toMatchObject({ code: "harness_prompt_unsupported" });
-    expect(sessionSpy).not.toHaveBeenCalled();
+    expect((await harness.available()).find((h) => h.id === "cursor")?.disabled).toBeUndefined();
+    await open("cursor", runtime);
+    const opened = (sessionSpy.mock.calls[0] as unknown[] | undefined)?.[1];
+    expect(opened).not.toHaveProperty("appendSystemPrompt");
+    expect(opened).not.toHaveProperty("env");
   });
 });
 

@@ -106,6 +106,36 @@ export interface Model {
   disabled?: string;
 }
 
+export interface BrainStatus extends Harness {
+  installed: boolean;
+  unsupported?: string;
+  canInstall: boolean;
+  canSignIn: boolean;
+}
+
+export type SignInState =
+  | { kind: "signed_in"; account?: string; plan?: string }
+  | { kind: "signed_out"; detail?: string }
+  | { kind: "unknown" };
+
+export type InstallPlan =
+  | { kind: "plan"; steps: string[]; source: string }
+  | { kind: "unsupported"; detail: string; steps?: string[]; source?: string };
+
+export interface Job {
+  id: string;
+  kind: "install" | "sign_in";
+  harness: string;
+  state: "running" | "done" | "failed" | "cancelled";
+  events: (
+    | { kind: "url"; url: string; instructions?: string }
+    | { kind: "code"; code: string; url: string }
+    | { kind: "info"; message: string }
+  )[];
+  prompt?: { message: string; secret: boolean; options?: { id: string; label: string }[] };
+  detail?: string;
+}
+
 export type ModelList = { kind: "ok"; models: Model[] } | { kind: "unauthenticated" } | { kind: "unsupported" };
 
 export interface CredentialField {
@@ -148,6 +178,14 @@ export interface Reminder {
 export const api = {
   status: () => call<{ version: string; agents: AgentView[] }>("GET", "/v1/admin/status"),
   harnesses: () => call<Harness[]>("GET", "/v1/admin/harnesses"),
+  brains: () => call<BrainStatus[]>("GET", "/v1/admin/brains"),
+  signInState: (harness: string) => call<SignInState>("GET", `/v1/admin/brains/${harness}/sign-in`),
+  installPlan: (harness: string) => call<InstallPlan>("GET", `/v1/admin/brains/${harness}/install-plan`),
+  install: (harness: string) => call<Job>("POST", `/v1/admin/brains/${harness}/install`),
+  signIn: (harness: string) => call<Job>("POST", `/v1/admin/brains/${harness}/sign-in`),
+  job: (id: string) => call<Job>("GET", `/v1/admin/jobs/${id}`),
+  answerJob: (id: string, value: string) => call("POST", `/v1/admin/jobs/${id}/answer`, { value }),
+  cancelJob: (id: string) => call("DELETE", `/v1/admin/jobs/${id}`),
   models: (harness: string) => call<ModelList>("GET", `/v1/admin/harnesses/${harness}/models`),
   updateAgent: (id: string, patch: { name?: string; harness?: string; model?: string | null }) =>
     call<AgentView>("PATCH", `/v1/admin/agents/${id}`, patch),
