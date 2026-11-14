@@ -41,6 +41,10 @@ export function createApi(mingle: Mingle): Hono<Env> {
     if (error instanceof MingleError) {
       return c.json({ error: error.code, next: error.next }, error.status as 400);
     }
+    // c.req.json() throws a SyntaxError on a malformed body: the caller's fault, not a bug.
+    if (error instanceof SyntaxError) {
+      return c.json({ error: "invalid_json", next: "the request body is not valid JSON" }, 400);
+    }
     mingle.log(`api: ${error.stack ?? error.message}`);
     return c.json({ error: "internal", next: "this is a Mingle bug; check ~/.mingle/logs" }, 500);
   });
@@ -184,6 +188,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
     const before = c.req.query("before");
     if ([around, since, before].filter(Boolean).length > 1)
       throw new MingleError("flags_conflict", "pass only one of --before, --since and --around");
+    if (before && !store.hasMessage(chat.id, before)) throw notFound("message", before);
     const messages = around
       ? store.chatAround(chat.id, around, limit)
       : since
@@ -614,8 +619,11 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   /** Try again on messages the agent failed or did not answer: all of them, or `ids`. */
   app.post("/v1/admin/agents/:id/messages/retry", async (c) => {
-    const body = await c.req.json<{ ids?: string[] }>().catch(() => ({}) as { ids?: string[] });
-    return c.json(mingle.retryMessages(c.req.param("id"), body.ids));
+    const body = await c.req.json<{ ids?: unknown } | null>().catch(() => null);
+    if (body?.ids !== undefined && (!Array.isArray(body.ids) || !body.ids.every((id) => typeof id === "string"))) {
+      throw new MingleError("invalid_message_ids", "provide ids as an array of message IDs", 400);
+    }
+    return c.json(mingle.retryMessages(c.req.param("id"), body?.ids as string[] | undefined));
   });
 
   /** Mark failed or unanswered messages as ignored: kept in activity, no longer needing the owner. */

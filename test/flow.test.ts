@@ -2,8 +2,8 @@ import { scriptedRuntime } from "@botiverse/oar/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Harness, HarnessSession } from "../src/harness/harness.ts";
 import { oarHarness } from "../src/harness/harness.ts";
-import { memorySecrets } from "../src/platform/secrets.ts";
-import { type FakeChannel, messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
+import { memorySecrets, type SecretStore } from "../src/platform/secrets.ts";
+import { FakeChannel, messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
 
 /**
  * End to end: fake chat app → Mingle → OAR scripted harness → real `mingle` CLI
@@ -971,6 +971,30 @@ describe("binding a bot again", () => {
     expect(JSON.parse((await secrets.get(first.secretRef)) as string)).toEqual({ token: "rotated" });
     expect(channel.lastCredentials).toEqual({ token: "rotated" });
     expect(mingle.store.connection(first.id)?.state).toBe("connected");
+  });
+
+  it("makes one connection when two onboardings of the same bot race", async () => {
+    // A slow secret store widens the window between the duplicate check and the insert.
+    const base = memorySecrets();
+    const secrets: SecretStore = {
+      get: (ref) => base.get(ref),
+      delete: (ref) => base.delete(ref),
+      set: async (ref, value) => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return base.set(ref, value);
+      },
+    };
+    const slack = new FakeChannel();
+    current = await rig(async () => {}, { secrets, channels: { slack } });
+    const { mingle } = current;
+    const other = mingle.createAgent({ name: "Bea", role: "", harness: "scripted", model: null });
+
+    const [a, b] = await Promise.all([
+      mingle.addConnection(other.id, "slack", { token: "x" }),
+      mingle.addConnection(other.id, "slack", { token: "y" }),
+    ]);
+    expect(a.id).toBe(b.id);
+    expect(mingle.store.connections(other.id)).toHaveLength(1);
   });
 
   it("rebinds the same agent's bot instead of refusing it", async () => {

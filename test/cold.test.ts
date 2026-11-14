@@ -248,6 +248,9 @@ describe("cold start in the runtime", () => {
       harness: oarHarness({ require: () => scripted }),
       homeDir: home,
       env: () => ({}),
+      signIn: () => "scripted",
+      limitRevision: () => undefined,
+      onSession: () => {},
       coalesceMs: 5,
       now: () => clock,
       // The scripted runtime counts about a token per four characters: a small floor stands in for 128K.

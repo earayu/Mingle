@@ -69,3 +69,18 @@ describe("outbox with files", () => {
     });
   });
 });
+
+describe("outbound platform ids", () => {
+  it("keeps the outcome without the id when the platform reports a duplicate", () => {
+    const store = new Store(":memory:");
+    const agent = store.createAgent({ name: "Alex", slug: "alex", harness: "scripted" });
+    const connection = store.createConnection({ agentId: agent.id, platform: "slack", secretRef: "s1" });
+    const chat = store.upsertChat({ connectionId: connection.id, platformId: "D1", kind: "dm" });
+    const first = store.insertOutbound({ chatId: chat.id, body: "a", replyTo: null });
+    store.setOutboundResult(first.id, "sent", "dup-1");
+    const second = store.insertOutbound({ chatId: chat.id, body: "b", replyTo: null });
+    store.setOutboundResult(second.id, "sent", "dup-1");
+    expect(store.message(second.id)).toMatchObject({ state: "sent", platformId: null });
+    store.close();
+  });
+});

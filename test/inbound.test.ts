@@ -132,6 +132,15 @@ describe("concurrent inbound events", () => {
     store.moveInbound([id], "retry");
     expect(store.wasNudged(id)).toBe(false);
   });
+
+  it("clears the nudge when a waiting message resumes, so it is nudged again", () => {
+    setup();
+    const id = message("delivered");
+    store.markNudged([id]);
+    store.moveInbound([id], "hold", undefined, Date.now() + 60_000);
+    store.moveInbound([id], "resume");
+    expect(store.wasNudged(id)).toBe(false);
+  });
 });
 
 describe("inbound state in a running Mingle", () => {

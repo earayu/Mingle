@@ -38,7 +38,6 @@ export function formatMessage(
     const name = contactName(opts.contact) ?? (message.senderName !== message.senderId ? message.senderName : null);
     if (name) parts.push(`from=${quote(name)}`);
     if (opts.contact) parts.push(`user=${opts.contact.id}`);
-    else if (!name) parts.push(`from=${quote(message.senderId || "unknown")}`);
     if (opts.ownerId && message.senderId === opts.ownerId) parts.push("owner");
   }
   if (message.replyTo) parts.push(`reply_to=${message.replyTo}`);
@@ -59,21 +58,28 @@ const EXCERPT_AFTER = 120;
  * knows it is reading a window, not the full text. Short bodies come back whole.
  */
 export function excerpt(body: string, query: string, before = EXCERPT_BEFORE, after = EXCERPT_AFTER): string {
+  // Positions in characters, not UTF-16 units, so a window never splits one.
+  const chars = [...body];
+  // The match is searched in the lowercased body, but a character can fold to several UTF-16
+  // units ("İ" → "i̇"): map each unit of the folded text back to its original character index,
+  // so the window and the <match> markers land on the real characters.
+  const offsets: number[] = [];
+  for (const [index, char] of chars.entries()) {
+    for (let i = 0; i < char.toLowerCase().length; i++) offsets.push(index);
+  }
   const hay = body.toLowerCase();
-  let at = -1;
-  let length = 0;
+  let start = 0;
+  let size = 0;
   for (const term of [query.trim(), ...searchTerms(query)]) {
     if (!term) continue;
-    at = hay.indexOf(term.toLowerCase());
+    const folded = term.toLowerCase();
+    const at = hay.indexOf(folded);
     if (at >= 0) {
-      length = term.length;
+      start = offsets[at] ?? 0;
+      size = (offsets[at + folded.length - 1] ?? start) - start + 1;
       break;
     }
   }
-  // Positions in characters, not UTF-16 units, so a window never splits one.
-  const chars = [...body];
-  const start = at < 0 ? 0 : [...body.slice(0, at)].length;
-  const size = at < 0 ? 0 : [...body.slice(at, at + length)].length;
   const width = size + before + after;
   // A window of the same width wherever the match is: near either end it slides inward.
   const from = Math.max(0, Math.min(start - before, chars.length - width));

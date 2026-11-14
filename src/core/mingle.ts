@@ -15,7 +15,7 @@ import type {
 } from "../channels/channel.ts";
 import type { Harness, HarnessInfo, HarnessStatus } from "../harness/harness.ts";
 import type { SecretStore } from "../platform/secrets.ts";
-import { type Agent, type Connection, type Message, Store } from "../store/store.ts";
+import { type Agent, type Connection, type Message, type Reminder, Store } from "../store/store.ts";
 import { VERSION } from "../version.ts";
 import { Brains } from "./brains.ts";
 import { coldRebuildFor } from "./cold.ts";
@@ -24,7 +24,7 @@ import { MingleError, notFound } from "./errors.ts";
 import { formatReminder, renderMessage } from "./format.ts";
 import { createHome, memorySize, writeRole } from "./home.ts";
 import { slugify } from "./ids.ts";
-import { BACKOFF_MS, type LinkEvent, type LinkState, step, stored } from "./link.ts";
+import { BACKOFF_MS, type LinkEffect, type LinkEvent, type LinkState, step, stored } from "./link.ts";
 import { LiveReplies, pausedNote, stopNote } from "./live.ts";
 import { Outbox } from "./outbox.ts";
 import type { Paths } from "./paths.ts";
@@ -106,6 +106,15 @@ export class Mingle {
   private readonly pauseNoted = new Set<string>();
   /** Sessions of just-paused agents that are still closing; resuming waits for them. */
   private readonly closing = new Map<string, Promise<void>>();
+  /**
+   * Usage limits by sign-in (docs/spec.md 4.3): the account-wide wait each session reports
+   * against. `revision` distinguishes reports, so a turn that began under an older wait cannot
+   * clear a newer one.
+   */
+  private readonly limits = new Map<string, { until: number; why: FailureInfo; revision: number }>();
+  private limitRevision = 0;
+  /** How many times each agent's own sign-in was re-scoped by credential or harness changes. */
+  private readonly signInVersions = new Map<string, number>();
   /** Installs and sign-ins of harnesses, run for the console. */
   readonly brains: Brains;
 
@@ -142,19 +151,63 @@ export class Mingle {
     // Warm the harness list and the catalog so the console's first look at either does not
     // wait on the probe. One after the other: each starts every harness's executable.
     void this.probeHarnesses()
-      .catch(() => {})
+      .catch((error) => this.log(`harness probe failed: ${(error as Error).message}`))
       .then(() => this.probeCatalog())
-      .catch(() => {});
+      .catch((error) => this.log(`harness catalog probe failed: ${(error as Error).message}`));
+    // Account-level quota waits survive a restart (docs/spec.md 4.3): rebuild the ledger before
+    // any session opens — one entry per sign-in, keeping the latest deadline its agents persisted.
+    // Nothing is written until the whole scan settled on each sign-in's entry.
+    {
+      const expired: string[] = [];
+      const maxima = new Map<string, { until: number; resetsAt: number | null }>();
+      for (const agent of this.store.agents()) {
+        const wait = this.store.quotaWait(agent.id);
+        if (!wait) continue;
+        if (wait.until <= Date.now()) {
+          expired.push(agent.id);
+          continue;
+        }
+        const key = this.signIn(agent.id);
+        const prev = maxima.get(key);
+        if (!prev || wait.until > prev.until) maxima.set(key, wait);
+      }
+      for (const id of expired) this.store.setQuotaWait(id);
+      for (const [key, wait] of maxima) {
+        this.limits.set(key, {
+          until: wait.until,
+          why: { failure: "quota", ...(wait.resetsAt != null ? { resetsAt: wait.resetsAt } : {}) },
+          revision: ++this.limitRevision,
+        });
+      }
+      for (const agent of this.store.agents()) this.saveLimitFor(agent.id);
+    }
     for (const agent of this.store.agents()) {
       // A paused agent stays paused across restarts: no session, no token, until the owner resumes it.
       if (agent.status === "paused") this.paused.add(agent.id);
       else this.addRuntime(agent).start();
     }
-    await Promise.all(this.store.connections().map((c) => this.reconnect(c.id)));
+    await Promise.all(
+      this.store
+        .connections()
+        .map((c) =>
+          this.reconnect(c.id).catch((error) =>
+            this.log(`connection ${c.id} could not be restored at start: ${(error as Error).message}`),
+          ),
+        ),
+    );
     const tick = this.options.reminderTickMs ?? 10_000;
     this.reminderTimer = setInterval(() => {
-      this.fireReminders();
-      this.resumeWaiting();
+      // One bad reminder or a store hiccup must not kill the tick, or the ones after it.
+      try {
+        this.fireReminders();
+      } catch (error) {
+        this.log(`reminder tick failed: ${(error as Error).message}`);
+      }
+      try {
+        this.resumeWaiting();
+      } catch (error) {
+        this.log(`waiting-messages tick failed: ${(error as Error).message}`);
+      }
     }, tick);
     // Timers do not run while the computer sleeps: a tick that comes far later than due means it
     // slept, and its connections are likely dead without knowing it yet (docs/spec.md 7.1).
@@ -164,7 +217,10 @@ export class Mingle {
       const now = Date.now();
       const slept = now - last - every;
       last = now;
-      if (slept > 60_000) void this.resume(`the computer slept for ${Math.round(slept / 60_000)} min`);
+      if (slept > 60_000)
+        void this.resume(`the computer slept for ${Math.round(slept / 60_000)} min`).catch((error) =>
+          this.log(`resume after sleep failed: ${(error as Error).message}`),
+        );
     }, every);
   }
 
@@ -315,7 +371,11 @@ export class Mingle {
       ...(patch.harness !== undefined ? { harness: patch.harness } : {}),
       ...(patch.model !== undefined ? { model: patch.model || null } : {}),
     });
-    if (harnessChanged) this.store.setSessionId(agent.id, null);
+    if (harnessChanged) {
+      this.store.setSessionId(agent.id, null);
+      // A different brain can be a different account: its quota scope changes with it.
+      this.rescope(agent.id);
+    }
     const brainChanged = harnessChanged || (patch.model !== undefined && (patch.model || null) !== agent.model);
     // The name is in the appended system prompt too, so either change reopens the session.
     if (brainChanged || (name && name !== agent.name)) await this.runtimes.get(agent.id)?.restart();
@@ -373,6 +433,9 @@ export class Mingle {
       throw new MingleError("env_save_failed", "the system credential store did not save it; try again", 500);
     }
     this.store.putEnvName(agent.id, name);
+    // A harness that ignores the agent's environment keeps the computer's sign-in whatever the
+    // variable is called, so it alone does not change the scope.
+    if (OWN_SIGN_IN.test(name) && this.options.harness.acceptsEnv?.(agent.harness) !== false) this.rescope(agent.id);
     await this.runtimes.get(agent.id)?.refresh();
   }
 
@@ -382,7 +445,23 @@ export class Mingle {
       throw new MingleError("env_not_found", `no variable ${name} on this agent`, 404);
     }
     await this.options.secrets.delete(envRef(agent.id, name)).catch(() => {});
+    if (OWN_SIGN_IN.test(name) && this.options.harness.acceptsEnv?.(agent.harness) !== false) this.rescope(agent.id);
     await this.runtimes.get(agent.id)?.refresh();
+  }
+
+  /**
+   * The agent's credentials or harness changed, so its next session belongs to a fresh quota
+   * scope (docs/spec.md 4.3). Persist what the new scope waits for now — a shared scope inherits
+   * the ledger entry already in force — and let its waiting messages go once the new session
+   * can reach them. The session still running keeps the scope it opened with; `onSession`
+   * reconciles the gate when the replacement starts opening. No secret values are ever part
+   * of a scope key, a log line or the database.
+   */
+  private rescope(agentId: string): void {
+    if (!this.store.agent(agentId)) return;
+    this.signInVersions.set(agentId, (this.signInVersions.get(agentId) ?? 0) + 1);
+    this.saveLimitFor(agentId);
+    this.store.readyWaiting(agentId, Date.now());
   }
 
   /** Name to value for the harness. A value missing from the secret store is left out, not an error. */
@@ -585,16 +664,30 @@ export class Mingle {
         const note = why && { ...why, harness: this.harnessName(agent.id) };
         for (const id of ids) this.replies.settle(id, outcome, note);
       },
-      onLimit: (until, why) => this.shareLimit(agent.id, until, why),
-      onTurnCompleted: (startedAt) => this.endLimit(agent.id, startedAt),
+      signIn: () => this.signIn(agent.id),
+      limitRevision: (key) => this.limits.get(key)?.revision,
+      onSession: (key, changed) => {
+        // The new session runs on `key`. Only a scope change reconciles the gate: re-applying
+        // it on every open would undo an owner retry's deliberate bypass of the account wait.
+        const active = this.runtimes.get(agent.id);
+        if (changed) {
+          active?.release();
+          const wait = this.limits.get(key);
+          if (wait) active?.holdFor(wait.until, wait.why);
+          this.store.readyWaiting(agent.id, Date.now());
+        }
+        this.resumeWaiting();
+      },
+      onLimit: (key, until, why) => this.shareLimit(key, until, why),
+      onTurnCompleted: (key, revision) => this.endLimit(key, revision),
       log: (line) => this.log(line),
     });
     this.runtimes.set(agent.id, runtime);
-    // A limit already holding the agents on its sign-in holds this one too.
-    for (const [peerId, peer] of this.runtimes) {
-      const wait = peer !== runtime && this.signIn(peerId) === this.signIn(agent.id) ? peer.limit : undefined;
-      if (wait) runtime.holdFor(wait.until, wait.why);
-    }
+    // A wait already holding its sign-in holds this agent too: persisted at once, so a restart
+    // restores it even if the agent that reported it has moved to a scope of its own by then.
+    this.saveLimitFor(agent.id);
+    const wait = this.limits.get(this.signIn(agent.id));
+    if (wait && wait.until > Date.now()) runtime.holdFor(wait.until, wait.why);
     return runtime;
   }
 
@@ -605,34 +698,56 @@ export class Mingle {
    */
   private signIn(agentId: string): string {
     const agent = this.store.agent(agentId);
-    if (!agent) return `agent:${agentId}`;
-    const own = this.store.envNames(agentId).some(({ name }) => OWN_SIGN_IN.test(name));
-    return own ? `agent:${agentId}` : `shared:${agent.harness}`;
+    if (!agent) return `agent:${agentId}:0`;
+    // A harness that ignores the agent's environment (Cursor) can only ever use this
+    // computer's sign-in, whatever variables the owner saved.
+    const own =
+      this.options.harness.acceptsEnv?.(agent.harness) !== false &&
+      this.store.envNames(agentId).some(({ name }) => OWN_SIGN_IN.test(name));
+    return own ? `agent:${agentId}:${this.signInVersions.get(agentId) ?? 0}` : `shared:${agent.harness}`;
   }
 
-  /** One agent hit its sign-in's usage limit: the others on that sign-in wait for it too. */
-  private shareLimit(agentId: string, until: number, why: FailureInfo): void {
-    const key = this.signIn(agentId);
-    if (!key.startsWith("shared:")) return;
-    for (const [peerId, peer] of this.runtimes) {
-      if (peerId !== agentId && this.signIn(peerId) === key) peer.holdFor(until, why);
-    }
+  /** Persist this agent's current scope's wait, or clear it when the scope waits for nothing. */
+  private saveLimitFor(agentId: string): void {
+    const wait = this.limits.get(this.signIn(agentId));
+    this.store.setQuotaWait(
+      agentId,
+      wait && wait.until > Date.now() ? { until: wait.until, resetsAt: wait.why.resetsAt ?? null } : undefined,
+    );
+  }
+
+  /** A session on `key` hit its usage limit: every agent sharing it waits for the latest deadline. */
+  private shareLimit(key: string, until: number, why: FailureInfo): void {
+    const previous = this.limits.get(key);
+    const wait = previous && previous.until > until ? { until: previous.until, why: previous.why } : { until, why };
+    // Every new quota report gets a new revision even if its deadline is shorter/equal.
+    this.limits.set(key, { ...wait, revision: ++this.limitRevision });
+    for (const agent of this.store.agents()) if (this.signIn(agent.id) === key) this.saveLimitFor(agent.id);
+    for (const runtime of this.runtimes.values()) if (runtime.signIn === key) runtime.holdFor(wait.until, wait.why);
   }
 
   /**
-   * A turn that began at `startedAt` completed on this agent's sign-in, so the provider answers
-   * again: waits on it that began earlier are over, and their messages go out now instead of at
-   * their retry time.
+   * A turn that began while the ledger was at `revision` completed on `key`, so the provider
+   * answers again: the wait is over for every agent sharing it — including the one whose manual
+   * retry only bypassed its own gate — and their waiting messages go out now, not at the old
+   * retry time. A newer quota report (a different revision) is not cleared by an older success.
    */
-  private endLimit(agentId: string, startedAt: number): void {
-    const key = this.signIn(agentId);
-    const ended = new Set<string>();
-    for (const [peerId, peer] of this.runtimes) {
-      if ((peerId === agentId || this.signIn(peerId) === key) && peer.release(startedAt)) ended.add(peerId);
+  private endLimit(key: string, revision: number | undefined): void {
+    const wait = this.limits.get(key);
+    if (!wait || wait.revision !== revision) return;
+    this.limits.delete(key);
+    const now = Date.now();
+    // Persist that the wait is over before reaching for delivery: a message whose chat app is
+    // offline is ready the moment it reconnects or Mingle restarts, not at its old deadline.
+    for (const agent of this.store.agents()) {
+      if (this.signIn(agent.id) === key) {
+        this.store.setQuotaWait(agent.id);
+        this.store.readyWaiting(agent.id, now);
+      }
     }
-    if (ended.size === 0) return;
-    this.log(`${[...ended].join(",")}: usage limit over (a turn on ${key} completed)`);
-    this.resumeWaiting(Date.now(), ended);
+    for (const runtime of this.runtimes.values()) if (runtime.signIn === key) runtime.release();
+    this.log("usage limit over (a turn completed)");
+    this.resumeWaiting(now);
   }
 
   /** The agent's harness by its display name, for messages to people. */
@@ -713,6 +828,7 @@ export class Mingle {
         }
       } catch (error) {
         set({ kind: "failed", code: error instanceof MingleError ? error.code : "unknown" });
+        this.log(`onboarding ${platform} for ${agent.name} failed: ${(error as Error).message}`);
       }
     })();
     // Forget finished sessions after a while.
@@ -735,7 +851,18 @@ export class Mingle {
     platform: Platform,
     event: Extract<OnboardingEvent, { kind: "succeeded" }>,
   ): Promise<Connection> {
-    const existing = this.store.connections().find((c) => c.platform === platform && c.botId === event.bot.id);
+    // One bot, one connection: matched by platform bot id or by the secret reference it will
+    // get, so a rebind reuses the connection instead of making a second one. Two onboardings
+    // of the same bot can be in flight at once (the console and the CLI, say); the lookup and
+    // the insert below must stay synchronous, or both would pass the check and create a pair
+    // of connections sharing one secretRef — removing either would then cut the other's
+    // credentials, and every message would arrive twice.
+    const secretRef = `${platform}:${event.bot.id}`;
+    const findExisting = () =>
+      this.store
+        .connections()
+        .find((c) => c.platform === platform && (c.botId === event.bot.id || c.secretRef === secretRef));
+    const existing = findExisting();
     if (existing) {
       // Binding a bot again can hand out new credentials and revoke the old ones (QQ issues a
       // fresh AppSecret on every scan), so the connection that already has this bot keeps
@@ -751,8 +878,17 @@ export class Mingle {
         `this bot is already connected to ${this.store.agent(existing.agentId)?.name ?? "another agent"}`,
       );
     }
-    const secretRef = `${platform}:${event.bot.id}`;
     await this.options.secrets.set(secretRef, JSON.stringify(event.credentials));
+    // The secret write above yielded: a concurrent onboarding of the same bot may have created
+    // the connection meanwhile. Look again with no await before the insert, so only one wins.
+    const raced = findExisting();
+    if (raced) {
+      if (raced.agentId === agentId) return this.store.connection(raced.id) as Connection;
+      throw new MingleError(
+        "bot_in_use",
+        `this bot is already connected to ${this.store.agent(raced.agentId)?.name ?? "another agent"}`,
+      );
+    }
     const connection = this.store.createConnection({ agentId, platform, secretRef });
     this.store.updateConnection(connection.id, {
       botId: event.bot.id,
@@ -762,7 +898,10 @@ export class Mingle {
     // The owner is in the address book from the start, so the console can name them before they write.
     if (event.ownerId) this.store.touchContact(connection.id, event.ownerId, null);
     await this.reconnect(connection.id, event.credentials);
-    if (event.ownerId) void this.greetOwner(connection.id, event.ownerId);
+    if (event.ownerId)
+      void this.greetOwner(connection.id, event.ownerId).catch((error) =>
+        this.log(`greeting failed: ${(error as Error).message}`),
+      );
     return this.store.connection(connection.id) as Connection;
   }
 
@@ -826,9 +965,18 @@ export class Mingle {
   private drive(id: string, event: LinkEvent, gen?: number, credentials?: Credentials): Promise<void> {
     const link = this.links.get(id);
     if (!link || (gen !== undefined && gen !== link.gen)) return Promise.resolve();
-    const { state, effect } = step(link.state, event, Date.now(), this.options.reconnectDelaysMs ?? BACKOFF_MS);
-    link.state = state;
-    if (state.kind !== "removed") this.store.updateConnection(id, stored(state));
+    // This runs inside timer and adapter callbacks: a store error must not escape as an
+    // uncaught exception and take the whole process down.
+    let state: LinkState;
+    let effect: LinkEffect;
+    try {
+      ({ state, effect } = step(link.state, event, Date.now(), this.options.reconnectDelaysMs ?? BACKOFF_MS));
+      link.state = state;
+      if (state.kind !== "removed") this.store.updateConnection(id, stored(state));
+    } catch (error) {
+      this.log(`connection ${id} state update failed: ${(error as Error).message}`);
+      return Promise.resolve();
+    }
     if (effect === "none") return Promise.resolve();
     clearTimeout(link.timer);
     link.timer = undefined;
@@ -844,7 +992,9 @@ export class Mingle {
     }
     if (effect !== "connect") return Promise.resolve();
     link.gen++;
-    return this.attempt(id, link.gen, credentials);
+    return this.attempt(id, link.gen, credentials).catch((error) =>
+      this.log(`connection ${id} attempt failed unexpectedly: ${(error as Error).message}`),
+    );
   }
 
   private closeLive(id: string): void {
@@ -867,14 +1017,24 @@ export class Mingle {
       }
       live = await this.channel(connection.platform).connect(credentials, {
         onMessage: (message) => {
-          if (this.links.get(id)?.gen === gen) this.receive(id, message);
+          if (this.links.get(id)?.gen !== gen) return;
+          try {
+            this.receive(id, message);
+          } catch (error) {
+            this.log(`could not take a message from ${connection.platform}: ${(error as Error).message}`);
+          }
         },
         onState: (state) => {
           if (state.kind === "error") reported = state.code;
           void this.drive(id, { kind: "reported", state }, gen);
         },
         onMembership: (change) => {
-          if (this.links.get(id)?.gen === gen) this.onMembership(id, change);
+          if (this.links.get(id)?.gen !== gen) return;
+          try {
+            this.onMembership(id, change);
+          } catch (error) {
+            this.log(`could not take a membership change from ${connection.platform}: ${(error as Error).message}`);
+          }
         },
       });
     } catch (error) {
@@ -910,6 +1070,7 @@ export class Mingle {
     try {
       return JSON.parse(raw) as Credentials;
     } catch {
+      this.log(`connection ${connection.id}: stored credentials could not be read`);
       return undefined;
     }
   }
@@ -1077,15 +1238,14 @@ export class Mingle {
    * whose chat app is offline keeps waiting: the agent could not reply there anyway; the next tick
    * after it reconnects picks it up.
    */
-  resumeWaiting(now = Date.now(), agents?: ReadonlySet<string>): void {
+  resumeWaiting(now = Date.now()): void {
     const due = new Map<string, string[]>();
-    // `agents`: their wait is known to be over, so all their waiting messages go now.
-    const ready = agents
-      ? [...agents].flatMap((agentId) => this.store.waiting(agentId).map((m) => ({ ...m, agentId })))
-      : this.store.dueWaiting(now);
+    const ready = this.store.dueWaiting(now);
     for (const message of ready) {
       const runtime = this.runtimes.get(message.agentId);
-      if (!runtime || this.paused.has(message.agentId)) continue;
+      // A runtime whose session still runs on a scope its configuration just left is skipped:
+      // its deferred refresh is what may deliver the newly-ready retry, never the old session.
+      if (!runtime || this.paused.has(message.agentId) || runtime.signIn !== this.signIn(message.agentId)) continue;
       const chat = this.store.chat(message.chatId);
       const live = chat && this.live.get(chat.connectionId);
       if (!live) continue;
@@ -1112,20 +1272,34 @@ export class Mingle {
 
   fireReminders(now = Date.now()): void {
     for (const reminder of this.store.dueReminders(now)) {
-      let next: number | null = null;
-      if (reminder.rule !== "once") {
-        try {
-          next = nextFire(reminder.rule, now);
-        } catch {
-          next = null;
-        }
+      try {
+        this.fireReminder(reminder, now);
+      } catch (error) {
+        this.log(`reminder ${reminder.id} failed to fire: ${(error as Error).message}`);
       }
-      this.store.markReminderFired(reminder.id, now, next);
-      const source = reminder.sourceMessageId ? this.store.message(reminder.sourceMessageId) : undefined;
-      const agentName = this.store.agent(reminder.agentId)?.name;
-      const quoted = source && renderMessage(this.store, source, agentName ? { agentName } : {});
-      this.runtimes.get(reminder.agentId)?.enqueueText(formatReminder(reminder, now, quoted || undefined));
     }
+  }
+
+  private fireReminder(reminder: Reminder, now: number): void {
+    let next: number | null = null;
+    if (reminder.rule !== "once") {
+      try {
+        next = nextFire(reminder.rule, now);
+      } catch {
+        next = null;
+      }
+    }
+    this.store.markReminderFired(reminder.id, now, next);
+    const source = reminder.sourceMessageId ? this.store.message(reminder.sourceMessageId) : undefined;
+    const agentName = this.store.agent(reminder.agentId)?.name;
+    const quoted = source && renderMessage(this.store, source, agentName ? { agentName } : {});
+    const runtime = this.runtimes.get(reminder.agentId);
+    if (!runtime) {
+      // A paused or deleted agent has no runtime: the reminder fired but goes nowhere.
+      this.log(`reminder ${reminder.id} fired but agent ${reminder.agentId} has no runtime`);
+      return;
+    }
+    runtime.enqueueText(formatReminder(reminder, now, quoted || undefined));
   }
 
   // --------------------------------------------------------------------- cli

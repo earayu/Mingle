@@ -84,7 +84,8 @@ More messages can arrive while you are working. They appear in your session as t
 "$MINGLE_CLI" chat list                      # chats you are in: ID, app, name
 "$MINGLE_CLI" chat info c12                  # details; members where the app allows
 "$MINGLE_CLI" message read c12 --limit 30    # recent messages in a chat
-"$MINGLE_CLI" message search ridge saturday   # messages with every word; "a phrase" in quotes; --in c12 to narrow
+"$MINGLE_CLI" message search ridge saturday   # messages with every word; --in c12 to narrow
+"$MINGLE_CLI" message search '"ridge route"' saturday   # keep the double quotes for an exact phrase
 "$MINGLE_CLI" message read c12 --around m8f2a  # the messages before and after one, e.g. a search hit
 "$MINGLE_CLI" message read c12 --since m8f2a   # the messages after one, oldest first, e.g. your last reply
 "$MINGLE_CLI" file get f3a1                  # download an attachment into the current directory

@@ -34,12 +34,27 @@ export interface RuntimeDeps {
     why?: FailureInfo,
   ) => void;
   /**
-   * This agent hit a usage limit and now waits until `until`. Mingle holds the other agents
-   * on the same sign-in too: the limit belongs to the account, not to one agent (docs/spec.md 4.3).
+   * Whose usage limit this agent's next session shares: the ledger key (docs/spec.md 4.3).
+   * Read again at each open; configuration changes apply to the next session, never mid-turn.
    */
-  readonly onLimit?: (until: number, why: FailureInfo) => void;
-  /** A turn that began at `startedAt` completed: its sign-in works again. */
-  readonly onTurnCompleted?: (startedAt: number) => void;
+  readonly signIn: () => string;
+  /** The current ledger revision of `key`, or undefined while it has no wait. */
+  readonly limitRevision: (key: string) => number | undefined;
+  /**
+   * A session is about to open with sign-in `key`. `changed` is true when it opens on a
+   * different sign-in than the session it replaces.
+   */
+  readonly onSession: (key: string, changed: boolean) => void;
+  /**
+   * A session on sign-in `key` hit a usage limit and now waits until `until`. Mingle holds the
+   * other agents on the same sign-in too: the limit belongs to the account, not to one agent.
+   */
+  readonly onLimit?: (key: string, until: number, why: FailureInfo) => void;
+  /**
+   * A turn on sign-in `key` completed: its account works again. `revision` is the ledger
+   * revision the turn began with, so a newer quota report is not cleared by an older success.
+   */
+  readonly onTurnCompleted?: (key: string, revision: number | undefined) => void;
   /** Wait before delivering to an idle agent, so a burst of messages becomes one input. */
   readonly coalesceMs?: number;
   /**
@@ -129,12 +144,12 @@ export class AgentRuntime {
   /** Messages the owner asked to try again; their next delivery says so. */
   private readonly retried = new Set<string>();
   /**
-   * The harness's usage limit is used up until then: new messages wait for it instead of being
-   * delivered only to fail again. Cleared when the owner asks to retry.
+   * The local delivery gate: new messages wait until then instead of failing again. Mingle's
+   * account ledger decides when it ends; the owner can still bypass it with a manual retry.
    */
-  private blocked: { until: number; why: FailureInfo; since: number } | undefined;
-  /** When the turn now running began, so a completed turn can say whether it postdates a limit. */
-  private turnStartedAt = 0;
+  private blocked: { until: number; why: FailureInfo } | undefined;
+  /** The ledger revision the running turn began with, so it clears only the wait it knew. */
+  private turnRevision: number | undefined;
   private unblockTimer: NodeJS.Timeout | undefined;
   /** When the agent last finished work, or Mingle last saw it busy: how long the session sat. */
   private idleSince: number;
@@ -142,6 +157,10 @@ export class AgentRuntime {
   private actions: Action[] = [];
   /** The turn now running met a cold session: measured when it ends (docs/spec.md 12). */
   private coldTurn: { mode: "resume" | "rebuild"; tokens: number | null; idleMs: number } | undefined;
+  /** The sign-in the open session runs on; events report under it, whatever config changes to. */
+  private sessionSignIn: string;
+  /** Bumped when a session is replaced or disposed: a retired session's events are dropped. */
+  private generation = 0;
 
   private readonly agentId: string;
   private readonly deps: RuntimeDeps;
@@ -149,6 +168,7 @@ export class AgentRuntime {
   constructor(agentId: string, deps: RuntimeDeps) {
     this.agentId = agentId;
     this.deps = deps;
+    this.sessionSignIn = deps.signIn();
     const last = deps.store.lastMessageTimes(agentId);
     this.idleSince = Math.max(last.inAt ?? 0, last.outAt ?? 0) || this.now();
   }
@@ -161,6 +181,11 @@ export class AgentRuntime {
     return this.agentId;
   }
 
+  /** The sign-in the open session reports under; configuration changes apply to the next open. */
+  get signIn(): string {
+    return this.sessionSignIn;
+  }
+
   get busy(): boolean {
     return this.running;
   }
@@ -170,11 +195,7 @@ export class AgentRuntime {
    * previous session of this agent to close, so there are never two.
    */
   start(after?: Promise<void>): void {
-    // A provider-wide quota wait survives a restart (docs/spec.md 4.3); restore it before opening.
-    const wait = this.deps.store.quotaWait(this.agentId);
-    if (wait && wait.until > Date.now()) {
-      this.block(wait.until, { failure: "quota", ...(wait.resetsAt ? { resetsAt: wait.resetsAt } : {}) }, false);
-    } else if (wait) this.deps.store.setQuotaWait(this.agentId);
+    // Account waits live in Mingle's ledger; start() restores nothing by itself (docs/spec.md 4.3).
     this.setStatus("idle");
     // Open the session now, not on the first message: startup problems (login,
     // a refused option) surface before anyone chats. No input is delivered here.
@@ -243,6 +264,8 @@ export class AgentRuntime {
     this.chain = this.chain
       .then(async () => {
         const session = this.session;
+        // The old session's events are ignored from here on (docs/spec.md 4.3).
+        this.generation++;
         this.session = undefined;
         this.stale = false;
         this.running = false;
@@ -283,8 +306,9 @@ export class AgentRuntime {
    */
   async dispose(final: "offline" | "paused" = "offline", abortWork = false): Promise<void> {
     this.disposed = true;
+    this.generation++;
     clearTimeout(this.timer);
-    this.unblock(false);
+    this.unblock();
     this.pending = [];
     // Written now, not after the session is gone: closing can wait on a session still opening.
     this.deps.store.setAgentStatus(this.agentId, final);
@@ -319,24 +343,10 @@ export class AgentRuntime {
     const taken = this.running ? this.pending.filter((p) => p.kind === "message") : this.pending.slice();
     this.pending = this.running ? this.pending.filter((p) => p.kind !== "message") : [];
     // A message settled while it waited (answered, or queued twice) is not delivered again.
-    let batch = taken.filter((p) => p.kind === "text" || this.deps.store.message(p.id)?.state === "received");
+    const batch = taken.filter((p) => p.kind === "text" || this.deps.store.message(p.id)?.state === "received");
     if (batch.length === 0) return;
     if (this.blocked && Date.now() >= this.blocked.until) this.unblock();
-    if (this.blocked) {
-      // The usage limit is still used up: delivering would only fail again. Messages wait for the
-      // reset; reminders and notes stay pending until then.
-      const { until, why } = this.blocked;
-      const held = this.deps.store.moveInbound(
-        batch.flatMap((p) => (p.kind === "message" ? [p.id] : [])),
-        "hold",
-        undefined,
-        until,
-      );
-      if (held.length > 0) this.deps.onSettled?.(held, "waiting", { ...why, retryAt: until });
-      batch = batch.filter((p) => p.kind === "text");
-      this.pending.unshift(...batch);
-      return;
-    }
+    if (this.holdBatch(batch)) return;
 
     const messageIdsInBatch = batch.flatMap((p) => (p.kind === "message" ? [p.id] : []));
     let session: HarnessSession;
@@ -354,6 +364,11 @@ export class AgentRuntime {
       this.lose(batch, error);
       throw error;
     }
+    if (this.disposed) return;
+    // A shared or newly configured quota wait may have appeared while the session opened:
+    // hold the batch through the same path rather than deliver into another refusal.
+    if (this.blocked && Date.now() >= this.blocked.until) this.unblock();
+    if (this.holdBatch(batch)) return;
     const inputId = randomUUID();
     // New input: whatever comes next is work Mingle asked for, not the stopped work resuming.
     this.stopped = false;
@@ -428,6 +443,8 @@ export class AgentRuntime {
    */
   private async reopenFresh(tokens: number | null): Promise<HarnessSession> {
     const old = this.session;
+    // The cold session's events are ignored from here on, as on any replacement.
+    this.generation++;
     this.session = undefined;
     await old?.dispose().catch(() => {});
     this.opening ??= this.open(true).finally(() => {
@@ -471,10 +488,39 @@ export class AgentRuntime {
       const held = this.deps.store.moveInbound(group, "hold", undefined, at);
       if (held.length > 0) this.deps.onSettled?.(held, "waiting", { ...why, retryAt: at });
     }
-    // A usage limit holds for everything after it too, until the reset.
-    if (why.failure === "quota" && waits.size > 0) this.block(Math.max(...waits.keys()), why, true);
+    // Quota waits are logged where the hold begins (block); these are the passing failures
+    // that have no other trace in the log until the retry.
+    if (why.failure !== "quota") {
+      const held = [...waits.values()].reduce((n, group) => n + group.length, 0);
+      if (held > 0) this.deps.log?.(`${this.agentId}: ${held} message(s) waiting to retry (${why.failure})`);
+    }
+    // A usage limit holds for everything after it too, until the reset. Mingle's account ledger
+    // decides the shared deadline; without a ledger this runtime still gates itself.
+    if (why.failure === "quota" && waits.size > 0) {
+      const top = Math.max(...waits.keys());
+      if (this.deps.onLimit) this.deps.onLimit(this.sessionSignIn, top, why);
+      else this.block(top, why);
+    }
     const failed = this.deps.store.moveInbound(failing, "fail");
     if (failed.length > 0) this.deps.onSettled?.(failed, "failed", why);
+  }
+
+  /**
+   * Hold `batch` for the wait in force: its messages go to `waiting` until `blocked.until`, and
+   * its reminders and notes go back to pending rather than being delivered into a refusal.
+   */
+  private holdBatch(batch: readonly Pending[]): boolean {
+    if (!this.blocked) return false;
+    const { until, why } = this.blocked;
+    const held = this.deps.store.moveInbound(
+      batch.flatMap((p) => (p.kind === "message" ? [p.id] : [])),
+      "hold",
+      undefined,
+      until,
+    );
+    if (held.length > 0) this.deps.onSettled?.(held, "waiting", { ...why, retryAt: until });
+    this.pending.unshift(...batch.filter((p) => p.kind === "text"));
+    return true;
   }
 
   /** The usage-limit wait in force, if any, for agents added later on the same sign-in. */
@@ -485,33 +531,32 @@ export class AgentRuntime {
   }
 
   /**
-   * Another agent on the same sign-in hit its usage limit: wait it out too, rather than deliver
-   * only to fail the same way. A later wait already in place is kept.
+   * Mingle's account ledger says this session's sign-in hit its usage limit: wait it out rather
+   * than deliver only to fail the same way. A later wait already in place is kept.
    */
   holdFor(until: number, why: FailureInfo): void {
     if (this.disposed || until <= Date.now() || (this.blocked && this.blocked.until >= until)) return;
-    this.block(until, why, false);
+    this.block(until, why);
   }
 
   /**
-   * A turn on the same sign-in that began after this wait did complete: the limit is over.
-   * True when a wait was ended. Waiting messages are Mingle's to deliver again.
+   * The ledger wait on this session's sign-in ended: drop the local gate and deliver anything
+   * pending. Waiting messages are Mingle's to deliver again.
    */
-  release(turnStartedAt: number): boolean {
-    if (!this.blocked || this.blocked.since >= turnStartedAt) return false;
+  release(): void {
+    if (this.disposed) return;
     this.unblock();
     if (this.pending.length > 0) this.flushSoon();
-    return true;
   }
 
-  /** `announce`: this agent's own failure, which Mingle passes on to the agents sharing its sign-in. */
-  private block(until: number, why: FailureInfo, announce: boolean): void {
-    this.unblock(false);
-    this.blocked = { until, why, since: Date.now() };
-    // Persisted, so the hold still applies after Mingle or the session is recreated.
-    this.deps.store.setQuotaWait(this.agentId, { until, resetsAt: why.resetsAt ?? null });
-    if (announce) this.deps.onLimit?.(until, why);
-    // Reminders and notes held back meanwhile go out once the limit should have reset.
+  private block(until: number, why: FailureInfo): void {
+    this.unblock();
+    this.blocked = { until, why };
+    this.deps.log?.(
+      `${this.agentId}: usage limit wait until ${new Date(until).toISOString()}${why.resetsAt ? ` (resets ${new Date(why.resetsAt).toISOString()})` : ""}`,
+    );
+    // The local gate opens locally at the deadline; the ledger entry survives it, so a turn that
+    // succeeds after it can end the wait for every agent on the sign-in.
     this.unblockTimer = setTimeout(
       () => {
         this.unblock();
@@ -522,11 +567,10 @@ export class AgentRuntime {
     this.unblockTimer.unref?.();
   }
 
-  private unblock(clearStored = true): void {
+  private unblock(): void {
     clearTimeout(this.unblockTimer);
     this.unblockTimer = undefined;
     this.blocked = undefined;
-    if (clearStored) this.deps.store.setQuotaWait(this.agentId);
   }
 
   private render(messageId: string): string {
@@ -552,11 +596,30 @@ export class AgentRuntime {
   }
 
   private async open(fresh = false): Promise<HarnessSession> {
-    const agent = this.agent();
-    // A harness whose shell gets no environment (Cursor) gets none of the agent's variables
-    // either, and the guide does not name them. Values never go into the prompt.
-    const reading = this.deps.harness.acceptsEnv?.(agent.harness) === false ? undefined : this.deps.agentEnv?.();
-    const own = reading ? await reading : {};
+    // The sign-in this session will run on, fixed before anything async: everything the session
+    // reports later (quota waits, completed turns) is accounted under this key, never under
+    // whatever the configuration changed to while the session lived. Reading the secret store
+    // yields, so the configuration — sign-in AND the credentials themselves — is sampled again
+    // each pass until a consistent pair survives a whole read; a stale snapshot is never given
+    // to the harness. A disposed or replaced runtime stops here, before it can call onSession.
+    const gen = this.generation;
+    let agent: Agent;
+    let key: string;
+    let own: Readonly<Record<string, string>>;
+    for (;;) {
+      if (this.disposed || gen !== this.generation) throw new Error("agent runtime disposed");
+      agent = this.agent();
+      key = this.deps.signIn();
+      // A harness whose shell gets no environment (Cursor) gets none of the agent's variables
+      // either, and the guide does not name them. Values never go into the prompt.
+      const reading = this.deps.harness.acceptsEnv?.(agent.harness) === false ? undefined : this.deps.agentEnv?.();
+      own = reading ? await reading : {};
+      if (this.disposed || gen !== this.generation) throw new Error("agent runtime disposed");
+      if (key === this.deps.signIn()) break;
+    }
+    const changed = this.sessionSignIn !== key;
+    this.sessionSignIn = key;
+    this.deps.onSession(key, changed);
     const session = await this.deps.harness.open(
       {
         harness: agent.harness,
@@ -569,23 +632,24 @@ export class AgentRuntime {
       },
       {
         onTurnStarted: (self) => {
-          if (this.disposed) return;
+          if (this.disposed || gen !== this.generation) return;
           if (self && this.stopped) {
             // The stopped work coming back (a background command ended and woke the agent).
             this.deps.log?.(`${this.agentId}: aborted a turn the harness began after a stop`);
             void this.session?.abort().catch(() => {});
           }
           this.running = true;
-          this.turnStartedAt = Date.now();
+          this.turnRevision = this.deps.limitRevision(key);
           this.setStatus("thinking");
           this.deps.onActivity?.("thinking");
         },
         onTurnEnded: (outcome) => {
-          if (this.disposed) return;
+          if (this.disposed || gen !== this.generation) return;
           this.running = false;
           this.idleSince = this.now();
           if (outcome.kind === "failed") {
             const failure = outcome.failure ?? "unknown";
+            this.deps.log?.(`${this.agentId}: turn failed (${failure}${outcome.reason ? `: ${outcome.reason}` : ""})`);
             this.setStatus("error", outcome.reason ?? "the turn failed", failure);
             // The agent did not get to answer: say so now rather than nudge it into the same failure.
             this.settleAwaiting({ failure, ...(outcome.resetsAt ? { resetsAt: outcome.resetsAt } : {}) });
@@ -593,19 +657,22 @@ export class AgentRuntime {
             this.setStatus("idle");
           }
           // The sign-in answered: any usage-limit wait on it is over, for every agent sharing it.
-          if (outcome.kind === "completed") this.deps.onTurnCompleted?.(this.turnStartedAt);
+          if (outcome.kind === "completed") this.deps.onTurnCompleted?.(key, this.turnRevision);
+          this.turnRevision = undefined;
           this.afterTurn(outcome.kind === "completed");
         },
         onActivity: (kind, detail) => {
-          if (this.disposed) return;
+          if (this.disposed || gen !== this.generation) return;
           this.setStatus(kind === "tool" ? "working" : "thinking", detail ?? null);
           this.deps.onActivity?.(kind, detail);
         },
         onAction: (tool, input) => {
+          if (this.disposed || gen !== this.generation) return;
           this.actions.push({ at: this.now(), text: describeAction(tool, input) });
           if (this.actions.length > RECENT_ACTIONS) this.actions.splice(0, this.actions.length - RECENT_ACTIONS);
         },
         onTurnUsage: (usage) => {
+          if (gen !== this.generation) return;
           const cold = this.coldTurn;
           if (!cold) return;
           this.coldTurn = undefined;
@@ -616,13 +683,15 @@ export class AgentRuntime {
         },
       },
     );
-    if (this.disposed) {
-      // Stopped or deleted while the open was in flight: drop it, don't keep it.
+    if (this.disposed || gen !== this.generation) {
+      // Stopped or replaced while the open was in flight: drop it, don't keep it.
       await session.dispose();
       throw new Error("agent runtime disposed");
     }
     if (agent.sessionId && !session.resumed) {
       this.deps.log?.(`${this.agentId}: session ${agent.sessionId} was gone; opened ${session.id}`);
+    } else {
+      this.deps.log?.(`${this.agentId}: session ${session.id} ${session.resumed ? "resumed" : "opened"}`);
     }
     if (fresh) this.deps.store.replaceSession(this.agentId, session.id);
     else this.deps.store.setSessionId(this.agentId, session.id);
@@ -643,7 +712,10 @@ export class AgentRuntime {
       stale.map((m) => m.id),
       "give_up",
     );
-    if (givenUp.length > 0) this.deps.onSettled?.(givenUp, "unanswered");
+    if (givenUp.length > 0) {
+      this.deps.log?.(`${this.agentId}: gave up on ${givenUp.length} unanswered message(s)`);
+      this.deps.onSettled?.(givenUp, "unanswered");
+    }
     if (fresh.length > 0) {
       store.markNudged(fresh.map((m) => m.id));
       const ids = fresh.map((m) => m.id).join(", ");
@@ -708,6 +780,7 @@ export class AgentRuntime {
     this.deps.log?.(`${this.agentId}: ${message}`);
     // Reopen (resuming the same conversation) on the next input.
     const session = this.session;
+    this.generation++;
     this.session = undefined;
     this.running = false;
     void session?.dispose().catch(() => {});
