@@ -25,26 +25,26 @@
 - QQ 群聊没有流式和表情，直接回复。
 - Slack、Discord 在频道里要 @ 或回复机器人才触发。
 - 企业微信机器人创建只能在手机上完成。
-- iMessage 没有引用回复、表情回执和"正在输入"，回复是普通消息（`docs/spec.md` 6.6）。
+- iMessage 只在自聊里工作，没有群聊、引用回复、表情回执和"正在输入"（`docs/spec.md` 6.6）。
 
-## iMessage（个人账号）
+## iMessage（自聊）
 
-iMessage 不是机器人通道，准备和检查都不一样（`docs/spec.md` 6.6）：
+iMessage 不是机器人通道：Agent 用的是 owner 自己的 Apple ID，在"给自己发消息"的对话里说话（`docs/spec.md` 6.6）。
 
 准备：
 
-1. 一台 Mac（或一个单独的 macOS 用户），「信息」App 登录 **Agent 专用的 Apple ID**，不要用自己的。
+1. 这台 Mac 的「信息」App 登录你自己的 Apple ID。
 2. 系统设置 → 隐私与安全性 → 完全磁盘访问权限，打开 Mingle（桌面应用）或运行 `mingle start` 的终端。
-3. 另一部用自己 Apple ID 的 iPhone 或 Mac，用来扮演 owner；再拉一个人（或第二个 Apple ID）建一个三人群。
+3. 一部登录同一个 Apple ID 的 iPhone。
 
 检查（每步记下时间和结果）：
 
-1. **接入和主动发消息**：控制台选 iMessage，填 owner 的手机号（带 +86 等国家码）或 Apple ID 邮箱，点连接；macOS 问是否允许控制「信息」时选允许。几秒内 owner 应收到 Agent 的问候私聊。用 owner 自己的 Apple ID 接入应被拒绝（`owner_account`）。
-2. **私聊**：owner 发 `Reply with exactly: PONG`，应收到 `PONG`。再连发两条问题，两条都应回复。
-3. **群聊 @**：群里不提 Agent 发一句，120 秒内不应回复；用 iMessage 的 @ 提及 Agent（或以 Agent 名字开头）问一句，应在群里回复。
-4. **文件**：owner 发一张图片，Agent 应能描述它；让 Agent 发回一个文本文件，owner 应能打开。
-5. **断线重连**：退出 Mingle，owner 发一条 `OFFLINE-PONG`，两分钟内重新启动，应收到回复；Mingle 运行中退出再打开「信息」App，之后发的消息仍应回复。
-6. **权限收回**：关掉完全磁盘访问权限后重启 Mingle，连接应显示需要用户处理（`permission_missing`），重新打开权限、点"重新连接"后恢复。
+1. **接入**：控制台选 iMessage，直接点连接；macOS 问是否允许控制「信息」时选允许。几秒内自聊里应出现 Agent 的问候，且 Agent 不会回复这条问候。
+2. **私聊**：在 iPhone 上给自己发 `Reply with exactly: PONG`，应收到 `PONG`，只一次。再连发两条问题，两条都应回复。
+3. **不打扰别人**：让别人给你发一条消息，Agent 不应回复，也不应出现在控制台的动态里。
+4. **文件**：在自聊里发一个文件，Agent 应能读到；让 Agent 发回一个文本文件，应能在 iPhone 上打开。
+5. **主动发消息**：让 Agent 一分钟后提醒你，到点应在自聊里收到。
+6. **断线补回复**：退出 Mingle，在 iPhone 上发一条 `OFFLINE-PONG`，十分钟内重新启动，应收到回复。
 
 ## 收尾检查
 
