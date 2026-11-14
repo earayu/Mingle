@@ -226,6 +226,19 @@ export class Store {
     this.db.prepare(`UPDATE agents SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`).run(...values, this.now(), id);
   }
 
+  /** The last MEMORY.md size hint given to this agent (docs/spec.md 4.5), if any. */
+  memoryHint(id: string): { at: number; size: number } | undefined {
+    const row = this.db.prepare("SELECT memory_hint_at, memory_hint_size FROM agents WHERE id = ?").get(id) as
+      | Row
+      | undefined;
+    if (row?.memory_hint_at == null) return undefined;
+    return { at: Number(row.memory_hint_at), size: Number(row.memory_hint_size) };
+  }
+
+  setMemoryHint(id: string, at: number, size: number): void {
+    this.db.prepare("UPDATE agents SET memory_hint_at = ?, memory_hint_size = ? WHERE id = ?").run(at, size, id);
+  }
+
   setSessionId(id: string, sessionId: string | null): void {
     this.db.prepare("UPDATE agents SET session_id = ?, updated_at = ? WHERE id = ?").run(sessionId, this.now(), id);
   }

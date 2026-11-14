@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Failure, failureOf, type Harness, type HarnessSession } from "../harness/harness.ts";
 import type { Agent, AgentStatus, Store } from "../store/store.ts";
 import { formatMessage } from "./format.ts";
-import { readRole } from "./home.ts";
+import { memoryHint, memoryHintDue, memorySize, readRole } from "./home.ts";
 import { renderManual } from "./manual.ts";
 
 export interface RuntimeDeps {
@@ -319,7 +319,7 @@ export class AgentRuntime {
           } else {
             this.setStatus("idle");
           }
-          this.afterTurn();
+          this.afterTurn(outcome.kind === "completed");
         },
         onActivity: (kind, detail) => {
           this.setStatus(kind === "tool" ? "working" : "thinking", detail ?? null);
@@ -341,7 +341,7 @@ export class AgentRuntime {
   }
 
   /** After each turn: remind the agent once about messages it has not answered (docs/spec.md 4.3). */
-  private afterTurn(): void {
+  private afterTurn(completed = false): void {
     const { store } = this.deps;
     const awaiting = store.awaitingReply(this.agentId);
     // After the owner's stop, a nudge would restart the work they stopped: what is
@@ -361,12 +361,24 @@ export class AgentRuntime {
         text: `[mingle] Not answered yet: ${ids}. Reply to each with "$MINGLE_CLI" message reply <id>, or send a short note if no reply is needed.`,
       });
     }
+    // Only after work that finished, with nothing else waiting: the hint never interrupts or joins other work.
+    if (completed && !this.stopped && this.pending.length === 0) this.checkMemory();
     if (this.stale) {
       // restart() delivers what is pending once the new process is up.
       void this.restart();
       return;
     }
     if (this.pending.length > 0) this.flushSoon();
+  }
+
+  /** Ask the agent to trim MEMORY.md when it has grown too large (docs/spec.md 4.5). */
+  private checkMemory(): void {
+    const size = memorySize(this.deps.homeDir);
+    const now = Date.now();
+    if (!memoryHintDue(size, this.deps.store.memoryHint(this.agentId), now)) return;
+    this.deps.store.setMemoryHint(this.agentId, now, size);
+    this.deps.log?.(`${this.agentId}: MEMORY.md is ${size} bytes; asked the agent to trim it`);
+    this.pending.push({ kind: "text", text: memoryHint(size) });
   }
 
   private agent(): Agent {
