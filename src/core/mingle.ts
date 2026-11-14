@@ -731,7 +731,18 @@ export class Mingle {
     platform: Platform,
     event: Extract<OnboardingEvent, { kind: "succeeded" }>,
   ): Promise<Connection> {
-    const existing = this.store.connections().find((c) => c.platform === platform && c.botId === event.bot.id);
+    // One bot, one connection: matched by platform bot id or by the secret reference it will
+    // get, so a rebind reuses the connection instead of making a second one. Two onboardings
+    // of the same bot can be in flight at once (the console and the CLI, say); the lookup and
+    // the insert below must stay synchronous, or both would pass the check and create a pair
+    // of connections sharing one secretRef — removing either would then cut the other's
+    // credentials, and every message would arrive twice.
+    const secretRef = `${platform}:${event.bot.id}`;
+    const findExisting = () =>
+      this.store
+        .connections()
+        .find((c) => c.platform === platform && (c.botId === event.bot.id || c.secretRef === secretRef));
+    const existing = findExisting();
     if (existing) {
       // Binding a bot again can hand out new credentials and revoke the old ones (QQ issues a
       // fresh AppSecret on every scan), so the connection that already has this bot keeps
@@ -747,8 +758,17 @@ export class Mingle {
         `this bot is already connected to ${this.store.agent(existing.agentId)?.name ?? "another agent"}`,
       );
     }
-    const secretRef = `${platform}:${event.bot.id}`;
     await this.options.secrets.set(secretRef, JSON.stringify(event.credentials));
+    // The secret write above yielded: a concurrent onboarding of the same bot may have created
+    // the connection meanwhile. Look again with no await before the insert, so only one wins.
+    const raced = findExisting();
+    if (raced) {
+      if (raced.agentId === agentId) return this.store.connection(raced.id) as Connection;
+      throw new MingleError(
+        "bot_in_use",
+        `this bot is already connected to ${this.store.agent(raced.agentId)?.name ?? "another agent"}`,
+      );
+    }
     const connection = this.store.createConnection({ agentId, platform, secretRef });
     this.store.updateConnection(connection.id, {
       botId: event.bot.id,
