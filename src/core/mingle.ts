@@ -554,7 +554,12 @@ export class Mingle {
               resolve(code);
             };
           });
-        for await (const event of channel.onboard(undefined, abort.signal, { agentName: agent.name, awaitCode })) {
+        const knownCredentials = () => this.knownCredentials(platform);
+        for await (const event of channel.onboard(undefined, abort.signal, {
+          agentName: agent.name,
+          awaitCode,
+          knownCredentials,
+        })) {
           if (event.kind === "qr_ready") set({ kind: "qr", content: event.qrContent, expiresAt: event.expiresAt });
           else if (event.kind === "scanned") set({ kind: "scanned" });
           else if (event.kind === "awaiting_approval") set({ kind: "awaiting_approval" });
@@ -613,6 +618,8 @@ export class Mingle {
       botName: event.bot.name,
       ...(event.ownerId ? { ownerId: event.ownerId } : {}),
     });
+    // The owner is in the address book from the start, so the console can name them before they write.
+    if (event.ownerId) this.store.touchContact(connection.id, event.ownerId, null);
     await this.reconnect(connection.id, event.credentials);
     if (event.ownerId) void this.greetOwner(connection.id, event.ownerId);
     return this.store.connection(connection.id) as Connection;
@@ -739,6 +746,19 @@ export class Mingle {
     await this.drive(id, { kind: "opened" }, gen);
   }
 
+  /** Credentials of every bot on this platform, across agents, newest connection first. */
+  private async knownCredentials(platform: Platform): Promise<Credentials[]> {
+    const found: Credentials[] = [];
+    for (const connection of this.store
+      .connections()
+      .filter((c) => c.platform === platform)
+      .reverse()) {
+      const credentials = await this.credentials(connection).catch(() => undefined);
+      if (credentials) found.push(credentials);
+    }
+    return found;
+  }
+
   private async credentials(connection: Connection): Promise<Credentials | undefined> {
     const raw = connection.secretRef ? await this.options.secrets.get(connection.secretRef) : undefined;
     if (!raw) return undefined;
@@ -782,6 +802,7 @@ export class Mingle {
         `${connection.platform}: ${inbound.sender.name} is now the owner of ${connection.botName ?? connection.id}`,
       );
     }
+    this.store.touchContact(connectionId, inbound.sender.id, inbound.sender.name);
     const quoted = inbound.replyTo ? this.store.messageByPlatformId(chat.id, inbound.replyTo) : undefined;
     const replyTo = quoted?.id ?? null;
     // A reply to something the agent said is addressed to it, even where the platform does not say so.

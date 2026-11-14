@@ -48,6 +48,10 @@ const LOCALES = {
     noReminders: "No reminders.",
     connectAction: "Connect a chat app",
     retryLoad: "Retry",
+    nameOwner: "Name the owner",
+    ownerUnnamed: "Owner not named",
+    ownerIs: "Owner: ",
+    save: "Save",
   },
   "zh-CN": {
     storage: "zh-CN",
@@ -84,6 +88,10 @@ const LOCALES = {
     noReminders: "没有提醒。",
     connectAction: "连接聊天软件",
     retryLoad: "重试",
+    nameOwner: "给 owner 起名",
+    ownerUnnamed: "owner 未命名",
+    ownerIs: "owner：",
+    save: "保存",
   },
 };
 
@@ -169,6 +177,7 @@ export async function reviewInteractions({
   singleSlug,
   envSlug,
   pauseSlug,
+  sharedSlug,
   emptySlug,
   envSecret,
   chrome,
@@ -889,6 +898,56 @@ export async function reviewInteractions({
         await pauseScenario(localeName, labels, width);
         passed++;
         console.log(`pause ${localeName} ${width}: passed`);
+      }
+    }
+
+    // --- one agent on two WeChat accounts: name the second owner from its row (MING-55) ---
+    const ownerScenario = async (localeName, labels, width) => {
+      const tag = `owner ${localeName} ${width}`;
+      await metrics(width);
+      await goto(`/a/${sharedSlug}`, labels);
+      await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.settings));
+      const rows = await until("connection rows", (more) => connTriggers(more).length || null, labels.more);
+      assert(rows === 2, `${tag}: expected 2 connection rows, got ${rows}`);
+      await until("unnamed owner", (u) => document.body.textContent.includes(u), labels.ownerUnnamed);
+      assert(await call(pageFits), `${tag}: horizontal overflow`);
+      await shot(`${localeName}-${width}-owner-unnamed`);
+      await openTriggerMenu(labels.more, 1);
+      await clickEl(await call(menuItemCenter, labels.nameOwner));
+      await until("name form", () => document.activeElement?.tagName === "INPUT");
+      const name = "小美 Mei";
+      await send("Input.insertText", { text: name });
+      assert(await call(pageFits), `${tag}: form overflows horizontally`);
+      await shot(`${localeName}-${width}-owner-form`);
+      await clickEl(await until("save button", buttonByText, labels.save));
+      await until("owner named", (want) => document.body.textContent.includes(want), `${labels.ownerIs}${name}`);
+      await shot(`${localeName}-${width}-owner-named`);
+      await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.activity));
+      await until(
+        "activity shows the name",
+        // The activity row's sender, not the side panel, which updates on its own.
+        (want) => [...document.querySelectorAll("span.font-semibold")].some((el) => el.textContent.trim() === want),
+        name,
+      );
+      await shot(`${localeName}-${width}-owner-activity`);
+      // Back to unnamed for the next run.
+      const auth = { headers: { authorization: `Bearer ${token}`, "content-type": "application/json" } };
+      const agent = (await (await fetch(`${url}/v1/admin/status`, auth)).json()).agents.find(
+        (a) => a.slug === sharedSlug,
+      );
+      const contact = agent?.connections.find((c) => c.ownerContact?.name === name)?.ownerContact;
+      assert(contact, `${tag}: API does not show the new name`);
+      await fetch(`${url}/v1/admin/agents/${agent.id}/contacts/${contact.id}`, {
+        method: "PATCH",
+        ...auth,
+        body: JSON.stringify({ name: "" }),
+      });
+    };
+    for (const [localeName, labels] of Object.entries(LOCALES)) {
+      for (const width of [1440, 560]) {
+        await ownerScenario(localeName, labels, width);
+        passed++;
+        console.log(`owner ${localeName} ${width}: passed`);
       }
     }
 

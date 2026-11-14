@@ -39,6 +39,8 @@ const REQUEST_MS = 15_000;
 /** iLink truncates longer texts; the outbox splits at this length. */
 const MAX_TEXT = 1800;
 const QR_LIFETIME_MS = 8 * 60_000;
+/** How many existing bot tokens a QR request carries; Tencent's client sends the newest 10. */
+const MAX_LOCAL_TOKENS = 10;
 const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
 const CDN_HOST = "novac2c.cdn.weixin.qq.com";
 /** Not a documented iLink limit; keeps a whole file comfortably in memory while it is encrypted. */
@@ -251,12 +253,17 @@ export function wechatApi(fetchImpl: Fetch = fetch) {
   return {
     rejected,
 
-    async beginLogin(signal?: AbortSignal) {
+    /**
+     * `localTokens` are the bot tokens already connected here, as Tencent's own client sends them
+     * (openclaw-weixin 2.3.1+, up to 10): the server then knows this client already holds those bots,
+     * and answers `binded_redirect` for an account that is already connected instead of a new session.
+     */
+    async beginLogin(signal?: AbortSignal, localTokens: readonly string[] = []) {
       const response = await request<{ qrcode?: string; qrcode_img_content?: string; ret?: number; errcode?: number }>({
         method: "POST",
         base: QR_BASE_URL,
         endpoint: `ilink/bot/get_bot_qrcode?bot_type=${BOT_TYPE}`,
-        body: { local_token_list: [] },
+        body: { local_token_list: localTokens.slice(0, MAX_LOCAL_TOKENS) },
         timeoutMs: 10_000,
         ...(signal ? { signal } : {}),
       });
@@ -465,8 +472,10 @@ export function wechatChannel(options: WechatOptions = {}): Channel {
 
     async *onboard(_input, signal, context?: OnboardingContext): AsyncIterable<OnboardingEvent> {
       let login: { qrcode: string; url: string };
+      const known = await (context?.knownCredentials?.() ?? Promise.resolve([])).catch(() => []);
+      const localTokens = known.map((c) => c.token?.trim() ?? "").filter(Boolean);
       try {
-        login = await api.beginLogin(signal);
+        login = await api.beginLogin(signal, localTokens);
       } catch {
         yield { kind: "failed", code: signal.aborted ? "cancelled" : "network" };
         return;
@@ -521,7 +530,8 @@ export function wechatChannel(options: WechatOptions = {}): Channel {
             yield { kind: "failed", code: "expired" };
             return;
           case "binded_redirect":
-            yield { kind: "failed", code: "already_bound" };
+            // With our tokens sent, this means the account's bot is one of ours already.
+            yield { kind: "failed", code: localTokens.length ? "already_connected" : "already_bound" };
             return;
           case "confirmed": {
             if (!state.bot_token || !state.ilink_bot_id || !state.ilink_user_id) {

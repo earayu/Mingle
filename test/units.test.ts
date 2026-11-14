@@ -42,6 +42,43 @@ describe("formatMessage", () => {
   });
 });
 
+describe("message header contacts", () => {
+  const message = {
+    id: "m8f2a",
+    chatId: "c12",
+    direction: "in" as const,
+    platformId: "1",
+    senderId: "o9cq@im.wechat",
+    senderName: "",
+    body: "hi",
+    attachments: [],
+    replyTo: null,
+    triggers: true,
+    state: "received" as const,
+    createdAt: Date.UTC(2026, 10, 11, 6, 2),
+  };
+  const chat = { id: "c12", connectionId: "n1", platformId: "o9cq@im.wechat", kind: "dm" as const, name: null };
+  const contact = {
+    id: "u7k2",
+    connectionId: "n1",
+    platformId: "o9cq@im.wechat",
+    name: null,
+    alias: null,
+    updatedAt: 0,
+  };
+
+  it("leaves out a name the platform never gave, and always carries the contact ID", () => {
+    const text = formatMessage(message, chat, "wechat", { ownerId: "o9cq@im.wechat", contact });
+    expect(text.split("\n")[0]).toMatch(/^\[msg=m8f2a chat=c12 im=wechat dm user=u7k2 owner time=.+\]$/);
+  });
+
+  it("uses the name the agent or owner gave over the platform's", () => {
+    const named = { ...contact, name: "Mei W.", alias: "Mei" };
+    expect(formatMessage(message, chat, "wechat", { contact: named })).toContain('from="Mei" user=u7k2 time=');
+    expect(formatMessage(message, chat, "wechat", { contact: { ...named, alias: null } })).toContain('from="Mei W."');
+  });
+});
+
 describe("schedule", () => {
   it("parses durations", () => {
     expect(parseDuration("30m")).toBe(1_800_000);

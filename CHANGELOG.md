@@ -5,6 +5,10 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
 ## Unreleased
 
+- One agent can be on several WeChat accounts, for example yours and a family member's: each scan adds its own connection and the ones already there stay connected. The scan page now says so. Scanning an account that is already connected here says it is already connected, instead of claiming it is bound to another bot.
+- Agents now keep an address book. Every message header names the sender's contact (`user=u7k2p`), and an agent can name people with `mingle contact name` when the chat app gives no name, as personal WeChat never does. You can name each bot's owner from its row under Chat apps.
+- Recent activity shows the names from that address book. An unnamed owner is shown as "You" only when it cannot be two people; with two owners on one platform each shows as "Unnamed" with its ID until named.
+
 ## 0.1.8
 
 - Initial iMessage support on macOS: connect an Apple ID dedicated to your agent through the Mac's Messages app. Setup asks for your own phone number or email, Full Disk Access, and permission to control Messages. Private chats, group mentions and file transfers are implemented; real-account end-to-end verification is still pending.

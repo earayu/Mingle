@@ -318,6 +318,13 @@ function QrFlow({
   const [attempt, setAttempt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const platformName = t(`platform.${info.platform}` as MessageKey);
+  // Scanning with another account adds a bot; the ones already here keep working.
+  const existing = agent.connections.filter((c) => c.platform === info.platform).length;
+  const anotherKey = `${info.platform}.another`;
+  const another =
+    existing > 0 && t(anotherKey as MessageKey) !== anotherKey
+      ? t(anotherKey as MessageKey, { count: String(existing) })
+      : null;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new attempt restarts the flow
   useEffect(() => {
@@ -406,6 +413,7 @@ function QrFlow({
               )}
             </div>
             <div className="flex min-w-0 flex-col gap-3">
+              {another ? <p className="text-small text-ink2">{another}</p> : null}
               {s === "failed" && !expired ? (
                 <Problem title={t("connect.failed")} tone="red">
                   {errorTextFor(t, state.state === "failed" ? state.code : "unknown")}
