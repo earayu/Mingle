@@ -353,6 +353,9 @@ describe("agent CLI", () => {
       outputs.chats = (await runCli(env, ["chat", "list"])).stdout;
       outputs.read = (await runCli(env, ["message", "read", chat])).stdout;
       outputs.search = (await runCli(env, ["message", "search", "ridge"])).stdout;
+      outputs.words = (await runCli(env, ["message", "search", "open", "ridge"])).stdout;
+      outputs.capped = (await runCli(env, ["message", "search", "ridge", "--limit", "1"])).stdout;
+      outputs.none = (await runCli(env, ["message", "search", "ridge", "glacier"])).stdout;
       outputs.around = (await runCli(env, ["message", "read", chat, "--around", id as string])).stdout;
       outputs.task = (await runCli(env, ["task", "create", "Compare the routes", "--from", id as string])).stdout;
       outputs.reminderSet = (
@@ -368,10 +371,17 @@ describe("agent CLI", () => {
 
     expect(outputs.chats).toMatch(/^c\w+\s+telegram\s+group\s+Weekend hikes/);
     expect(outputs.read).toContain("is the ridge route open?");
-    expect(outputs.search).toContain("is the ridge route open?");
+    expect(outputs.search).toContain("is the <match>ridge</match> route open?");
     // The last line of a search says how to read around a hit.
-    expect(outputs.search).toMatch(/1 match, newest first\. .+ message read c\w+ --around m\w+$/m);
+    expect(outputs.search).toContain("<match>ridge</match>");
+    expect(outputs.search).toMatch(/^1 match containing every word, newest first\./m);
+    expect(outputs.search).toMatch(/message read c\w+ --around m\w+$/m);
+    expect(outputs.search).not.toContain("only the newest");
     expect(outputs.around).toContain("is the ridge route open?");
+    // Every word, in any order; a page as full as the limit says there may be more.
+    expect(outputs.words).toContain("is the ridge route <match>open</match>?");
+    expect(outputs.capped).toContain("These are only the newest 1; older matches may exist.");
+    expect(outputs.none).toMatch(/^no matches: no message you have seen contains every one of these words/);
     expect(outputs.task).toMatch(/^created t\w+: Compare the routes/);
     expect(outputs.reminderSet).toMatch(/^set r\w+, next at/);
     expect(outputs.whoami).toMatch(/^Alex \(scripted\)\nhome: .+\ntelegram: @alex_bot connected/);

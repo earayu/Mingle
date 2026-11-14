@@ -3,6 +3,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { ChatKind, Platform } from "../channels/channel.ts";
 import { shortId } from "../core/ids.ts";
 import { INBOUND, type InboundEvent } from "../core/inbound.ts";
+import { searchTerms } from "../core/terms.ts";
 
 export type AgentStatus = "offline" | "idle" | "thinking" | "working" | "error" | "paused";
 export type ConnectionStateKind = "awaiting_credentials" | "awaiting_approval" | "connected" | "reconnecting" | "error";
@@ -239,20 +240,25 @@ export class Store {
     return { at: Number(row.memory_hint_at), size: Number(row.memory_hint_size) };
   }
 
-  setMemoryHint(id: string, at: number, size: number): void {
+  /** Record the hint just given, or forget it (null) once MEMORY.md is back under the limit. */
+  setMemoryHint(id: string, at: number | null, size: number | null): void {
     this.db.prepare("UPDATE agents SET memory_hint_at = ?, memory_hint_size = ? WHERE id = ?").run(at, size, id);
   }
 
   /** A provider quota holds back everything new for this agent until `until` (docs/spec.md 4.3). */
-  quotaWait(id: string): { until: number; resetsAt: number } | undefined {
+  /** A usage-limit wait in force for this agent; `resetsAt` is null when the harness did not report one. */
+  quotaWait(id: string): { until: number; resetsAt: number | null } | undefined {
     const row = this.db.prepare("SELECT quota_wait_until, quota_resets_at FROM agents WHERE id = ?").get(id) as
       | Row
       | undefined;
-    if (row?.quota_wait_until == null || row.quota_resets_at == null) return undefined;
-    return { until: Number(row.quota_wait_until), resetsAt: Number(row.quota_resets_at) };
+    if (row?.quota_wait_until == null) return undefined;
+    return {
+      until: Number(row.quota_wait_until),
+      resetsAt: row.quota_resets_at == null ? null : Number(row.quota_resets_at),
+    };
   }
 
-  setQuotaWait(id: string, wait?: { until: number; resetsAt: number }): void {
+  setQuotaWait(id: string, wait?: { until: number; resetsAt: number | null }): void {
     this.db
       .prepare("UPDATE agents SET quota_wait_until = ?, quota_resets_at = ? WHERE id = ?")
       .run(wait?.until ?? null, wait?.resetsAt ?? null, id);
@@ -660,19 +666,31 @@ export class Store {
     return Number(row.n);
   }
 
+  /**
+   * Messages containing every word of `query` (a "quoted phrase" counts as one), newest first.
+   * Words of three characters or more use the trigram index; shorter ones (two Chinese
+   * characters, say) fall back to LIKE.
+   */
   search(agentId: string, query: string, chatId?: string, limit = 20): Message[] {
+    const terms = searchTerms(query);
+    if (terms.length === 0) return [];
+    const long = terms.filter((t) => [...t].length >= 3);
+    const short = terms.filter((t) => [...t].length < 3);
     const scope = chatId ? "AND m.chat_id = ?" : "";
     const scopeArgs = chatId ? [chatId] : [];
-    // The trigram tokenizer needs three characters; shorter queries fall back to LIKE.
-    const useFts = [...query].length >= 3;
-    const sql = useFts
+    const likes = short.map(() => "AND m.body LIKE ? ESCAPE '\\'").join(" ");
+    const likeArgs = short.map((t) => `%${t.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    const sql = long.length
       ? `SELECT m.* FROM messages_fts f JOIN messages m ON m.rowid = f.rowid
          JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
-         WHERE messages_fts MATCH ? AND n.agent_id = ? ${scope} ORDER BY m.created_at DESC LIMIT ?`
+         WHERE messages_fts MATCH ? AND n.agent_id = ? ${likes} ${scope} ORDER BY m.created_at DESC LIMIT ?`
       : `SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
-         WHERE m.body LIKE ? AND n.agent_id = ? ${scope} ORDER BY m.created_at DESC LIMIT ?`;
-    const needle = useFts ? `"${query.replaceAll('"', '""')}"` : `%${query}%`;
-    return (this.db.prepare(sql).all(needle, agentId, ...scopeArgs, limit) as Row[]).map(toMessage);
+         WHERE n.agent_id = ? ${likes} ${scope} ORDER BY m.created_at DESC LIMIT ?`;
+    const match = long.map((t) => `"${t.replaceAll('"', '""')}"`).join(" AND ");
+    const args = long.length
+      ? [match, agentId, ...likeArgs, ...scopeArgs, limit]
+      : [agentId, ...likeArgs, ...scopeArgs, limit];
+    return (this.db.prepare(sql).all(...args) as Row[]).map(toMessage);
   }
 
   /** Recent messages across all of an agent's chats, newest first, for the console. */
@@ -749,6 +767,22 @@ export class Store {
       )
       .all(agentId) as Row[];
     return rows.map(toMessage);
+  }
+
+  /** When this agent last got a message that woke it, and last sent one; null when never. */
+  lastMessageTimes(agentId: string): { inAt: number | null; outAt: number | null } {
+    const row = this.db
+      .prepare(
+        `SELECT max(CASE WHEN m.direction = 'in' AND m.triggers = 1 THEN m.created_at END) AS in_at,
+                max(CASE WHEN m.direction = 'out' AND m.state = 'sent' THEN m.created_at END) AS out_at
+         FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
+         WHERE n.agent_id = ?`,
+      )
+      .get(agentId) as Row;
+    return {
+      inAt: row.in_at == null ? null : Number(row.in_at),
+      outAt: row.out_at == null ? null : Number(row.out_at),
+    };
   }
 
   /** How many of this agent's inbound messages since `since` are in each state, for diagnostics. */

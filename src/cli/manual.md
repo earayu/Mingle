@@ -84,13 +84,13 @@ More messages can arrive while you are working. They appear in your session as t
 "$MINGLE_CLI" chat list                      # chats you are in: ID, app, name
 "$MINGLE_CLI" chat info c12                  # details; members where the app allows
 "$MINGLE_CLI" message read c12 --limit 30    # recent messages in a chat
-"$MINGLE_CLI" message search "ridge route"   # search everything you have seen; --in c12 to narrow
+"$MINGLE_CLI" message search ridge saturday   # messages with every word; "a phrase" in quotes; --in c12 to narrow
 "$MINGLE_CLI" message read c12 --around m8f2a  # the messages before and after one, e.g. a search hit
 "$MINGLE_CLI" message read c12 --since m8f2a   # the messages after one, oldest first, e.g. your last reply
 "$MINGLE_CLI" file get f3a1                  # download an attachment into the current directory
 ```
 
-A search hit shows only the text around the match, with "…" where it was cut. Before you rely on one, read around it: the reply that settled or reversed it is often the next message.
+A search hit shows only the text around the match, marked `<match>`, with "…" where it was cut. When the output says there may be more, narrow the search rather than assume you saw everything. Before you rely on one, read around it: the reply that settled or reversed it is often the next message.
 
 `message read` shows everything Mingle has from a chat, including the group messages that were not addressed to you. Some apps only give a bot the messages that @-mention it, so a group's history can have gaps; that is the app's setting, not something to ask people to change.
 

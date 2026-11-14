@@ -27,7 +27,7 @@ import { BACKOFF_MS, type LinkEvent, type LinkState, step, stored } from "./link
 import { LiveReplies, pausedNote, stopNote } from "./live.ts";
 import { Outbox } from "./outbox.ts";
 import type { Paths } from "./paths.ts";
-import { AgentRuntime } from "./runtime.ts";
+import { AgentRuntime, type FailureInfo } from "./runtime.ts";
 import { nextFire } from "./schedule.ts";
 
 export interface OnboardingSession {
@@ -80,6 +80,9 @@ export interface MingleOptions {
 }
 
 /** The whole local process: store, agent runtimes, live IM connections, reminders. The HTTP API sits on top. */
+/** Variables that give an agent a sign-in of its own, so it does not share the computer's usage limit. */
+const OWN_SIGN_IN = /(API_KEY|AUTH_TOKEN|ACCESS_TOKEN|BASE_URL|CONFIG_DIR|_HOME)$/;
+
 export class Mingle {
   readonly store: Store;
   readonly outbox: Outbox;
@@ -465,6 +468,10 @@ export class Mingle {
     const now = Date.now();
     const counts = this.store.inboundCounts(agent.id, now - 7 * 86_400_000);
     const states = ["received", "delivered", "waiting", "replied", "unanswered", "failed", "ignored"];
+    const iso = (ms: number | null) => (ms == null ? "never" : new Date(ms).toISOString());
+    const last = this.store.lastMessageTimes(agent.id);
+    const quota = this.store.quotaWait(agent.id);
+    const wait = quota && quota.until > now ? quota : undefined;
     // Only structured states belong in a shareable report; raw provider/adapter errors may
     // contain request data.
     const lines = [
@@ -474,6 +481,9 @@ export class Mingle {
       `agent: ${agent.id} · status ${agent.status}${agent.statusFailure ? ` (${agent.statusFailure})` : ""}`,
       `brain: ${agent.harness}${harness?.version ? ` ${harness.version}` : ""}${harness ? "" : " (not found on this computer)"} · model ${agent.model ?? "default"}`,
       `session: ${agent.sessionId ?? "none"}`,
+      // Whose usage limit it shares: the computer's sign-in of its harness, or its own key.
+      `sign-in: ${this.signIn(agent.id).startsWith("shared:") ? "this computer's" : "its own"}${wait ? ` · usage-limit wait until ${iso(wait.until)}${wait.resetsAt ? ` (reset ${iso(wait.resetsAt)})` : ""}` : ""}`,
+      `last message in: ${iso(last.inAt)} · last reply out: ${iso(last.outAt)}`,
       `memory: MEMORY.md ${memorySize(this.homeDir(agent))} bytes`,
       "chat apps:",
       ...this.store.connections(agent.id).map((n) => {
@@ -571,10 +581,54 @@ export class Mingle {
         const note = why && { ...why, harness: this.harnessName(agent.id) };
         for (const id of ids) this.replies.settle(id, outcome, note);
       },
+      onLimit: (until, why) => this.shareLimit(agent.id, until, why),
+      onTurnCompleted: (startedAt) => this.endLimit(agent.id, startedAt),
       log: (line) => this.log(line),
     });
     this.runtimes.set(agent.id, runtime);
+    // A limit already holding the agents on its sign-in holds this one too.
+    for (const [peerId, peer] of this.runtimes) {
+      const wait = peer !== runtime && this.signIn(peerId) === this.signIn(agent.id) ? peer.limit : undefined;
+      if (wait) runtime.holdFor(wait.until, wait.why);
+    }
     return runtime;
+  }
+
+  /**
+   * Whose usage limit an agent runs into (docs/spec.md 4.3). Limits belong to the provider account,
+   * so agents on the computer's own sign-in of one harness share them. An agent given its own key,
+   * token, endpoint or config directory in its variables has a limit of its own.
+   */
+  private signIn(agentId: string): string {
+    const agent = this.store.agent(agentId);
+    if (!agent) return `agent:${agentId}`;
+    const own = this.store.envNames(agentId).some(({ name }) => OWN_SIGN_IN.test(name));
+    return own ? `agent:${agentId}` : `shared:${agent.harness}`;
+  }
+
+  /** One agent hit its sign-in's usage limit: the others on that sign-in wait for it too. */
+  private shareLimit(agentId: string, until: number, why: FailureInfo): void {
+    const key = this.signIn(agentId);
+    if (!key.startsWith("shared:")) return;
+    for (const [peerId, peer] of this.runtimes) {
+      if (peerId !== agentId && this.signIn(peerId) === key) peer.holdFor(until, why);
+    }
+  }
+
+  /**
+   * A turn that began at `startedAt` completed on this agent's sign-in, so the provider answers
+   * again: waits on it that began earlier are over, and their messages go out now instead of at
+   * their retry time.
+   */
+  private endLimit(agentId: string, startedAt: number): void {
+    const key = this.signIn(agentId);
+    const ended = new Set<string>();
+    for (const [peerId, peer] of this.runtimes) {
+      if ((peerId === agentId || this.signIn(peerId) === key) && peer.release(startedAt)) ended.add(peerId);
+    }
+    if (ended.size === 0) return;
+    this.log(`${[...ended].join(",")}: usage limit over (a turn on ${key} completed)`);
+    this.resumeWaiting(Date.now(), ended);
   }
 
   /** The agent's harness by its display name, for messages to people. */
@@ -1019,9 +1073,13 @@ export class Mingle {
    * whose chat app is offline keeps waiting: the agent could not reply there anyway; the next tick
    * after it reconnects picks it up.
    */
-  resumeWaiting(now = Date.now()): void {
+  resumeWaiting(now = Date.now(), agents?: ReadonlySet<string>): void {
     const due = new Map<string, string[]>();
-    for (const message of this.store.dueWaiting(now)) {
+    // `agents`: their wait is known to be over, so all their waiting messages go now.
+    const ready = agents
+      ? [...agents].flatMap((agentId) => this.store.waiting(agentId).map((m) => ({ ...m, agentId })))
+      : this.store.dueWaiting(now);
+    for (const message of ready) {
       const runtime = this.runtimes.get(message.agentId);
       if (!runtime || this.paused.has(message.agentId)) continue;
       const chat = this.store.chat(message.chatId);
