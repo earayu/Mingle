@@ -8,7 +8,7 @@ import { NewAgent } from "./NewAgent.tsx";
 import { onNavigateRequest } from "./online.ts";
 import { usePolling } from "./poll.ts";
 import { SettingsPage } from "./Settings.tsx";
-import { Avatar, Button, Eyebrow, PlusIcon, SettingsIcon, StatusDot, UpdateIcon } from "./ui.tsx";
+import { Avatar, Button, Eyebrow, PlusIcon, SettingsIcon, StatusDot, UpdateIcon, Waiting } from "./ui.tsx";
 import { updates, useUpdates } from "./updates.ts";
 import { Welcome } from "./Welcome.tsx";
 
@@ -134,14 +134,19 @@ function Shell() {
   const slug = view.kind === "agent" || view.kind === "connect" ? view.slug : undefined;
   const current = slug ? agents?.find((a) => a.slug === slug) : undefined;
 
-  let page: React.ReactNode = null;
+  let page: React.ReactNode =
+    agents === null && problem === null ? (
+      <div className="px-6 py-6 md:px-8">
+        <Waiting>{t("app.loading")}</Waiting>
+      </div>
+    ) : null;
   if (agents !== null) {
     if (view.kind === "settings") page = <SettingsPage version={version} />;
     else if (view.kind === "new")
       page = <NewAgent first={agents.length === 0} onNavigate={navigate} onCreated={created} />;
     else if (view.kind === "connect" && current)
       page = <ConnectPage agent={current} platform={view.platform} onNavigate={navigate} onChanged={refresh} />;
-    else if (current) page = <AgentPage agent={current} onNavigate={navigate} onChanged={refresh} />;
+    else if (current) page = <AgentPage key={current.id} agent={current} onNavigate={navigate} onChanged={refresh} />;
     else if (agents.length === 0) page = <Welcome onStart={() => navigate({ kind: "new" })} />;
     else {
       // Nothing chosen, or a link to an agent that is gone: show the first one.

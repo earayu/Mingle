@@ -10,7 +10,7 @@ import {
   type Reminder,
   type Task,
 } from "./api.ts";
-import { peek, remember, useCached } from "./cache.ts";
+import { fetchCached, peek, useCached } from "./cache.ts";
 import { errorText, type MessageKey, statusDetailText, useI18n } from "./i18n.ts";
 import { ModelPicker } from "./NewAgent.tsx";
 import { online, useOnline } from "./online.ts";
@@ -43,8 +43,7 @@ import {
   Waiting,
 } from "./ui.tsx";
 
-type AgentWork = { tasks: Task[]; reminders: Reminder[] };
-const NO_WORK: AgentWork = { tasks: [], reminders: [] };
+type WorkData = { tasks: Task[]; reminders: Reminder[] };
 
 export function AgentPage({
   agent,
@@ -58,7 +57,11 @@ export function AgentPage({
   const { t } = useI18n();
   // The last activity and work seen for an agent show at once when its page opens again.
   const [activity, setActivity] = useState<Activity[] | null>(() => peek<Activity[]>(`activity:${agent.id}`) ?? null);
-  const [work, setWork] = useState<AgentWork>(() => peek<AgentWork>(`work:${agent.id}`) ?? NO_WORK);
+  const [work, setWork] = useState<WorkData | null>(() => peek<WorkData>(`work:${agent.id}`) ?? null);
+  const [activityError, setActivityError] = useState(false);
+  const [workError, setWorkError] = useState(false);
+  const activityPending = useRef(false);
+  const workPending = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [tab, setTab] = useState<"activity" | "settings">("activity");
@@ -72,21 +75,44 @@ export function AgentPage({
     connectionsRef.current?.focus({ preventScroll: true });
   }, [manageRequest]);
 
-  const refresh = useCallback(() => {
-    api
-      .activity(agent.id)
-      .then((list) => setActivity(remember(`activity:${agent.id}`, list)))
-      .catch(() => {});
-    api
-      .work(agent.id)
-      .then((next) => setWork(remember(`work:${agent.id}`, next)))
-      .catch(() => {});
+  // Each resource guards itself: a slow call is not superseded by the next poll, and one
+  // request in flight does not hold back the other resource. `fresh` lets a remount read
+  // again even if a previous mount's read is still resolving; only the latest read caches.
+  const refreshActivity = useCallback(async () => {
+    if (activityPending.current) return;
+    activityPending.current = true;
+    try {
+      setActivity(await fetchCached(`activity:${agent.id}`, () => api.activity(agent.id), true));
+      setActivityError(false);
+    } catch {
+      setActivityError(true);
+    } finally {
+      activityPending.current = false;
+    }
   }, [agent.id]);
+  const refreshWork = useCallback(async () => {
+    if (workPending.current) return;
+    workPending.current = true;
+    try {
+      setWork(await fetchCached(`work:${agent.id}`, () => api.work(agent.id), true));
+      setWorkError(false);
+    } catch {
+      setWorkError(true);
+    } finally {
+      workPending.current = false;
+    }
+  }, [agent.id]);
+  const refresh = useCallback(() => {
+    void refreshActivity();
+    void refreshWork();
+  }, [refreshActivity, refreshWork]);
 
   // Switching to another agent starts from what was last seen for it.
   useEffect(() => {
     setActivity(peek<Activity[]>(`activity:${agent.id}`) ?? null);
-    setWork(peek<AgentWork>(`work:${agent.id}`) ?? NO_WORK);
+    setWork(peek<WorkData>(`work:${agent.id}`) ?? null);
+    setActivityError(false);
+    setWorkError(false);
     setConfirmDelete(false);
     setNotice(null);
     setTab("activity");
@@ -309,13 +335,47 @@ export function AgentPage({
                 {agent.connections.some((c) => c.state === "connected") ? <KeepOnline /> : null}
                 {/* Narrow windows have no right panel: what needs the person comes first. */}
                 {needsYou ? <div className="flex flex-col gap-7 min-[1140px]:hidden">{needsYou}</div> : null}
-                {activity && activity.length > 0 ? (
-                  <Section title={t("agent.activity")}>
+                <Section title={t("agent.activity")}>
+                  {activityError ? <LoadProblem title={t("agent.activityFailed")} onRetry={refreshActivity} /> : null}
+                  {activity === null ? (
+                    activityError ? null : (
+                      <Waiting>{t("agent.activityLoading")}</Waiting>
+                    )
+                  ) : activity.length > 0 ? (
                     <ActivityList items={activity} onRetry={retry} onIgnore={ignore} />
-                  </Section>
-                ) : null}
+                  ) : activityError ? null : (
+                    <div className="flex flex-col items-start gap-3 rounded-card border border-line bg-bg2 p-5">
+                      <svg
+                        width="28"
+                        height="28"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        className="text-ink2"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M20 11.5a8 8 0 0 1-8 8H5l-3 2v-10a9 9 0 0 1 18 0Z"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinejoin="round"
+                        />
+                        <path d="M7 10h8M7 14h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                      </svg>
+                      <div className="flex flex-col gap-1">
+                        <h3 className="font-semibold">{t("agent.noActivity")}</h3>
+                        <p className="text-small text-ink2">{t("agent.noActivityBody")}</p>
+                        {agent.connections.length === 0 ? (
+                          <p className="text-small text-ink2">{t("agent.noActivityConnect")}</p>
+                        ) : null}
+                      </div>
+                      {agent.hasReplied && agent.connections.length === 0 ? (
+                        <Button onClick={connect}>{t("start.connectAction")}</Button>
+                      ) : null}
+                    </div>
+                  )}
+                </Section>
                 <div className="flex flex-col gap-7 min-[1140px]:hidden">
-                  <Work work={work} />
+                  <Work work={work} error={workError} onRetry={refreshWork} />
                 </div>
               </>
             )}
@@ -332,7 +392,7 @@ export function AgentPage({
               }}
             />
           ) : null}
-          <Work work={work} />
+          <Work work={work} error={workError} onRetry={refreshWork} />
         </aside>
       </div>
     </>
@@ -604,13 +664,43 @@ function ReconnectButton({ connection }: { connection: ConnectionView }) {
   );
 }
 
-function Work({ work }: { work: { tasks: Task[]; reminders: Reminder[] } }) {
+/** A failed load explains itself and offers a retry; it is not shown as an empty list. */
+function LoadProblem({ title, onRetry }: { title: string; onRetry: () => Promise<void> }) {
+  const { t } = useI18n();
+  return (
+    <Problem title={title}>
+      <div className="flex flex-col items-start gap-2">
+        <p>{t("agent.loadRetry")}</p>
+        <Button small onClick={onRetry}>
+          {t("agent.retry")}
+        </Button>
+      </div>
+    </Problem>
+  );
+}
+
+function Work({ work, error, onRetry }: { work: WorkData | null; error: boolean; onRetry: () => Promise<void> }) {
   const { t, locale } = useI18n();
+  if (work === null) {
+    return (
+      <Section title={t("agent.work")}>
+        {error ? (
+          <LoadProblem title={t("agent.workFailed")} onRetry={onRetry} />
+        ) : (
+          <Waiting>{t("agent.workLoading")}</Waiting>
+        )}
+      </Section>
+    );
+  }
   return (
     <>
+      {error ? <LoadProblem title={t("agent.workFailed")} onRetry={onRetry} /> : null}
       <Section title={t("agent.tasks")}>
         {work.tasks.length === 0 ? (
-          <p className="px-1 text-small text-ink3">{t("agent.noTasks")}</p>
+          <p className="px-1 text-small text-ink2">
+            {t("agent.noTasks")}
+            <span className="mt-1 block">{t("agent.noTasksBody")}</span>
+          </p>
         ) : (
           <Group>
             {work.tasks.map((task) => (
@@ -628,7 +718,10 @@ function Work({ work }: { work: { tasks: Task[]; reminders: Reminder[] } }) {
       </Section>
       <Section title={t("agent.reminders")}>
         {work.reminders.length === 0 ? (
-          <p className="px-1 text-small text-ink3">{t("agent.noReminders")}</p>
+          <p className="px-1 text-small text-ink2">
+            {t("agent.noReminders")}
+            <span className="mt-1 block">{t("agent.noRemindersBody")}</span>
+          </p>
         ) : (
           <Group>
             {work.reminders.map((r) => (

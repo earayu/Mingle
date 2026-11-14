@@ -36,6 +36,18 @@ const LOCALES = {
     resume: "Resume",
     paused: "Paused",
     pausedCard: "is paused",
+    appLoading: "Loading your agents…",
+    activityTitle: "Recent activity",
+    activityLoading: "Loading recent activity…",
+    activityFailed: "Could not load recent activity",
+    noActivity: "No recent activity",
+    workTitle: "Tasks and reminders",
+    workLoading: "Loading tasks and reminders…",
+    workFailed: "Could not load tasks and reminders",
+    noTasks: "No tasks.",
+    noReminders: "No reminders.",
+    connectAction: "Connect a chat app",
+    retryLoad: "Retry",
   },
   "zh-CN": {
     storage: "zh-CN",
@@ -60,6 +72,18 @@ const LOCALES = {
     resume: "恢复",
     paused: "已暂停",
     pausedCard: "已暂停",
+    appLoading: "正在加载 Agent…",
+    activityTitle: "最近活动",
+    activityLoading: "正在加载最近活动…",
+    activityFailed: "最近活动加载失败",
+    noActivity: "暂无动态",
+    workTitle: "任务与提醒",
+    workLoading: "正在加载任务与提醒…",
+    workFailed: "任务与提醒加载失败",
+    noTasks: "没有任务。",
+    noReminders: "没有提醒。",
+    connectAction: "连接聊天软件",
+    retryLoad: "重试",
   },
 };
 
@@ -119,9 +143,37 @@ const INSTALL_MOCK = String.raw`(() => {
   };
 })()`;
 
+// A fetch mock for the first status poll: held until the page's own release() defers to
+// the real request, so the "loading your agents" state can be checked deterministically.
+const STATUS_HOLD = String.raw`(() => {
+  const real = window.fetch.bind(window);
+  const state = { pending: [] };
+  window.__statusHold = state;
+  window.fetch = (input, init) => {
+    const path = typeof input === "string" ? input : input.url;
+    const method = (init && init.method) || "GET";
+    if (method === "GET" && /\/v1\/admin\/status(\?|$)/.test(path)) {
+      return new Promise((resolve) => state.pending.push(() => resolve(real(input, init))));
+    }
+    return real(input, init);
+  };
+  state.release = () => state.pending.splice(0).forEach((f) => f());
+})()`;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function reviewInteractions({ url, token, slug, singleSlug, envSlug, pauseSlug, envSecret, chrome, out }) {
+export async function reviewInteractions({
+  url,
+  token,
+  slug,
+  singleSlug,
+  envSlug,
+  pauseSlug,
+  emptySlug,
+  envSecret,
+  chrome,
+  out,
+}) {
   const profile = mkdtempSync(join(tmpdir(), "mingle-cdp-"));
   const child = spawn(
     chrome,
@@ -215,7 +267,7 @@ export async function reviewInteractions({ url, token, slug, singleSlug, envSlug
       return result.value;
     };
     const until = async (what, fn, ...args) => {
-      const deadline = Date.now() + 15_000;
+      const deadline = Date.now() + 30_000;
       for (;;) {
         const value = await call(fn, ...args);
         if (value) return value;
@@ -838,6 +890,219 @@ export async function reviewInteractions({ url, token, slug, singleSlug, envSlug
         passed++;
         console.log(`pause ${localeName} ${width}: passed`);
       }
+    }
+
+    // --- empty agent page: loading, failure, empty, and switching agents mid-flight ---
+    // The mock's own state lives on the page (window.__emptyReview); it is installed either
+    // into the live document or into every new document for a cold-load check.
+    const mockEmptyReads = () => {
+      const real = window.fetch.bind(window);
+      const state = { mode: "hold", pending: [], calls: [] };
+      window.__emptyReview = state;
+      const reply = (path, mode) =>
+        new Response(
+          JSON.stringify(
+            mode === "fail" ? { error: "http_error" } : path.includes("/activity") ? [] : { tasks: [], reminders: [] },
+          ),
+          { status: mode === "fail" ? 500 : 200, headers: { "content-type": "application/json" } },
+        );
+      window.fetch = (input, init) => {
+        const path = typeof input === "string" ? input : input.url;
+        const method = init?.method || "GET";
+        if (method === "GET" && /\/v1\/admin\/agents\/[^/]+\/(activity|work)(\?|$)/.test(path)) {
+          state.calls.push(path);
+          if (state.mode === "hold") return new Promise((resolve) => state.pending.push({ path, resolve }));
+          return Promise.resolve(reply(path, state.mode));
+        }
+        return real(input, init);
+      };
+      // Release queued requests whose path contains `part` (all of them without it);
+      // later requests answer immediately in `mode`.
+      state.release = (mode, part) => {
+        state.mode = mode;
+        const rest = [];
+        for (const p of state.pending.splice(0)) {
+          if (part === undefined || p.path.includes(part)) p.resolve(reply(p.path, mode));
+          else rest.push(p);
+        }
+        state.pending = rest;
+      };
+    };
+    const installEmptyMock = () => call(mockEmptyReads);
+    const releaseMock = (mode, part) => call((m, p) => window.__emptyReview.release(m, p), mode, part);
+    const setMockMode = (mode) =>
+      call((m) => {
+        window.__emptyReview.mode = m;
+      }, mode);
+    const mockCalls = () => call(() => window.__emptyReview.calls.length);
+    const hasText = (wanted) => document.body.textContent.includes(wanted);
+    const bodyHas = (wanted) => call(hasText, wanted);
+    // A button inside a <section> titled `title`; a hidden copy (the column that only shows
+    // at narrow widths) has an empty rect, so the first visible one wins.
+    const buttonInSection = (title, wanted) => {
+      const hs = [...document.querySelectorAll("section h2")].filter((h) => h.textContent.trim() === title);
+      for (const h of hs) {
+        const el = [...(h.closest("section")?.querySelectorAll("button") ?? [])].find(
+          (b) => b.textContent.trim() === wanted,
+        );
+        if (!el) continue;
+        el.scrollIntoView({ block: "center" });
+        const r = el.getBoundingClientRect();
+        if (r.width && r.height) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      }
+      return null;
+    };
+
+    const statusAuth = { headers: { authorization: `Bearer ${token}` } };
+    const agentList = (await (await fetch(`${url}/v1/admin/status`, statusAuth)).json()).agents;
+    const alexId = agentList.find((a) => a.slug === slug)?.id;
+    const emptyId = agentList.find((a) => a.slug === emptySlug)?.id;
+    assert(alexId && emptyId, `agent ids not found (${slug}=${alexId}, ${emptySlug}=${emptyId})`);
+
+    const emptyScenario = async (localeName, labels, width) => {
+      const tag = `empty ${localeName} ${width}`;
+      await metrics(width);
+      await goto(`/a/${emptySlug}`, labels);
+      // The real thing first: replied long ago, no bot left, nothing to show yet.
+      await until("real empty state", hasText, labels.noActivity);
+      assert(await bodyHas(labels.noTasks), `${tag}: noTasks missing`);
+      assert(await bodyHas(labels.noReminders), `${tag}: noReminders missing`);
+      assert(await bodyHas(labels.connectAction), `${tag}: connect action missing`);
+      assert(await call(pageFits), `${tag}: horizontal overflow`);
+      await shot(`${localeName}-${width}-empty`);
+
+      // Held responses say "loading", and a slow call is not superseded by the next poll.
+      // A cold document has nothing cached, so its first reads are the held ones.
+      const { identifier } = await send("Page.addScriptToEvaluateOnNewDocument", {
+        source: `(${mockEmptyReads.toString()})();`,
+      });
+      await send("Page.reload");
+      await until("activity loading", hasText, labels.activityLoading);
+      await until("work loading", hasText, labels.workLoading);
+      await send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+      assert(!(await bodyHas(labels.noActivity)), `${tag}: empty card during load`);
+      assert(!(await bodyHas(labels.noTasks)), `${tag}: noTasks during load`);
+      const held = await mockCalls();
+      assert(held === 2, `${tag}: expected 2 held requests, got ${held}`);
+      await sleep(2700);
+      assert((await mockCalls()) === held, `${tag}: polling replaced the held requests`);
+      assert(await bodyHas(labels.activityLoading), `${tag}: loading label lost`);
+      await shot(`${localeName}-${width}-empty-loading`);
+
+      // A failure explains itself and offers retry: never a silent empty list or a raw code.
+      await releaseMock("fail");
+      await until("activity failed", hasText, labels.activityFailed);
+      await until("work failed", hasText, labels.workFailed);
+      assert(!(await bodyHas(labels.noActivity)), `${tag}: empty card on failure`);
+      assert(!(await bodyHas(labels.noTasks)), `${tag}: noTasks on failure`);
+      assert(!(await bodyHas("http_error")), `${tag}: raw error code rendered`);
+      assert(await call(pageFits), `${tag}: horizontal overflow on failure`);
+      await shot(`${localeName}-${width}-empty-failed`);
+
+      // Retrying each card lands on the explanatory empty state. Retries are held until the
+      // release below, so the poll cannot race the clicks away.
+      await setMockMode("hold");
+      await clickEl(await until("activity retry", buttonInSection, labels.activityTitle, labels.retryLoad));
+      await clickEl(await until("work retry", buttonInSection, labels.workTitle, labels.retryLoad));
+      await releaseMock("empty", `/agents/${emptyId}/`);
+      await until("activity empty after retry", hasText, labels.noActivity);
+      await until("tasks empty after retry", hasText, labels.noTasks);
+      await until("reminders empty after retry", hasText, labels.noReminders);
+      assert(!(await bodyHas(labels.activityFailed)), `${tag}: activity failure persists`);
+      assert(!(await bodyHas(labels.workFailed)), `${tag}: work failure persists`);
+      assert(await call(pageFits), `${tag}: horizontal overflow when empty`);
+      await shot(`${localeName}-${width}-empty-after-retry`);
+      if (width === 1440) {
+        await send("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: "dark" }],
+        });
+        // The theme transition takes ~120ms; shooting mid-transition captures grey half-tones.
+        await sleep(200);
+        await shot(`${localeName}-1440-empty-dark`);
+        await send("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: "light" }],
+        });
+        await sleep(200);
+      }
+
+      // The empty card's Connect goes to the connect flow (scoped to the activity section,
+      // not the Needs-you panel in the aside).
+      await clickEl(await until("connect in empty card", buttonInSection, labels.activityTitle, labels.connectAction));
+      await until("connect page", (p) => location.pathname === p, `/a/${emptySlug}/connect`);
+      await spaNav(`/a/${emptySlug}`);
+      await until("empty restored", hasText, labels.noActivity);
+
+      // Switching agents while requests hang: the previous agent's late failures must not
+      // land on the agent now showing. The agent left earlier keeps its (empty) cache, so
+      // coming back shows it at once while its fresh reads are the ones held.
+      await setMockMode("hold");
+      await spaNav(`/a/${slug}`);
+      await until("other agent loading", hasText, labels.activityLoading);
+      await until("other requests held", (id) => window.__emptyReview.pending.some((p) => p.path.includes(id)), alexId);
+      await spaNav(`/a/${emptySlug}`);
+      await until("cached empty after switch", hasText, labels.noActivity);
+      assert(!(await bodyHas(labels.activityLoading)), `${tag}: cached activity flashed loading`);
+      await until(
+        "current requests held",
+        (id) => window.__emptyReview.pending.filter((p) => p.path.includes(`/agents/${id}/`)).length === 2,
+        emptyId,
+      );
+      assert(!(await bodyHas("@Alex 要带多少水？")), `${tag}: previous agent's activity leaked`);
+      assert(!(await bodyHas("比较三条备选路线")), `${tag}: previous agent's task leaked`);
+      await releaseMock("fail", `/agents/${alexId}/`);
+      await releaseMock("empty", `/agents/${emptyId}/`);
+      await call(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await until("empty after switch", hasText, labels.noActivity);
+      assert(!(await bodyHas(labels.activityFailed)), `${tag}: activity failure leaked across agents`);
+      assert(!(await bodyHas(labels.workFailed)), `${tag}: work failure leaked across agents`);
+
+      // Back to the real API: the populated agent shows real activity and work, and a later
+      // transient failure keeps them while explaining itself.
+      await send("Page.reload");
+      await until("app ready after reload", () => !!document.querySelector('header [role="radiogroup"]'));
+      await until("real empty again", hasText, labels.noActivity);
+      await spaNav(`/a/${slug}`);
+      await until("real activity", hasText, "@Alex 要带多少水？");
+      const task = "比较三条备选路线的爬升、距离和交通，周五前给出推荐";
+      await until("real task", hasText, task);
+      assert(!(await bodyHas(labels.noActivity)), `${tag}: populated agent shows the empty card`);
+      await installEmptyMock();
+      await setMockMode("fail");
+      await until("transient activity failure", hasText, labels.activityFailed);
+      await until("transient work failure", hasText, labels.workFailed);
+      assert(await bodyHas("@Alex 要带多少水？"), `${tag}: activity lost on transient failure`);
+      assert(await bodyHas(task), `${tag}: task lost on transient failure`);
+      assert(await call(pageFits), `${tag}: horizontal overflow on transient failure`);
+      await shot(`${localeName}-${width}-empty-transient-failed`);
+      // Restore the real API for whatever runs next in this document.
+      await send("Page.reload");
+      await until("real again", () => !!document.querySelector('header [role="radiogroup"]'));
+    };
+
+    for (const [localeName, labels] of Object.entries(LOCALES)) {
+      for (const width of [1440, 560]) {
+        await emptyScenario(localeName, labels, width);
+        passed++;
+        console.log(`empty ${localeName} ${width}: passed`);
+      }
+    }
+
+    // --- first paint: a held status request shows "loading", not a blank page ---
+    for (const [localeName, labels] of Object.entries(LOCALES)) {
+      await metrics(1440);
+      const { identifier } = await send("Page.addScriptToEvaluateOnNewDocument", { source: STATUS_HOLD });
+      await send("Page.navigate", { url: `${url}/a/${emptySlug}#token=${token}` });
+      await until("document ready", () => document.readyState === "complete");
+      await call((locale) => localStorage.setItem("mingle.locale", locale), labels.storage);
+      await send("Page.reload");
+      await until("shell loading", hasText, labels.appLoading);
+      assert(!(await call(() => !!document.querySelector("h1"))), "welcome shown before agents load");
+      assert(!(await call(() => !!document.querySelector("header"))), "page header shown before status");
+      await call(() => window.__statusHold.release());
+      await until("header after release", () => !!document.querySelector('header [role="radiogroup"]'));
+      await send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+      passed++;
+      console.log(`loading ${localeName}: passed`);
     }
 
     // --- ignore: a dismissed message keeps its body but loses its actions ---
