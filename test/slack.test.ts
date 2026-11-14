@@ -95,6 +95,10 @@ describe("slack messages", () => {
     expect(manifest.settings.socket_mode_enabled).toBe(true);
     expect(manifest.oauth_config.scopes.bot).toContain("chat:write");
     expect(manifest.features.bot_user.display_name).toBe("__MINGLE_AGENT_HANDLE__");
+    // Slack clients never deliver a bare "/stop" as a message; it must be a real command.
+    expect(manifest.features.slash_commands).toEqual([
+      { command: "/stop", description: "Stop the agent's current work", should_escape: false },
+    ]);
   });
 });
 
@@ -176,6 +180,43 @@ describe("slack connection", () => {
       "<@U1> Answer",
     ]);
     await connection.close();
+  });
+
+  it("turns a /stop slash command in a DM into an inbound message, once", async () => {
+    const http = fakeHttp({
+      "auth.test": auth,
+      "apps.connections.open": () => ({ url: "wss://x" }),
+      "users.info": () => ({ user: { name: "zs", real_name: "Zhang San" } }),
+    });
+    const ws = fakeSocket();
+    const received: InboundMessage[] = [];
+    await slackChannel({ fetch: http.fetchImpl, createSocket: () => ws.socket }).connect(
+      { botToken: "xoxb-1", appToken: "xapp-1", name: "Alex" },
+      { onMessage: (m) => received.push(m), onState: () => {}, onMembership: () => {} },
+    );
+    const slash = {
+      type: "slash_commands",
+      envelope_id: "s1",
+      payload: { command: "/stop", channel_id: "D1", user_id: "U1", trigger_id: "trig1" },
+    };
+    ws.push(slash);
+    ws.push({ ...slash, envelope_id: "s2" }); // Slack's retry: same trigger_id.
+    // A command in a channel has no thread to answer in; only " /stop" as text works there.
+    ws.push({
+      type: "slash_commands",
+      envelope_id: "s3",
+      payload: { command: "/stop", channel_id: "C1", user_id: "U1", trigger_id: "trig2" },
+    });
+    await until(() => received.length === 1, 1000);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      platformId: "trig1",
+      chat: { platformId: "D1", kind: "dm" },
+      sender: { id: "U1", name: "Zhang San" },
+      text: "/stop",
+      addressedToBot: true,
+    });
   });
 });
 

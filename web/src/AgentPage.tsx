@@ -874,7 +874,7 @@ function ConnectionRow({
             {t("connection.removeYes")}
           </Button>
           <Button small variant="ghost" onClick={() => setConfirming(false)}>
-            {t("agent.deleteNo")}
+            {t("agent.cancel")}
           </Button>
         </span>
       ) : (
@@ -954,7 +954,7 @@ function OwnerNameForm({
           {t("connection.ownerNameSave")}
         </Button>
         <Button small variant="ghost" type="button" onClick={() => onDone(false)}>
-          {t("agent.deleteNo")}
+          {t("agent.cancel")}
         </Button>
       </span>
       {error ? <p className="text-caption text-red">{error}</p> : null}
@@ -1117,6 +1117,12 @@ function DeleteRow({
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const deleteButton = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(confirming);
+  useLayoutEffect(() => {
+    if (wasConfirming.current && !confirming) deleteButton.current?.focus();
+    wasConfirming.current = confirming;
+  }, [confirming]);
   const cancel = () => {
     setFailure(null);
     onCancel();
@@ -1156,12 +1162,12 @@ function DeleteRow({
           >
             {t("agent.deleteYes")}
           </Button>
-          <Button small variant="ghost" autoFocus disabled={busy} onClick={cancel}>
-            {t("agent.deleteNo")}
+          <Button small autoFocus disabled={busy} onClick={cancel}>
+            {t("agent.cancel")}
           </Button>
         </span>
       ) : (
-        <Button small variant="danger" onClick={onAsk}>
+        <Button ref={deleteButton} small variant="danger" onClick={onAsk}>
           {t("agent.delete")}
         </Button>
       )}

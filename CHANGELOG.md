@@ -11,8 +11,9 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 - Recent activity shows the names from that address book. An unnamed owner is shown as "You" only when it cannot be two people; with two owners on one platform each shows as "Unnamed" with its ID until named.
 - iMessage on macOS now uses your own Apple ID: the agent replies in your self-chat and leaves your other conversations alone. Text, files, reminders and replies after restarting have been verified on a real Mac. Replies are not read back as new messages, and files are staged where Messages can send them reliably.
 - Deleting an agent asks for confirmation in that agent's own row, so it stays clear which agent you are removing.
+- On Slack, `/stop` now works: the app manifest registers it as a real slash command, which Slack delivers over Socket Mode instead of rejecting it client-side. Direct messages can send `/stop` as-is; in channels and threads, and for apps created before this version, send ` /stop` with a leading space.
 
-Known issues: Slack file sending and its `/stop` entry still need fixes. A stopped background task may still send a late reply. Connecting a second personal WeChat account still needs a real-device check.
+Known issues: Slack file sending still needs a fix. A stopped background task may still send a late reply. Connecting a second personal WeChat account still needs a real-device check.
 
 ## 0.1.8
 

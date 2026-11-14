@@ -74,6 +74,9 @@ const MANIFEST = {
   features: {
     app_home: { home_tab_enabled: false, messages_tab_enabled: true, messages_tab_read_only_enabled: false },
     bot_user: { display_name: AGENT_HANDLE_PLACEHOLDER, always_online: true },
+    // Slack clients treat a leading "/" as a slash command and never deliver it as a
+    // message, so "/stop" has to be a real command to reach Mingle (MING-59).
+    slash_commands: [{ command: "/stop", description: "Stop the agent's current work", should_escape: false }],
   },
   oauth_config: {
     scopes: {
@@ -239,6 +242,40 @@ export function slackChannel(options: SlackOptions = {}): Channel {
         events.onMessage(inbound);
       };
 
+      /**
+       * A registered slash command arrives as its own envelope, not a message event.
+       * Only DMs map onto a chat Mingle can answer: a channel command carries no thread,
+       * and there the owner writes " /stop" (leading space) as an ordinary message instead.
+       */
+      const handleSlash = async (payload: unknown, envelopeId: string | undefined) => {
+        let body: unknown = payload;
+        if (typeof body === "string") {
+          try {
+            body = JSON.parse(body);
+          } catch {
+            return;
+          }
+        }
+        if (typeof body !== "object" || body === null) return;
+        const { command, channel_id, user_id, trigger_id } = body as Record<string, string | undefined>;
+        const id = trigger_id ?? envelopeId;
+        if (id) {
+          if (seen.has(id)) return; // Slack retries unacknowledged envelopes.
+          seen.add(id);
+          if (seen.size > 5000) seen.delete(seen.values().next().value as string);
+        }
+        if (command !== "/stop" || !channel_id?.startsWith("D") || !user_id) return;
+        events.onMessage({
+          platformId: trigger_id ?? `${channel_id}:${Date.now()}`,
+          chat: { platformId: channel_id, kind: "dm" },
+          sender: { id: user_id, name: await nameOf(user_id), isBot: false },
+          text: command,
+          attachments: [],
+          addressedToBot: true,
+          sentAt: Date.now(),
+        });
+      };
+
       const open = async (): Promise<void> => {
         if (closed) return;
         let url: string;
@@ -260,7 +297,7 @@ export function slackChannel(options: SlackOptions = {}): Channel {
           let envelope: {
             type: string;
             envelope_id?: string;
-            payload?: { event?: SlackEvent; event_id?: string };
+            payload?: ({ event?: SlackEvent; event_id?: string } & Record<string, unknown>) | string;
           };
           try {
             envelope = JSON.parse(String(message.data));
@@ -276,12 +313,16 @@ export function slackChannel(options: SlackOptions = {}): Channel {
             ws.onclose = null;
             ws.close();
             void open();
-          } else if (envelope.type === "events_api" && envelope.payload?.event) {
-            const id = envelope.payload.event_id ?? `${envelope.payload.event.channel}:${envelope.payload.event.ts}`;
+          } else if (envelope.type === "events_api" && envelope.payload && typeof envelope.payload === "object") {
+            const event = envelope.payload.event;
+            if (!event) return;
+            const id = envelope.payload.event_id ?? `${event.channel}:${event.ts}`;
             if (seen.has(id)) return; // Slack retries unacknowledged events.
             seen.add(id);
             if (seen.size > 5000) seen.delete(seen.values().next().value as string);
-            void handle(envelope.payload.event).catch(() => {});
+            void handle(event).catch(() => {});
+          } else if (envelope.type === "slash_commands" && envelope.payload) {
+            void handleSlash(envelope.payload, envelope.envelope_id).catch(() => {});
           }
         };
         ws.onclose = () => {

@@ -19,7 +19,7 @@ const LOCALES = {
     manage: "Manage",
     more: "More",
     remove: "Remove",
-    keep: "Keep",
+    cancel: "Cancel",
     deleteAgent: "Delete",
     deleteAsk: "Delete ",
     chatApps: "Chat apps",
@@ -67,7 +67,7 @@ const LOCALES = {
     manage: "管理",
     more: "更多",
     remove: "移除",
-    keep: "保留",
+    cancel: "取消",
     deleteAgent: "删除",
     deleteAsk: "删除 ",
     chatApps: "聊天软件",
@@ -309,9 +309,15 @@ export async function reviewInteractions({
       if (!found) throw new Error("click target not found");
       await click(found.x, found.y);
     };
-    const key = async (k, code, vk) => {
+    const key = async (k, code, vk, text) => {
       for (const type of ["keyDown", "keyUp"]) {
-        await send("Input.dispatchKeyEvent", { type, key: k, code, windowsVirtualKeyCode: vk });
+        await send("Input.dispatchKeyEvent", {
+          type,
+          key: k,
+          code,
+          windowsVirtualKeyCode: vk,
+          ...(type === "keyDown" && text ? { text, unmodifiedText: text } : {}),
+        });
       }
     };
     const metrics = (width, height = 900) =>
@@ -496,10 +502,10 @@ export async function reviewInteractions({
         );
         if (index === 0) await shot(`${localeName}-${width}-connmenu-open`);
         await click(item.x, item.y);
-        // The row swaps to an inline keep/remove confirmation; the connection stays.
-        await until("remove confirmation", connHasButton, labels.more, labels.keep);
+        // The row swaps to an inline cancel/remove confirmation; the connection stays.
+        await until("remove confirmation", connHasButton, labels.more, labels.cancel);
         if (index === 0) await shot(`${localeName}-${width}-connmenu-confirm`);
-        await clickEl(await call(connButtonCenter, labels.more, labels.keep));
+        await clickEl(await call(connButtonCenter, labels.more, labels.cancel));
         await until(
           "confirmation dismissed",
           (more, wanted) => {
@@ -508,10 +514,10 @@ export async function reviewInteractions({
             return ![...scope.querySelectorAll("button")].some((b) => b.textContent.trim() === wanted);
           },
           labels.more,
-          labels.keep,
+          labels.cancel,
         );
         const after = await call((more) => connTriggers(more).length, labels.more);
-        assert(after === count, `${tag}: connection lost after keep (${after} != ${count})`);
+        assert(after === count, `${tag}: connection lost after cancel (${after} != ${count})`);
       }
 
       // Escape closes and returns focus to the trigger.
@@ -746,8 +752,8 @@ export async function reviewInteractions({
         );
         await shot(`${localeName}-${width}-single-menu`);
         await click(sitem.x, sitem.y);
-        await until("remove confirmation", connHasButton, labels.more, labels.keep);
-        await clickEl(await call(connButtonCenter, labels.more, labels.keep));
+        await until("remove confirmation", connHasButton, labels.more, labels.cancel);
+        await clickEl(await call(connButtonCenter, labels.more, labels.cancel));
         await until(
           "confirmation dismissed",
           (more, wanted) => {
@@ -756,11 +762,11 @@ export async function reviewInteractions({
             return ![...scope.querySelectorAll("button")].some((b) => b.textContent.trim() === wanted);
           },
           labels.more,
-          labels.keep,
+          labels.cancel,
         );
         assert(
           (await call((more) => connTriggers(more).length, labels.more)) === 1,
-          "single connection lost after keep",
+          "single connection lost after cancel",
         );
         if (envSlug) await envScenario(localeName, labels, width);
         passed++;
@@ -1017,14 +1023,29 @@ export async function reviewInteractions({
       }
     }
 
-    // --- deleting an agent asks in its own row, in view, and Keep/Escape back out ---
+    // --- deleting an agent asks in its own row, with an explicit safe way out ---
     const deleteScenario = async (localeName, labels, width) => {
       const tag = `delete ${localeName} ${width}`;
       await metrics(width);
       await goto(`/a/${pauseSlug}`, labels);
       await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.settings));
-      // The question is a leaf span "Delete <name>?" inside the same row as Keep.
-      const asked = (ask, keep) => {
+      await call(() => {
+        const real = window.fetch.bind(window);
+        window.__deleteRequests = [];
+        window.__restoreDeleteFetch = () => {
+          window.fetch = real;
+        };
+        window.fetch = (input, init) => {
+          const path = typeof input === "string" ? input : input.url;
+          const method = init?.method ?? input?.method ?? "GET";
+          if (method === "DELETE" && /\/v1\/admin\/agents\/[^/?]+(?:\?|$)/.test(path)) {
+            window.__deleteRequests.push(path);
+          }
+          return real(input, init);
+        };
+      });
+      // The question is a leaf span "Delete <name>?" inside the same row as Cancel.
+      const asked = (ask, cancel) => {
         const el = [...document.querySelectorAll("span")].find(
           (s) => s.children.length === 0 && s.textContent.startsWith(ask) && /[?？]$/.test(s.textContent.trim()),
         );
@@ -1032,35 +1053,43 @@ export async function reviewInteractions({
         const row = el.closest(".divide-y > *");
         const r = el.getBoundingClientRect();
         return {
-          inRow: [...(row?.querySelectorAll("button") ?? [])].some((b) => b.textContent.trim() === keep),
+          inRow: [...(row?.querySelectorAll("button") ?? [])].some((b) => b.textContent.trim() === cancel),
           visible: r.top >= 0 && r.bottom <= window.innerHeight,
-          focused: document.activeElement?.textContent.trim() === keep,
+          focused: document.activeElement?.textContent.trim() === cancel,
         };
       };
       const gone = (ask) =>
         ![...document.querySelectorAll("span")].some(
           (s) => s.children.length === 0 && s.textContent.startsWith(ask) && /[?？]$/.test(s.textContent.trim()),
         );
-      for (const leave of ["keep", "escape"]) {
+      for (const leave of ["cancel", "escape", "enter"]) {
         await clickEl(await settled("delete button", buttonByText, labels.deleteAgent));
-        const state = await until("delete question", asked, labels.deleteAsk, labels.keep);
+        const state = await until("delete question", asked, labels.deleteAsk, labels.cancel);
         assert(state.inRow, `${tag}: the question is not in the delete row`);
         assert(state.visible, `${tag}: the question is out of view`);
-        assert(state.focused, `${tag}: focus is not on Keep`);
+        assert(state.focused, `${tag}: focus is not on Cancel`);
         assert(await call(pageFits), `${tag}: horizontal overflow`);
-        if (leave === "keep") {
+        if (leave === "cancel") {
           await shot(`${localeName}-${width}-delete-confirm`);
-          await clickEl(await call(buttonByText, labels.keep));
-        } else {
+          await clickEl(await call(buttonByText, labels.cancel));
+        } else if (leave === "escape") {
           await key("Escape", "Escape", 27);
+        } else {
+          await key("Enter", "Enter", 13, "\r");
         }
         await until("question gone", gone, labels.deleteAsk);
+        assert(
+          await call((label) => document.activeElement?.textContent.trim() === label, labels.deleteAgent),
+          `${tag}: focus did not return to Delete after ${leave}`,
+        );
+        assert(await call(() => window.__deleteRequests.length === 0), `${tag}: cancel sent a delete request`);
+        const auth = { headers: { authorization: `Bearer ${token}` } };
+        const still = (await (await fetch(`${url}/v1/admin/status`, auth)).json()).agents.some(
+          (a) => a.slug === pauseSlug,
+        );
+        assert(still, `${tag}: agent gone after ${leave}`);
       }
-      const auth = { headers: { authorization: `Bearer ${token}` } };
-      const still = (await (await fetch(`${url}/v1/admin/status`, auth)).json()).agents.some(
-        (a) => a.slug === pauseSlug,
-      );
-      assert(still, `${tag}: agent gone after keep`);
+      await call(() => window.__restoreDeleteFetch());
     };
     for (const [localeName, labels] of Object.entries(LOCALES)) {
       for (const width of [1440, 560]) {

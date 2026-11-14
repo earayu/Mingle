@@ -186,7 +186,7 @@ function EnvRow({
             {t("env.delete")}
           </Button>
           <Button small variant="ghost" onClick={onCancelDelete}>
-            {t("agent.deleteNo")}
+            {t("agent.cancel")}
           </Button>
         </span>
       ) : (
