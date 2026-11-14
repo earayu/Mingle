@@ -201,12 +201,14 @@ export class AgentRuntime {
   /**
    * Start over in a new harness session (docs/spec.md 4.11): the work in hand is stopped, the
    * conversation is left behind, and the agent comes back from ROLE.md and MEMORY.md. Its home,
-   * messages, tasks and reminders stay.
+   * messages, tasks and reminders stay. Returns once the old session is let go; the new one
+   * opens in the background (a real harness can take a while), and a failure to open shows in
+   * the agent's status like any other.
    */
   async reset(): Promise<void> {
     if (this.running) await this.stop().catch(() => false);
     this.deps.store.setSessionId(this.agentId, null);
-    await this.restart();
+    void this.restart();
   }
 
   /**

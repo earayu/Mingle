@@ -75,9 +75,11 @@ describe("reset session and diagnostics", () => {
 
     const reset = await current.admin("POST", `/v1/admin/agents/${agentId}/reset`);
     expect(reset.status).toBe(200);
-    const after = mingle.store.agent(agentId)?.sessionId;
-    expect(after).toBeTruthy();
-    expect(after).not.toBe(before);
+    // The new session opens after the call returns.
+    const after = await until(() => {
+      const id = mingle.store.agent(agentId)?.sessionId;
+      return id && id !== before ? id : undefined;
+    });
 
     // It still answers, in the new session, and the old message is still on record.
     channel.receive({ text: "still there?" });
