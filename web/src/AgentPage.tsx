@@ -1185,6 +1185,13 @@ function ResetRow({ agent, busy, disabled }: { agent: AgentView; busy: boolean; 
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  // When the question closes (cancelled or done), keyboard focus goes back to the button that asked it.
+  const resetButton = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(confirming);
+  useLayoutEffect(() => {
+    if (wasConfirming.current && !confirming) resetButton.current?.focus();
+    wasConfirming.current = confirming;
+  }, [confirming]);
   const cancel = () => setConfirming(false);
   return (
     <GroupRow className={`flex-wrap transition-colors duration-[120ms] ${confirming ? "bg-amber-tint" : ""}`}>
@@ -1223,12 +1230,13 @@ function ResetRow({ agent, busy, disabled }: { agent: AgentView; busy: boolean; 
           >
             {t("agent.reset")}
           </Button>
-          <Button small variant="ghost" autoFocus disabled={pending} onClick={cancel}>
+          <Button small autoFocus disabled={pending} onClick={cancel}>
             {t("agent.cancel")}
           </Button>
         </span>
       ) : (
         <Button
+          ref={resetButton}
           small
           disabled={disabled}
           onClick={() => {
