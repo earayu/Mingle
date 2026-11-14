@@ -140,7 +140,7 @@ for (const [lang, path, theme, width] of configs) {
       const state = await evaluate(`(() => {
         const p = document.querySelector("#demo .phone");
         return { done: !p.querySelector(".demo-end").hidden, turn: !p.querySelector(".im-send").disabled,
-          live: !!p.querySelector(".im-log:not([hidden]) .steps li.shown") };
+          live: !!p.querySelector(".im-log:not([hidden]) .im-steps li.shown") };
       })()`);
       if (state.done) break;
       if (motion && state.live && frames < 1) {

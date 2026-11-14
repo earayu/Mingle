@@ -1073,7 +1073,7 @@ html:not(.js) .demo-section {
 .mention {
   color: var(--im-accent);
 }
-.meta {
+.im-meta {
   display: none;
 }
 .q {
@@ -1156,24 +1156,24 @@ html:not(.js) .demo-section {
 }
 
 /* The live reply: "Thinking · 5s", then what it did, then the answer in the same place. */
-.steps {
+.im-steps {
   display: grid;
   gap: 3px;
   margin-top: 4px;
   font-size: 12px;
   color: var(--im-ink2);
 }
-.bb ul.steps {
+.bb ul.im-steps {
   padding: 0;
   list-style: none;
 }
-.steps li {
+.im-steps li {
   padding-left: 16px;
   text-indent: -16px;
   opacity: 0;
   transition: opacity 0.3s var(--ease);
 }
-.steps li::before {
+.im-steps li::before {
   content: "✓";
   display: inline-block;
   width: 16px;
@@ -1181,7 +1181,7 @@ html:not(.js) .demo-section {
   color: #2f9e5a;
   font-weight: 700;
 }
-.steps li.shown {
+.im-steps li.shown {
   opacity: 1;
 }
 .status {
@@ -1207,7 +1207,7 @@ html:not(.js) .demo-section {
   margin-right: 12px;
 }
 .im-card .answer:not(:empty),
-.im-card .steps {
+.im-card .im-steps {
   padding-bottom: 10px;
 }
 .im-card .answer:not(:empty) {
@@ -1347,7 +1347,7 @@ html:not(.js) .demo-section {
 .phone[data-app="telegram"] .im-log > .m .av {
   display: none;
 }
-.phone[data-app="telegram"] .meta {
+.phone[data-app="telegram"] .im-meta {
   display: inline-flex;
   float: right;
   gap: 3px;
@@ -1355,7 +1355,7 @@ html:not(.js) .demo-section {
   color: var(--im-ink2);
   font-size: 11px;
 }
-.phone[data-app="telegram"] .m.out .meta {
+.phone[data-app="telegram"] .m.out .im-meta {
   color: #4fae4e;
 }
 .phone[data-app="telegram"] .im-input {
@@ -1428,12 +1428,12 @@ html:not(.js) .demo-section {
   background: rgb(240 178 50 / 0.1);
   box-shadow: inset 2px 0 #f0b232;
 }
-.phone[data-app="discord"] .meta {
+.phone[data-app="discord"] .im-meta {
   display: inline;
   font-size: 11px;
   color: var(--im-ink2);
 }
-.phone[data-app="discord"] .meta time {
+.phone[data-app="discord"] .im-meta time {
   display: none;
 }
 .phone[data-app="discord"] .im-input {
@@ -1506,7 +1506,7 @@ html:not(.js) .demo-section {
       radial-gradient(circle at 20% 30%, rgb(255 255 255 / 0.04) 0 2px, transparent 3px) 0 0 / 46px 46px,
       linear-gradient(160deg, #0f1b28, #0b131c);
   }
-  .phone[data-app="telegram"] .m.out .meta {
+  .phone[data-app="telegram"] .m.out .im-meta {
     color: #7dbbf0;
   }
   .phone[data-app="telegram"] .chip {
