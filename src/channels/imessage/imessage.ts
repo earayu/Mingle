@@ -17,6 +17,7 @@ import type {
   Sender,
   SendResult,
 } from "../channel.ts";
+import { withTextSent } from "../channel.ts";
 
 /**
  * iMessage through the Messages app on this Mac, signed in to the owner's own Apple ID
@@ -270,15 +271,19 @@ export function imessageChannel(options: IMessageOptions = {}): Channel {
           const degraded: ("quote_dropped" | "markdown_flattened")[] = [];
           if (message.replyTo) degraded.push("quote_dropped");
           if (plain(message.text) !== message.text) degraded.push("markdown_flattened");
+          let textId = "";
           try {
-            if (message.text.trim()) await runScript(SEND_TEXT_SCRIPT, [outgoing(message.text), chatGuid], 30_000);
+            if (message.text.trim()) {
+              await runScript(SEND_TEXT_SCRIPT, [outgoing(message.text), chatGuid], 30_000);
+              textId = `local:${now()}`;
+            }
             for (const file of message.files ?? []) {
               const name = file.name ?? basename(file.path);
               sendingFiles.set(name, now() + ECHO_MS);
               await runScript(SEND_FILE_SCRIPT, [await stage(dbPath, file.path, name), chatGuid], 120_000);
             }
           } catch (error) {
-            return sendFailure(error);
+            return withTextSent(sendFailure(error), textId);
           }
           const id = await findSent(chatGuid, before);
           // Messages accepted it; the database may lag. A local id keeps the record without a guid.

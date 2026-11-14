@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { InboundMessage, OnboardingEvent } from "../src/channels/channel.ts";
 import { SLACK_SETUP_URL, type SocketLike, slackChannel, toInbound } from "../src/channels/slack/slack.ts";
@@ -5,12 +8,26 @@ import { until } from "./helpers.ts";
 
 const names = async (id: string) => ({ U1: "Zhang San", U2: "Li Si" })[id] ?? "";
 
-function fakeHttp(routes: Record<string, (body: Record<string, unknown>) => Record<string, unknown>>) {
-  const calls: { method: string; body: Record<string, unknown> }[] = [];
+type Route = (body: Record<string, unknown>) => Record<string, unknown>;
+
+function fakeHttp(routes: Record<string, Route>) {
+  const calls: { method: string; body: Record<string, unknown>; form?: boolean; bytes?: string }[] = [];
   const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
     const method = String(input).split("/api/")[1] ?? String(input);
-    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {};
-    calls.push({ method, body });
+    const type = new Headers(init?.headers).get("content-type") ?? "";
+    if (init?.body instanceof Blob) {
+      calls.push({ method, body: {}, bytes: await init.body.text() });
+      return new Response("OK");
+    }
+    const form = type.startsWith("application/x-www-form-urlencoded");
+    const raw = typeof init?.body === "string" ? init.body : "";
+    // Like Slack: files.getUploadURLExternal reads form fields only and sees nothing in a JSON body.
+    const body = form
+      ? Object.fromEntries(new URLSearchParams(raw))
+      : raw && method !== "files.getUploadURLExternal"
+        ? (JSON.parse(raw) as Record<string, unknown>)
+        : {};
+    calls.push({ method, body, form });
     const route = routes[method];
     return Response.json(route ? { ok: true, ...route(body) } : { ok: true });
   }) as typeof fetch;
@@ -159,5 +176,91 @@ describe("slack connection", () => {
       "<@U1> Answer",
     ]);
     await connection.close();
+  });
+});
+
+describe("slack files", () => {
+  const UPLOAD = "https://files.slack.com/upload/v1/signed";
+  const connect = async (routes: Record<string, Route>) => {
+    const http = fakeHttp({ "auth.test": auth, "apps.connections.open": () => ({ url: "wss://x" }), ...routes });
+    const ws = fakeSocket();
+    const connection = await slackChannel({ fetch: http.fetchImpl, createSocket: () => ws.socket }).connect(
+      { botToken: "xoxb-1", appToken: "xapp-1", name: "Alex" },
+      { onMessage: () => {}, onState: () => {}, onMembership: () => {} },
+    );
+    return { http, connection };
+  };
+  const withFile = async (run: (path: string) => Promise<void>) => {
+    const dir = mkdtempSync(join(tmpdir(), "mingle-slack-"));
+    const path = join(dir, "smoke-result.txt");
+    writeFileSync(path, "MINGLE-FILE-OK");
+    try {
+      await run(path);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const dm = { platformId: "D1", kind: "dm" as const };
+
+  it("reserves the upload with form fields, sends the bytes, then shares the file after the text", async () => {
+    await withFile(async (path) => {
+      const { http, connection } = await connect({
+        // Slack answers missing_argument when filename and length are not form fields.
+        "files.getUploadURLExternal": (body) =>
+          body.filename && body.length
+            ? { upload_url: UPLOAD, file_id: "F1" }
+            : { ok: false, error: "missing_argument" },
+        "chat.postMessage": () => ({ ts: "5.0" }),
+      });
+      expect(await connection.send({ chat: dm, text: "Attached.", files: [{ path }] })).toEqual({
+        kind: "sent",
+        platformId: "5.0",
+      });
+      const steps = http.calls.filter((c) => !["auth.test", "apps.connections.open"].includes(c.method));
+      expect(steps.map((c) => c.method)).toEqual([
+        "files.getUploadURLExternal",
+        UPLOAD,
+        "chat.postMessage",
+        "files.completeUploadExternal",
+      ]);
+      expect(steps[0]).toMatchObject({ form: true, body: { filename: "smoke-result.txt", length: "14" } });
+      expect(steps[1]?.bytes).toBe("MINGLE-FILE-OK");
+      expect(steps[3]?.body).toEqual({ files: [{ id: "F1", title: "smoke-result.txt" }], channel_id: "D1" });
+      await connection.close();
+    });
+  });
+
+  it("posts nothing when Slack refuses the file, and names Slack's reason", async () => {
+    await withFile(async (path) => {
+      const { http, connection } = await connect({
+        "files.getUploadURLExternal": () => ({ ok: false, error: "file_uploads_disabled" }),
+      });
+      expect(await connection.send({ chat: dm, text: "Attached.", files: [{ path }] })).toEqual({
+        kind: "failed",
+        code: "forbidden",
+        retryable: false,
+        detail: "file_uploads_disabled",
+      });
+      expect(http.calls.some((c) => c.method === "chat.postMessage")).toBe(false);
+      await connection.close();
+    });
+  });
+
+  it("reports the text as sent when only sharing the file fails", async () => {
+    await withFile(async (path) => {
+      const { connection } = await connect({
+        "files.getUploadURLExternal": () => ({ upload_url: UPLOAD, file_id: "F1" }),
+        "chat.postMessage": () => ({ ts: "5.0" }),
+        "files.completeUploadExternal": () => ({ ok: false, error: "internal_error" }),
+      });
+      expect(await connection.send({ chat: dm, text: "Attached.", files: [{ path }] })).toEqual({
+        kind: "failed",
+        code: "unknown",
+        retryable: true,
+        detail: "internal_error",
+        textSent: { platformId: "5.0" },
+      });
+      await connection.close();
+    });
   });
 });
