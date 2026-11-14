@@ -224,7 +224,7 @@ function demoPlayer(data, root) {
         showName && !(mine && chat.app !== "discord")
           ? `<span class="nm">${esc(name)}${tag}<time>${time()}</time></span>`
           : ""
-      }<div class="bb">${opts.quote ? `<div class="q">${opts.quote}</div>` : ""}<div class="tx">${html}</div><span class="meta"><time>${
+      }<div class="bb">${opts.quote ? `<div class="q">${opts.quote}</div>` : ""}<div class="tx">${html}</div><span class="im-meta"><time>${
         showName ? "" : time()
       }</time>${mine && chat.app === "telegram" ? '<i class="ticks">✓✓</i>' : ""}</span></div><div class="rx"></div></div>`;
       if (chat.app === "discord" && html.includes(`@${owner}`)) m.classList.add("pinged");
@@ -261,7 +261,7 @@ function demoPlayer(data, root) {
       const card = chat.app === "feishu";
       const m = message("agent", "", { quote: card ? "" : quote, cls: card ? "im-card" : "live" });
       const tx = m.querySelector(".tx");
-      tx.innerHTML = `${card ? `<div class="card-head"><span class="spin"></span><b class="status">${esc(ui.thinking)}</b></div>${quote ? `<div class="q">${quote}</div>` : ""}` : `<p class="status">${esc(ui.thinking)}</p>`}<ul class="steps"></ul><div class="answer"></div>`;
+      tx.innerHTML = `${card ? `<div class="card-head"><span class="spin"></span><b class="status">${esc(ui.thinking)}</b></div>${quote ? `<div class="q">${quote}</div>` : ""}` : `<p class="status">${esc(ui.thinking)}</p>`}<ul class="im-steps"></ul><div class="answer"></div>`;
       const state = { m, tx, trigger, seconds: 0, timer: 0 };
       const tick = () => {
         state.seconds += 1;
@@ -277,13 +277,13 @@ function demoPlayer(data, root) {
 
     function closeLive(state) {
       clearInterval(state.timer);
-      state.tx.querySelector(".steps").remove();
+      state.tx.querySelector(".im-steps").remove();
       state.tx.querySelector(".status")?.closest(".card-head, p")?.remove();
       // Telegram clears its 👀 once the answer is in; the others swap it for ✅ in the script.
       if (chat.app === "telegram") state.trigger?.querySelector(".rx").replaceChildren();
       if (chat.app !== "feishu")
         state.m
-          .querySelector(".meta")
+          .querySelector(".im-meta")
           .insertAdjacentHTML("afterbegin", `<span class="edited">${esc(ui.edited)}</span>`);
     }
 
@@ -341,7 +341,7 @@ function demoPlayer(data, root) {
         await wait(1500, token);
       } else if (kind === "tick") {
         const li = el("li", "", inline(a));
-        live.tx.querySelector(".steps").append(li);
+        live.tx.querySelector(".im-steps").append(li);
         requestAnimationFrame(() => li.classList.add("shown"));
         scroll();
         await wait(1100, token);
