@@ -174,6 +174,31 @@ const en = {
   "telegram.steps":
     "In Telegram, open @BotFather and send `/newbot`.\nWhen it asks for a name, send `{name}`.\nWhen it asks for a username, send `{username}`. If it is taken, change the digits and send it again; it must end in bot.",
   "telegram.setup": "Open @BotFather",
+  "github.how": "Mention it in issues and PRs",
+  "github.intro":
+    "{name} gets a GitHub account of its own. Mention it in an issue or pull request, and it answers in the thread.",
+  "github.account": "Sign in to GitHub as {name}'s account",
+  "github.accountWhy": "Not your own: people mention {name} by this account's username.",
+  "github.accountHow":
+    "No account yet? Sign up with the username `{handle}`. GitHub allows one extra account per person for automation. Signed in as yourself? Use a private window, or switch accounts from your avatar menu.",
+  "github.signup": "Sign up on GitHub",
+  "github.code": "Enter this code on GitHub",
+  "github.openCode": "Copy code and open GitHub",
+  "github.codeHint": "Paste it on the page that opens. The code is valid for {minutes} minutes.",
+  "github.codeLoading": "Getting a code…",
+  "github.codeExpired": "The code expired.",
+  "github.newCode": "Get a new code",
+  "github.authorize": "Click Authorize Mingle",
+  "github.authorizeWaiting": "Waiting for GitHub. This page moves on by itself.",
+  "github.manual": "Use a token instead",
+  "github.backToCode": "Sign in with a code instead",
+  "github.done":
+    "Connected as {bot}. Mention {bot} in an issue or pull request to try it. In a private repository, add {bot} as a collaborator first.",
+  "github.token": "Token",
+  "github.steps":
+    "Sign in to GitHub as {name}'s own account, not yours. No account yet? Sign up with the username `{handle}`; a private window keeps you signed in as yourself elsewhere.\nCreate a classic token: the link fills in its name and the notifications and repo scopes. Pick an expiration and click Generate token.",
+  "github.setup": "Create the token",
+  "github.form": "Paste the token (starts with ghp_). Mingle connects on its own.",
   "imessage.how": "Talk to it in your chat with yourself",
   "imessage.form": "Connect this Mac's Messages",
   "slack.setup": "Create the app on Slack",
@@ -266,6 +291,8 @@ const en = {
   "error.onboarding_not_signed_in": "This Mac's Messages is not signed in to iMessage. Sign in, then try again.",
   "error.onboarding_permission_missing":
     "macOS has not given Mingle the access it needs. Turn on Full Disk Access for Mingle, allow it to control Messages (System Settings → Privacy & Security → Automation), then try again.",
+  "error.onboarding_insufficient_scope":
+    "This token is missing a permission Mingle needs. Make a classic token with the notifications and repo scopes: fine-grained tokens cannot read notifications.",
   "error.bot_in_use": "This bot is already connected to another agent.",
   "error.harness_unavailable": "That harness is not installed on this computer.",
   "error.harness_prompt_unsupported":
@@ -286,6 +313,7 @@ const en = {
   "platform.discord": "Discord",
   "platform.telegram": "Telegram",
   "platform.imessage": "iMessage",
+  "platform.github": "GitHub",
   "sidebar.agents": "Agents",
   "list.separator": ", ",
   "welcome.title": "Bring your agent into the chats you already use",
@@ -654,6 +682,29 @@ const zh: Record<MessageKey, string> = {
   "telegram.steps":
     "在 Telegram 里打开 @BotFather，发送 `/newbot`。\n它问机器人叫什么时，发送 `{name}`。\n它问用户名时，发送 `{username}`。被占用的话改几个数字再发，结尾必须是 bot。",
   "telegram.setup": "打开 @BotFather",
+  "github.how": "在 issue 和 PR 里 @ 它",
+  "github.intro": "{name} 会有一个自己的 GitHub 账号。在 issue 或 PR 里 @ 它，它就在原楼里回复。",
+  "github.account": "用 {name} 的账号登录 GitHub",
+  "github.accountWhy": "不是你自己的账号：大家通过这个账号的用户名 @ {name}。",
+  "github.accountHow":
+    "还没有账号？用用户名 `{handle}` 注册一个，GitHub 允许每人额外注册一个用于自动化的账号。浏览器里登录的是你自己？用无痕窗口，或在头像菜单里切换账号。",
+  "github.signup": "去 GitHub 注册",
+  "github.code": "在 GitHub 上输入这个验证码",
+  "github.openCode": "复制验证码并打开 GitHub",
+  "github.codeHint": "在打开的页面里粘贴。验证码 {minutes} 分钟内有效。",
+  "github.codeLoading": "正在获取验证码…",
+  "github.codeExpired": "验证码已失效。",
+  "github.newCode": "重新获取验证码",
+  "github.authorize": "点 Authorize Mingle 授权",
+  "github.authorizeWaiting": "等待 GitHub 确认，完成后这里会自动继续。",
+  "github.manual": "改用 token",
+  "github.backToCode": "改用验证码登录",
+  "github.done": "已连接为 {bot}。在 issue 或 PR 里提到 {bot} 试试。私有仓库要先把 {bot} 加为协作者。",
+  "github.token": "Token",
+  "github.steps":
+    "用 {name} 自己的账号登录 GitHub，不是你的账号。还没有？用用户名 `{handle}` 注册一个；在无痕窗口里操作，不影响你自己的登录。\n创建一个 classic token：链接已填好名字和 notifications、repo 两项权限。选好有效期，点 Generate token。",
+  "github.setup": "创建 token",
+  "github.form": "粘贴 token（以 ghp_ 开头），Mingle 会自动连接。",
   "imessage.how": "在给自己发消息的对话里和它聊",
   "imessage.form": "连接这台 Mac 的「信息」",
   "slack.setup": "在 Slack 上创建应用",
@@ -743,6 +794,8 @@ const zh: Record<MessageKey, string> = {
   "error.onboarding_not_signed_in": "这台 Mac 的「信息」还没有登录 iMessage，请登录后重试。",
   "error.onboarding_permission_missing":
     "macOS 还没有给 Mingle 所需的权限。请为 Mingle 打开完全磁盘访问权限，并允许它控制「信息」（系统设置 → 隐私与安全性 → 自动化），然后重试。",
+  "error.onboarding_insufficient_scope":
+    "这个 token 缺少 Mingle 需要的权限。请创建带 notifications 和 repo 权限的 classic token，fine-grained token 读不了通知。",
   "error.bot_in_use": "这个机器人已经接入了另一个 Agent。",
   "error.harness_unavailable": "这台电脑上没有安装这个 harness。",
   "error.harness_prompt_unsupported": "这个大脑暂时无法接收 Agent 的角色和操作指南，请选择其他大脑。",
@@ -760,6 +813,7 @@ const zh: Record<MessageKey, string> = {
   "platform.discord": "Discord",
   "platform.telegram": "Telegram",
   "platform.imessage": "iMessage",
+  "platform.github": "GitHub",
   "sidebar.agents": "Agent",
   "list.separator": "、",
   "welcome.title": "把你的 Agent 请进常用的聊天软件",
@@ -1048,7 +1102,7 @@ export function translator(locale: Locale): Translate {
     // A key built at runtime (`connection.detail.${code}`) may not exist: answer with the key,
     // so callers can tell and fall back, rather than rendering nothing.
     let text = catalog[key] ?? en[key] ?? key;
-    for (const [k, v] of Object.entries(vars ?? {})) text = text.replace(`{${k}}`, v);
+    for (const [k, v] of Object.entries(vars ?? {})) text = text.replaceAll(`{${k}}`, () => v);
     return text;
   };
 }

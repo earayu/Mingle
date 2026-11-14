@@ -11,6 +11,7 @@ export async function loadChannels(): Promise<Partial<Record<Platform, Channel>>
     { qqChannel },
     { slackChannel },
     { discordChannel },
+    { githubChannel },
   ] = await Promise.all([
     import("./telegram/telegram.ts"),
     import("./feishu/feishu.ts"),
@@ -20,6 +21,7 @@ export async function loadChannels(): Promise<Partial<Record<Platform, Channel>>
     import("./qq/qq.ts"),
     import("./slack/slack.ts"),
     import("./discord/discord.ts"),
+    import("./github/github.ts"),
   ]);
   // iMessage drives the Messages app, so it exists only on macOS.
   const imessage =
@@ -33,6 +35,7 @@ export async function loadChannels(): Promise<Partial<Record<Platform, Channel>>
     qq: qqChannel(),
     slack: slackChannel(),
     discord: discordChannel(),
+    github: githubChannel(),
     ...(imessage ? { imessage } : {}),
   };
 }

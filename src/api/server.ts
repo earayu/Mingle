@@ -464,7 +464,18 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   /** Every first-batch platform, with how to connect it, or null when it is not built yet. */
   app.get("/v1/admin/platforms", (c) => {
-    const all: Platform[] = ["wechat", "wecom", "feishu", "dingtalk", "qq", "slack", "discord", "telegram", "imessage"];
+    const all: Platform[] = [
+      "wechat",
+      "wecom",
+      "feishu",
+      "dingtalk",
+      "qq",
+      "slack",
+      "discord",
+      "telegram",
+      "github",
+      "imessage",
+    ];
     // Channels that exist only on some systems (iMessage on macOS) are left out elsewhere, not shown as "soon".
     const local: readonly Platform[] = ["imessage"];
     return c.json(

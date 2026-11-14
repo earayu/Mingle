@@ -17,7 +17,8 @@ export type Platform =
   | "slack"
   | "discord"
   | "telegram"
-  | "imessage";
+  | "imessage"
+  | "github";
 
 export type ChatKind = "dm" | "group" | "thread";
 
@@ -39,6 +40,8 @@ export interface Capabilities {
 export type OnboardingMethod =
   /** `desktopLink`: the QR's link also works when opened in a signed-in browser on this computer. */
   | { readonly kind: "qr"; readonly desktopLink?: boolean }
+  /** A code the person enters on the platform's site while signed in as the bot's account (OAuth device flow). */
+  | { readonly kind: "device" }
   | {
       readonly kind: "credentials";
       readonly fields: readonly CredentialField[];
@@ -80,6 +83,13 @@ export interface ChannelSetup {
 export type OnboardingEvent =
   | { readonly kind: "qr_ready"; readonly qrContent: string; readonly expiresAt: number }
   | { readonly kind: "scanned" }
+  /** Device flow: the person enters `userCode` at `verificationUri`; the adapter waits for them. */
+  | {
+      readonly kind: "device_code";
+      readonly userCode: string;
+      readonly verificationUri: string;
+      readonly expiresAt: number;
+    }
   /** The platform wants a code typed on this computer (shown on the phone). Answer through `context.awaitCode`. */
   | { readonly kind: "needs_code"; readonly retry?: boolean }
   | { readonly kind: "awaiting_approval"; readonly detailKey?: string }
@@ -111,6 +121,8 @@ export type OnboardingFailure =
   | "denied"
   | "cancelled"
   | "invalid_credentials"
+  /** The credentials work but lack a permission Mingle needs (a token without the right scopes). */
+  | "insufficient_scope"
   | "network"
   | "already_bound"
   /** The platform says this account's bot is already connected here, to this computer's Mingle. */

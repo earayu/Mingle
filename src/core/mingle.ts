@@ -39,9 +39,10 @@ export interface OnboardingSession {
     | { kind: "starting" }
     | { kind: "qr"; content: string; expiresAt: number }
     | { kind: "scanned" }
+    | { kind: "device"; userCode: string; url: string; expiresAt: number }
     | { kind: "awaiting_approval" }
     | { kind: "needs_code"; retry: boolean }
-    | { kind: "done"; connectionId: string; pendingApproval: boolean }
+    | { kind: "done"; connectionId: string; pendingApproval: boolean; bot: string | null }
     | { kind: "failed"; code: string };
   readonly abort: AbortController;
   updatedAt: number;
@@ -818,12 +819,19 @@ export class Mingle {
         })) {
           if (event.kind === "qr_ready") set({ kind: "qr", content: event.qrContent, expiresAt: event.expiresAt });
           else if (event.kind === "scanned") set({ kind: "scanned" });
+          else if (event.kind === "device_code")
+            set({ kind: "device", userCode: event.userCode, url: event.verificationUri, expiresAt: event.expiresAt });
           else if (event.kind === "awaiting_approval") set({ kind: "awaiting_approval" });
           else if (event.kind === "needs_code") set({ kind: "needs_code", retry: Boolean(event.retry) });
           else if (event.kind === "failed") set({ kind: "failed", code: event.code });
           else if (event.kind === "succeeded") {
             const connection = await this.finishOnboarding(agent.id, platform, event);
-            set({ kind: "done", connectionId: connection.id, pendingApproval: Boolean(event.pendingApproval) });
+            set({
+              kind: "done",
+              connectionId: connection.id,
+              pendingApproval: Boolean(event.pendingApproval),
+              bot: connection.botName ?? null,
+            });
           }
         }
       } catch (error) {
