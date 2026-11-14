@@ -17,6 +17,7 @@ import type {
   OutboundMessage,
   SendResult,
 } from "../channel.ts";
+import { withTextSent } from "../channel.ts";
 
 /**
  * WeCom (企业微信) intelligent bot: created by scanning with the WeCom app, then a
@@ -232,6 +233,7 @@ export function wecomChannel(options: WecomOptions = {}): Channel {
         capabilities: () => CAPABILITIES,
 
         async send(message: OutboundMessage): Promise<SendResult> {
+          let textId = "";
           try {
             const known = message.replyTo ? frames.get(message.replyTo) : undefined;
             if (message.text) {
@@ -241,6 +243,7 @@ export function wecomChannel(options: WecomOptions = {}): Channel {
                   msgtype: "markdown",
                   markdown: { content: message.text },
                 });
+              textId = `out-${randomUUID()}`;
             }
             for (const file of message.files ?? []) {
               const name = file.name ?? basename(file.path);
@@ -254,11 +257,14 @@ export function wecomChannel(options: WecomOptions = {}): Channel {
               ...(message.replyTo && !known ? { degraded: ["quote_dropped" as const] } : {}),
             };
           } catch (error) {
-            return {
-              kind: "failed",
-              code: /timeout/i.test((error as Error).message) ? "network" : "unknown",
-              retryable: true,
-            };
+            return withTextSent(
+              {
+                kind: "failed",
+                code: /timeout/i.test((error as Error).message) ? "network" : "unknown",
+                retryable: true,
+              },
+              textId,
+            );
           }
         },
 

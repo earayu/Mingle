@@ -167,9 +167,21 @@ export type SendResult =
       readonly kind: "failed";
       readonly code: "rate_limited" | "forbidden" | "too_large" | "chat_gone" | "network" | "unknown";
       readonly retryable: boolean;
+      /** The platform's own error code, for the agent and the owner to act on. Never a secret. */
+      readonly detail?: string;
+      /**
+       * The text is out and only the files failed. A retry must send the files alone, or the
+       * person sees the text twice. `platformId` is the text's message.
+       */
+      readonly textSent?: { readonly platformId: string };
     }
   /** The request left but no answer came back. Never retried automatically. */
   | { readonly kind: "uncertain" };
+
+/** A failure after the text went out: mark it so retries send the files alone. */
+export function withTextSent(result: SendResult, textPlatformId: string): SendResult {
+  return textPlatformId && result.kind === "failed" ? { ...result, textSent: { platformId: textPlatformId } } : result;
+}
 
 export type Degradation = "quote_dropped" | "files_dropped" | "markdown_flattened" | "text_split";
 

@@ -264,6 +264,22 @@ describe("telegram connection", () => {
     await connection.close();
   });
 
+  it("marks the text as sent when only the document fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mingle-tg-"));
+    const path = join(dir, "plan.txt");
+    writeFileSync(path, "day 1");
+    try {
+      const bot = fakeBot({ sendDocument: () => ({ ok: false, status: 500, description: "Internal Server Error" }) });
+      const connection = await telegramChannel({ fetch: bot.fetchImpl }).connect({ token: TOKEN }, recorder().events);
+      expect(
+        await connection.send({ chat: { platformId: "1", kind: "dm" }, text: "Attached.", files: [{ path }] }),
+      ).toEqual({ kind: "failed", code: "unknown", retryable: true, textSent: { platformId: "7" } });
+      await connection.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not resend when a send timed out, since it may have arrived", async () => {
     const bot = fakeBot({
       sendMessage: () => {

@@ -17,6 +17,7 @@ import type {
   ReactionState,
   SendResult,
 } from "../channel.ts";
+import { withTextSent } from "../channel.ts";
 
 /** Telegram Bot API, long polling. No webhook, so no public address is needed. */
 
@@ -240,11 +241,12 @@ export function telegramChannel(options: TelegramOptions = {}): Channel {
               ? { reply_parameters: { message_id: Number(message.replyTo), allow_sending_without_reply: true } }
               : {}),
           };
+          let textId = "";
           try {
             let lastId = "";
             if (message.text) {
               const sent = await api.call<TgMessage>("sendMessage", { ...base, text: message.text });
-              lastId = String(sent.message_id);
+              lastId = textId = String(sent.message_id);
             }
             for (const file of message.files ?? []) {
               const form = new FormData();
@@ -257,7 +259,7 @@ export function telegramChannel(options: TelegramOptions = {}): Channel {
             // Plain text: Telegram's Markdown dialects reject common Markdown, so formatting is not interpreted.
             return { kind: "sent", platformId: lastId, degraded: ["markdown_flattened"] };
           } catch (error) {
-            return sendFailure(error);
+            return withTextSent(sendFailure(error), textId);
           }
         },
 
