@@ -5,6 +5,8 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
 ## Unreleased
 
+- On macOS, chat apps no longer go offline with "can't find this bot's credentials" after Mingle restarts. The Keychain kept only the first 128 characters of each bot's credentials (and of long environment variables), and returned names in other scripts in a form Mingle could not read. Credentials are now saved in full and checked when saved. Bots that already show this error need to be connected again once: scan or enter the credentials again for the same agent.
+
 ## 0.1.8
 
 - Initial iMessage support on macOS: connect an Apple ID dedicated to your agent through the Mac's Messages app. Setup asks for your own phone number or email, Full Disk Access, and permission to control Messages. Private chats, group mentions and file transfers are implemented; real-account end-to-end verification is still pending.
