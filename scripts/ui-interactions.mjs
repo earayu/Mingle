@@ -35,6 +35,12 @@ const LOCALES = {
     envAdd: "Add",
     activity: "Activity",
     pause: "Pause",
+    reset: "Reset",
+    resetAsk: "Reset ",
+    resetDone: "starts a new session",
+    diagCopy: "Copy",
+    diagCopied: "Copied",
+    diagTitle: "Mingle diagnostic info",
     resume: "Resume",
     paused: "Paused",
     pausedCard: "is paused",
@@ -77,6 +83,12 @@ const LOCALES = {
     envAdd: "添加",
     activity: "动态",
     pause: "暂停",
+    reset: "重置",
+    resetAsk: "重置 ",
+    resetDone: "已从角色和记忆开始新的会话",
+    diagCopy: "复制",
+    diagCopied: "已复制",
+    diagTitle: "Mingle diagnostic info",
     resume: "恢复",
     paused: "已暂停",
     pausedCard: "已暂停",
@@ -912,6 +924,46 @@ export async function reviewInteractions({
         await pauseScenario(localeName, labels, width);
         passed++;
         console.log(`pause ${localeName} ${width}: passed`);
+      }
+    }
+
+    // --- reset session (asked in place) and diagnostic info (MING-61) ---
+    const resetScenario = async (localeName, labels, width) => {
+      const tag = `reset ${localeName} ${width}`;
+      await metrics(width);
+      await goto(`/a/${pauseSlug}`, labels);
+      await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.settings));
+      await clickEl(await settled("reset button", buttonByText, labels.reset));
+      await until(
+        "reset question",
+        (ask) =>
+          [...document.querySelectorAll("span")].some(
+            (s) => (s.textContent.startsWith(ask) && s.textContent.endsWith("?")) || s.textContent.endsWith("？"),
+          ),
+        labels.resetAsk,
+      );
+      assert(await call(pageFits), `${tag}: horizontal overflow`);
+      await shot(`${localeName}-${width}-reset-confirm`);
+      await clickEl(await until("confirm reset", buttonByText, labels.reset));
+      await until("reset done", (done) => document.body.textContent.includes(done), labels.resetDone);
+      await clickEl(await settled("copy diagnostics", buttonByText, labels.diagCopy));
+      // Headless Chrome may refuse the clipboard: then the text shows in place to copy by hand.
+      await until(
+        "diagnostics copied or shown",
+        (copied, title) =>
+          [...document.querySelectorAll("button")].some((b) => b.textContent.trim() === copied) ||
+          [...document.querySelectorAll("pre")].some((p) => p.textContent.startsWith(title)),
+        labels.diagCopied,
+        labels.diagTitle,
+      );
+      assert(await call(pageFits), `${tag}: horizontal overflow`);
+      await shot(`${localeName}-${width}-reset-done`);
+    };
+    for (const [localeName, labels] of Object.entries(LOCALES)) {
+      for (const width of [1440, 560]) {
+        await resetScenario(localeName, labels, width);
+        passed++;
+        console.log(`reset ${localeName} ${width}: passed`);
       }
     }
 

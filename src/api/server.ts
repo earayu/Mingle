@@ -475,6 +475,8 @@ export function createApi(mingle: Mingle): Hono<Env> {
           contactId: contact?.id ?? null,
           body: m.body,
           state: m.state,
+          /** While waiting for a passing failure: when Mingle tries it again. */
+          retryAt: m.state === "waiting" ? (m.retryAt ?? null) : null,
           files: m.attachments.map((a) => a.name),
           createdAt: m.createdAt,
         };

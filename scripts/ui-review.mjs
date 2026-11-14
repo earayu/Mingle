@@ -210,6 +210,9 @@ try {
     now,
   );
   msg("m06", "c3", "in", "Wilhelmina", "Could you summarise this week's article for the club?", "failed", 60_000);
+  // Waiting out a busy provider: tried again by itself (MING-61).
+  msg("m06w", "c3", "in", "Wilhelmina", "And the one from last week, please.", "waiting", 30_000);
+  insert("UPDATE messages SET retry_at = ?, holds = 1 WHERE id = 'm06w'", now + 5 * 60_000);
 
   conn("n5", idleAgent.id, "telegram", "@poppy_bot", "connected", null, "u1");
   conn("n6", busyAgent.id, "telegram", "@scout_bot", "connected", null, "u1");
@@ -352,6 +355,7 @@ try {
         new RegExp(`<button[^>]*>\\s*${zh ? "忽略" : "Ignore"}\\s*</button>`).test(dom),
         "failed message missing its Ignore button",
       );
+      assert.ok(dom.includes(zh ? "自动重试" : "tries again by itself"), "waiting message missing its retry time");
     },
     "onboard-idle": (dom, zh) => {
       assert.ok(dom.includes(zh ? "还没有收到" : "hasn't replied yet"), "idle unanswered agent missing quiet copy");

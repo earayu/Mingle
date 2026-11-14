@@ -1411,6 +1411,13 @@ function ActivityList({
                   <MessageActions inline onRetry={() => onRetry([m.id])} onIgnore={() => onIgnore([m.id])} />
                 </p>
               ) : null}
+              {m.direction === "in" && m.state === "waiting" ? (
+                <p className="flex flex-wrap items-center gap-1.5 text-caption text-ink2">
+                  <StatusDot state="reconnecting" />
+                  {m.retryAt ? t("agent.waitingUntil", { time: shortDateTime(m.retryAt, locale) }) : t("agent.waiting")}
+                  <MessageActions inline onRetry={() => onRetry([m.id])} onIgnore={() => onIgnore([m.id])} />
+                </p>
+              ) : null}
               {m.direction === "in" && m.state === "failed" ? (
                 <p className="flex flex-wrap items-center gap-1.5 text-caption text-red">
                   <StatusDot state="error" />

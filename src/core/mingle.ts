@@ -15,7 +15,7 @@ import type {
 } from "../channels/channel.ts";
 import type { Harness, HarnessInfo, HarnessStatus } from "../harness/harness.ts";
 import type { SecretStore } from "../platform/secrets.ts";
-import { type Agent, type Connection, Store } from "../store/store.ts";
+import { type Agent, type Connection, type Message, Store } from "../store/store.ts";
 import { VERSION } from "../version.ts";
 import { Brains } from "./brains.ts";
 import { checkEnvName, checkEnvValue, decodeEnvValue, encodeEnvValue, envRef } from "./env.ts";
@@ -146,7 +146,10 @@ export class Mingle {
     }
     await Promise.all(this.store.connections().map((c) => this.reconnect(c.id)));
     const tick = this.options.reminderTickMs ?? 10_000;
-    this.reminderTimer = setInterval(() => this.fireReminders(), tick);
+    this.reminderTimer = setInterval(() => {
+      this.fireReminders();
+      this.resumeWaiting();
+    }, tick);
     // Timers do not run while the computer sleeps: a tick that comes far later than due means it
     // slept, and its connections are likely dead without knowing it yet (docs/spec.md 7.1).
     const every = this.options.wakeCheckMs ?? 15_000;
@@ -168,6 +171,7 @@ export class Mingle {
       this.log(`${reason}: reconnecting the chat apps`);
       await Promise.all(this.store.connections().map((connection) => this.reconnect(connection.id)));
       this.fireReminders();
+      this.resumeWaiting();
     })().finally(() => {
       this.resuming = undefined;
     });
@@ -483,7 +487,11 @@ export class Mingle {
       this.store.setAgentStatus(agent.id, "paused");
     }
     // What it had not answered yet will not be answered; failed and unanswered ones wait for the owner.
-    const awaiting = [...this.store.undelivered(agent.id), ...this.store.awaitingReply(agent.id)];
+    const awaiting = [
+      ...this.store.undelivered(agent.id),
+      ...this.store.awaitingReply(agent.id),
+      ...this.store.waiting(agent.id),
+    ];
     this.store.moveInbound(
       awaiting.map((m) => m.id),
       "pause",
@@ -946,20 +954,49 @@ export class Mingle {
       }
       if (this.store.moveInbound([message.id], "retry").length === 0) continue;
       retried.push(message.id);
-      if (message.platformId) {
-        this.replies.open({
-          messageId: message.id,
-          agentId: agent.id,
-          platform: connection.platform,
-          chat: { platformId: chat.platformId, kind: chat.kind, ...(chat.name ? { name: chat.name } : {}) },
-          platformMessageId: message.platformId,
-          senderId: message.senderId ?? "",
-          connection: live,
-        });
-      }
+      this.reopenReply(agent.id, message, live);
     }
     runtime.retry(retried);
     return { retried, offline: [...offline] };
+  }
+
+  /** A message going back to the agent shows progress again, like a new one. */
+  private reopenReply(agentId: string, message: Message, live: ChannelConnection): void {
+    const chat = this.store.chat(message.chatId);
+    const connection = chat && this.store.connection(chat.connectionId);
+    if (!chat || !connection || !message.platformId) return;
+    this.replies.open({
+      messageId: message.id,
+      agentId,
+      platform: connection.platform,
+      chat: { platformId: chat.platformId, kind: chat.kind, ...(chat.name ? { name: chat.name } : {}) },
+      platformMessageId: message.platformId,
+      senderId: message.senderId ?? "",
+      connection: live,
+    });
+  }
+
+  /**
+   * Deliver again the messages whose wait for a passing failure is over (docs/spec.md 4.3). One
+   * whose chat app is offline keeps waiting: the agent could not reply there anyway; the next tick
+   * after it reconnects picks it up.
+   */
+  resumeWaiting(now = Date.now()): void {
+    const due = new Map<string, string[]>();
+    for (const message of this.store.dueWaiting(now)) {
+      const runtime = this.runtimes.get(message.agentId);
+      if (!runtime || this.paused.has(message.agentId)) continue;
+      const chat = this.store.chat(message.chatId);
+      const live = chat && this.live.get(chat.connectionId);
+      if (!live) continue;
+      if (this.store.moveInbound([message.id], "resume").length === 0) continue;
+      this.reopenReply(message.agentId, message, live);
+      due.set(message.agentId, [...(due.get(message.agentId) ?? []), message.id]);
+    }
+    for (const [agentId, ids] of due) {
+      this.log(`${agentId}: trying again on ${ids.join(",")} after waiting`);
+      this.runtimes.get(agentId)?.retry(ids);
+    }
   }
 
   /** Dismiss selected failed or unanswered inbound messages without waking the agent or sending a reply. */

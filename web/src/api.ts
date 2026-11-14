@@ -106,6 +106,8 @@ export interface Activity {
   contactId: string | null;
   body: string;
   state: string;
+  /** While waiting for a passing failure: when Mingle tries it again. */
+  retryAt: number | null;
   files: string[];
   createdAt: number;
 }

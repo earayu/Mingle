@@ -46,6 +46,11 @@ const TEXT = {
       tooLarge: () => "这次的内容太长，处理不了。请精简后再发。",
       notInstalled: (h: string) => `这台电脑上找不到 ${h}，暂时回复不了。`,
     },
+    waiting: {
+      quota: (h: string, until?: string) =>
+        `${h} 的用量额度用完了${until ? `，预计 ${until} 恢复` : ""}。这条消息会先等着，恢复后自动回复，不用再发。`,
+      busy: (h: string, minutes: number) => `${h} 那边暂时繁忙，${minutes} 分钟后自动重试，不用再发。`,
+    },
     steps: {
       command: "运行命令",
       read: "查看文件",
@@ -80,6 +85,12 @@ const TEXT = {
       tooLarge: () => "This is too long to handle. Shorten it and send again.",
       notInstalled: (h: string) => `${h} is not installed on this computer, so I can't reply.`,
     },
+    waiting: {
+      quota: (h: string, until?: string) =>
+        `${h} has used up its usage limit${until ? ` until ${until}` : ""}. This message will wait and get a reply once it resets; no need to send it again.`,
+      busy: (h: string, minutes: number) =>
+        `${h} is busy right now. I'll try again in ${minutes} min; no need to send it again.`,
+    },
     steps: {
       command: "Running a command",
       read: "Reading files",
@@ -101,6 +112,8 @@ export interface FailureNote {
   /** Display name of the agent's harness ("Claude Code"). */
   readonly harness: string;
   readonly resetsAt?: number;
+  /** For a message left waiting: when Mingle tries it again. */
+  readonly retryAt?: number;
 }
 
 export function langFor(platform: Platform): Lang {
@@ -144,6 +157,15 @@ export function failureText(lang: Lang, why: FailureNote | undefined, now = Date
     default:
       return t.failed;
   }
+}
+
+/** What to tell the person whose message waits for a passing failure: what happened, and that it will be answered. */
+export function waitingText(lang: Lang, why: FailureNote, now = Date.now()): string {
+  const w = TEXT[lang].waiting;
+  if (why.failure === "quota") {
+    return w.quota(why.harness, why.resetsAt && why.resetsAt > now ? resetTime(lang, why.resetsAt, now) : undefined);
+  }
+  return w.busy(why.harness, Math.max(1, Math.round(((why.retryAt ?? now) - now) / 60_000)));
 }
 
 function resetTime(lang: Lang, at: number, now: number): string {
@@ -284,11 +306,12 @@ export class LiveReplies {
 
   /**
    * The message is settled some other way. Closes its live reply with a short note.
-   * A failure is always told: where no live reply can carry it, as a message of its own.
+   * A failure, or a wait for one to pass, is always told: where no live reply can carry it, as a
+   * message of its own.
    */
   settle(
     messageId: string,
-    outcome: "answered" | "unanswered" | "stopped" | "paused" | "failed",
+    outcome: "answered" | "unanswered" | "stopped" | "paused" | "failed" | "waiting",
     why?: FailureNote,
   ): void {
     const entry = this.entries.get(messageId);
@@ -306,13 +329,17 @@ export class LiveReplies {
             ? t.stopped
             : outcome === "paused"
               ? t.paused
-              : failureText(entry.lang, why, this.now());
+              : outcome === "waiting" && why
+                ? waitingText(entry.lang, why, this.now())
+                : failureText(entry.lang, why, this.now());
     void entry.live
       .then(async (live) => {
         const result = live ? await live.finish(`*${note}*`).catch(() => undefined) : undefined;
         // No live reply, or it could not be finished (QQ's stream window, a refused frame):
         // a failure still reaches the person, as its own message.
-        if (result?.kind !== "sent" && outcome === "failed") await this.sendNote(entry, note);
+        // A message left waiting is told the same way: the person should not send it again.
+        if (result?.kind !== "sent" && (outcome === "failed" || outcome === "waiting"))
+          await this.sendNote(entry, note);
       })
       .catch((error) => this.log(`could not tell about a failed reply: ${(error as Error).message}`));
   }

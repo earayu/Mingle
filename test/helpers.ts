@@ -299,6 +299,7 @@ export function driveInbound(store: Store, id: string, state: InboundState): voi
   const path: Record<InboundState, InboundEvent[]> = {
     received: [],
     delivered: ["deliver"],
+    waiting: ["deliver", "hold"],
     failed: ["deliver", "fail"],
     unanswered: ["deliver", "give_up"],
     replied: ["deliver", "reply"],
