@@ -336,8 +336,10 @@ Mingle 启动 harness 时通过 OAR 的 `env` 放入三个环境变量：本地 
 |---|---|
 | `mingle message reply <消息ID>` | 回复某条消息，平台支持时显示为引用回复 |
 | `mingle message send --to <聊天ID>` | 向某个聊天主动发消息 |
-| `mingle message read <聊天ID>` | 读某个聊天最近的消息，`--limit`、`--before` 翻页 |
+| `mingle message read <聊天ID>` | 读某个聊天最近的消息，`--limit`、`--before` 翻页；`--around <消息ID>` 读某条消息前后的消息（默认共 11 条） |
 | `mingle message search <关键词>` | 全文检索消息记录，`--in <聊天ID>` 限定范围 |
+
+**搜索结果是给 Agent 看的界面（借鉴 Raft 的 *A Comfortable AX for Agent Search*）。** 只给 ID，Agent 得逐条再查；给全文，几十条命中会挤满上下文；只给命中的那一条，又常常缺了推翻它的下一句。所以每条结果是消息头加上匹配处前后各约 80 个字符，被截掉的一侧标 `…`，让 Agent 知道这只是一个窗口；输出最后一行给出下一步：`message read <聊天ID> --around <消息ID>` 读这条前后的对话。短消息原样返回。
 
 `reply` 和 `send` 的正文从标准输入读取，用 heredoc 传入，避免引号、反引号和换行被 shell 解释。`--file <路径>` 附带文件，可重复：
 

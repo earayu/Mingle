@@ -39,6 +39,29 @@ export function formatMessage(
   return `[${parts.join(" ")}]\n${message.body}`;
 }
 
+/** Characters of context kept on each side of a search match. */
+const EXCERPT_RADIUS = 80;
+
+/**
+ * The part of `body` around the first match of `query`, for search results: enough to judge
+ * whether the hit matters, not the whole message. A cut side is marked with "…", so the agent
+ * knows it is reading a window, not the full text. Short bodies come back whole.
+ */
+export function excerpt(body: string, query: string, radius = EXCERPT_RADIUS): string {
+  const chars = [...body];
+  const needle = [...query];
+  if (chars.length <= needle.length + 2 * radius) return body;
+  const hay = body.toLowerCase();
+  const at = hay.indexOf(query.toLowerCase());
+  // Indexes into the string are UTF-16; turn the match position into a character position.
+  const start = at < 0 ? 0 : [...body.slice(0, at)].length;
+  // A window of the same width wherever the match is: near either end it slides inward.
+  const width = needle.length + 2 * radius;
+  const from = Math.max(0, Math.min(start - radius, chars.length - width));
+  const to = Math.min(chars.length, from + width);
+  return `${from > 0 ? "…" : ""}${chars.slice(from, to).join("").trim()}${to < chars.length ? "…" : ""}`;
+}
+
 export function formatReminder(reminder: Reminder, at: number): string {
   const parts = [`reminder=${reminder.id}`];
   if (reminder.chatId) parts.push(`chat=${reminder.chatId}`);

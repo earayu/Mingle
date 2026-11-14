@@ -270,6 +270,7 @@ describe("agent CLI", () => {
       outputs.chats = (await runCli(env, ["chat", "list"])).stdout;
       outputs.read = (await runCli(env, ["message", "read", chat])).stdout;
       outputs.search = (await runCli(env, ["message", "search", "ridge"])).stdout;
+      outputs.around = (await runCli(env, ["message", "read", chat, "--around", id as string])).stdout;
       outputs.task = (await runCli(env, ["task", "create", "Compare the routes", "--from", id as string])).stdout;
       outputs.reminderSet = (
         await runCli(env, ["reminder", "set", "Check the forecast", "--in", "1h", "--chat", chat])
@@ -285,6 +286,9 @@ describe("agent CLI", () => {
     expect(outputs.chats).toMatch(/^c\w+\s+telegram\s+group\s+Weekend hikes/);
     expect(outputs.read).toContain("is the ridge route open?");
     expect(outputs.search).toContain("is the ridge route open?");
+    // The last line of a search says how to read around a hit.
+    expect(outputs.search).toMatch(/1 match, newest first\. .+ message read c\w+ --around m\w+$/m);
+    expect(outputs.around).toContain("is the ridge route open?");
     expect(outputs.task).toMatch(/^created t\w+: Compare the routes/);
     expect(outputs.reminderSet).toMatch(/^set r\w+, next at/);
     expect(outputs.whoami).toMatch(/^Alex \(scripted\)\nhome: .+\ntelegram: @alex_bot connected/);

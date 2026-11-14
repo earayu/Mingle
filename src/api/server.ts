@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import QRCode from "qrcode";
 import type { CredentialField, OnboardingMethod, Platform } from "../channels/channel.ts";
 import { contactAlias, MingleError, notFound } from "../core/errors.ts";
-import { formatMessage } from "../core/format.ts";
+import { excerpt, formatMessage } from "../core/format.ts";
 import { readRole } from "../core/home.ts";
 import { renderManual } from "../core/manual.ts";
 import type { Mingle } from "../core/mingle.ts";
@@ -186,7 +186,11 @@ export function createApi(mingle: Mingle): Hono<Env> {
     const chat = store.agentChat(agent.id, c.req.param("id"));
     if (!chat) throw notFound("chat", c.req.param("id"));
     const limit = clamp(Number(c.req.query("limit") ?? 30), 1, 200);
-    const messages = store.chatMessages(chat.id, limit, c.req.query("before"));
+    const around = c.req.query("around");
+    const messages = around
+      ? store.chatAround(chat.id, around, limit)
+      : store.chatMessages(chat.id, limit, c.req.query("before"));
+    if (!messages) throw notFound("message", around ?? "");
     return c.json(messages.map((m) => ({ id: m.id, text: render(agent, m) })));
   });
 
@@ -198,7 +202,10 @@ export function createApi(mingle: Mingle): Hono<Env> {
     const chatId = c.req.query("in");
     if (chatId && !store.agentChat(agent.id, chatId)) throw notFound("chat", chatId);
     const messages = store.search(agent.id, q, chatId, clamp(Number(c.req.query("limit") ?? 20), 1, 100));
-    return c.json(messages.map((m) => ({ id: m.id, text: render(agent, m) })));
+    // Each hit is the text around the match, not the whole message (docs/spec.md 5.3).
+    return c.json(
+      messages.map((m) => ({ id: m.id, chat: m.chatId, text: render(agent, { ...m, body: excerpt(m.body, q) }) })),
+    );
   });
 
   app.post("/v1/agent/files/:id/download", async (c) => {

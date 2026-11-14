@@ -82,8 +82,11 @@ More messages can arrive while you are working. They appear in your session as t
 "$MINGLE_CLI" chat info c12                  # details; members where the app allows
 "$MINGLE_CLI" message read c12 --limit 30    # recent messages in a chat
 "$MINGLE_CLI" message search "ridge route"   # search everything you have seen; --in c12 to narrow
+"$MINGLE_CLI" message read c12 --around m8f2a  # the messages before and after one, e.g. a search hit
 "$MINGLE_CLI" file get f3a1                  # download an attachment into the current directory
 ```
+
+A search hit shows only the text around the match, with "…" where it was cut. Before you rely on one, read around it: the reply that settled or reversed it is often the next message.
 
 You only see messages that were addressed to you, plus what you sent. You do not see the rest of a group's conversation.
 

@@ -534,6 +534,32 @@ export class Store {
     return rows.map(toMessage).reverse();
   }
 
+  /**
+   * Messages around `messageId` in its chat, oldest first: about half of `limit` before it,
+   * the message itself, and the rest after. Undefined when the message is not in this chat.
+   */
+  chatAround(chatId: string, messageId: string, limit: number): Message[] | undefined {
+    const row = this.db.prepare("SELECT rowid, * FROM messages WHERE id = ? AND chat_id = ?").get(messageId, chatId) as
+      | Row
+      | undefined;
+    if (!row) return undefined;
+    const anchor = toMessage(row);
+    const before = Math.floor((limit - 1) / 2);
+    const older = this.db
+      .prepare(
+        `SELECT * FROM messages WHERE chat_id = ? AND (created_at < ? OR (created_at = ? AND rowid < ?))
+         ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+      )
+      .all(chatId, anchor.createdAt, anchor.createdAt, row.rowid as number, before) as Row[];
+    const newer = this.db
+      .prepare(
+        `SELECT * FROM messages WHERE chat_id = ? AND (created_at > ? OR (created_at = ? AND rowid > ?))
+         ORDER BY created_at, rowid LIMIT ?`,
+      )
+      .all(chatId, anchor.createdAt, anchor.createdAt, row.rowid as number, limit - 1 - older.length) as Row[];
+    return [...older.map(toMessage).reverse(), anchor, ...newer.map(toMessage)];
+  }
+
   search(agentId: string, query: string, chatId?: string, limit = 20): Message[] {
     const scope = chatId ? "AND m.chat_id = ?" : "";
     const scopeArgs = chatId ? [chatId] : [];
