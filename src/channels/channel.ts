@@ -121,6 +121,11 @@ export interface ChatRef {
   readonly platformId: string;
   readonly kind: ChatKind;
   readonly name?: string;
+  /**
+   * For a thread: the group it belongs to, where the adapter stores the messages around it
+   * that were not addressed to the bot. The agent reads them there (docs/spec.md 4.2).
+   */
+  readonly parent?: { readonly platformId: string; readonly name?: string };
 }
 
 export interface Sender {

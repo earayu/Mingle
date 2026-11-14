@@ -255,6 +255,89 @@ describe("message flow", () => {
   });
 });
 
+describe("group background", () => {
+  it("tells the agent how much it missed, and reads it with --since", async () => {
+    const inputs: string[] = [];
+    let since = "";
+    current = await rig(async (t) => {
+      const env = t.options.env as Record<string, string>;
+      inputs.push(t.input);
+      const [id] = messageIds(t.input);
+      if (inputs.length === 1) {
+        await runCli(env, ["message", "reply", id as string], "ok");
+        return;
+      }
+      const chat = /chat=(c\w+)/.exec(t.input)?.[1] as string;
+      since = (await runCli(env, ["message", "read", chat, "--since", messageIds(inputs[0] as string)[0] as string]))
+        .stdout;
+      await runCli(env, ["message", "reply", id as string], "ok");
+    });
+    const { channel } = current;
+    const base = Date.now();
+    channel.receive({ text: "lunch at noon?", addressedToBot: false, sentAt: base - 30 });
+    channel.receive({ text: "the ridge route is closed", addressedToBot: false, sentAt: base - 20 });
+    channel.receive({ text: "what do you think?", sentAt: base - 10 });
+    await until(() => channel.sent.length === 1);
+    expect(inputs[0]).toMatch(/^\[msg=m\w+ chat=c\w+ .+ unseen=2\]\nwhat do you think\?$/);
+    // The next question comes as a new turn, not into the one that is ending.
+    await until(() => !current?.mingle.runtime(current.agentId)?.busy);
+
+    const later = Date.now() + 10;
+    channel.receive({ text: "the north trail then", addressedToBot: false, sentAt: later });
+    channel.receive({ text: "agreed?", sentAt: later + 10 });
+    await until(() => channel.sent.length === 2);
+    expect(inputs[1]).toMatch(/ unseen=1\]\nagreed\?$/);
+    // Everything after the first question, oldest first: the reply, the chatter, the new question.
+    const bodies = since.split(/\n\n/).map((m) => m.split("\n")[1]);
+    expect(bodies).toEqual(["ok", "the north trail then", "agreed?"]);
+  });
+
+  it("keeps a thread's channel as its background, without a turn for it", async () => {
+    const inputs: string[] = [];
+    current = await rig(async (t) => {
+      inputs.push(t.input);
+      for (const id of messageIds(t.input))
+        await runCli(t.options.env as Record<string, string>, ["message", "reply", id], "ok");
+    });
+    const { channel, mingle } = current;
+    const base = Date.now();
+    // Shaped like Slack: chatter in the channel, then a mention that opens a thread under it.
+    channel.receive({
+      text: "lunch?",
+      chat: { platformId: "C1", kind: "group" },
+      addressedToBot: false,
+      sentAt: base - 20,
+    });
+    channel.receive({
+      text: "what do you think?",
+      chat: { platformId: "C1:9", kind: "thread", parent: { platformId: "C1" } },
+      sentAt: base - 10,
+    });
+    await until(() => channel.sent.length === 1);
+    const chats = mingle.store.agentChats(current.agentId);
+    const parent = chats.find((c) => c.platformId === "C1");
+    const thread = chats.find((c) => c.platformId === "C1:9");
+    expect(thread?.parentId).toBe(parent?.id);
+    expect(mingle.store.chatMessages(parent?.id as string, 10).map((m) => m.state)).toEqual(["ignored"]);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatch(new RegExp(` in=${parent?.id} .+ unseen=1\\]\nwhat do you think\\?$`));
+  });
+
+  it("refuses two read anchors at once", async () => {
+    let stderr = "";
+    current = await rig(async (t) => {
+      const env = t.options.env as Record<string, string>;
+      const [id] = messageIds(t.input);
+      const chat = /chat=(c\w+)/.exec(t.input)?.[1] as string;
+      stderr = (await runCli(env, ["message", "read", chat, "--since", id as string, "--before", id as string])).stderr;
+      await runCli(env, ["message", "reply", id as string], "ok");
+    });
+    current.channel.receive({ text: "hi" });
+    await until(() => current?.channel.sent.length === 1);
+    expect(stderr).toBe("error: flags_conflict\nnext: pass only one of --before, --since and --around\n");
+  });
+});
+
 describe("agent CLI", () => {
   it("reads, searches, lists chats, tracks tasks and fires reminders", async () => {
     let env: Record<string, string> = {};

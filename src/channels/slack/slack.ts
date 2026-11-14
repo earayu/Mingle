@@ -496,8 +496,10 @@ function parseChat(platformId: string): { channel: string; thread?: string } {
 
 /**
  * Map a Slack event to Mingle's shape. Exported for tests.
- * Channel messages count only when they @ the bot or continue a thread it is in. A mention
- * at the top level opens a thread rooted at that message, and the thread is the chat.
+ * Channel messages are addressed to the bot when they @ it or continue a thread it is in. A
+ * mention at the top level opens a thread rooted at that message, and the thread is the chat.
+ * The rest of the channel, threads included, goes to one chat for the channel without
+ * triggering: the background each of the bot's threads points to as its parent.
  */
 export async function toInbound(
   event: SlackEvent,
@@ -515,13 +517,14 @@ export async function toInbound(
   const thread = event.thread_ts && event.thread_ts !== event.ts ? event.thread_ts : undefined;
   const inThread = thread ? threads.has(`${event.channel}:${thread}`) : false;
   const addressed = dm || mentioned || inThread || event.parent_user_id === botUserId;
-  if (!addressed) return undefined;
 
   const root = thread ?? event.ts;
-  if (!dm) threads.add(`${event.channel}:${root}`);
+  if (addressed && !dm) threads.add(`${event.channel}:${root}`);
   const chat: ChatRef = dm
     ? { platformId: event.channel, kind: "dm" }
-    : { platformId: `${event.channel}:${root}`, kind: "thread" };
+    : addressed
+      ? { platformId: `${event.channel}:${root}`, kind: "thread", parent: { platformId: event.channel } }
+      : { platformId: event.channel, kind: "group" };
 
   let text = raw.replaceAll(`<@${botUserId}>`, "");
   for (const match of [...text.matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)]) {
@@ -550,7 +553,9 @@ export async function toInbound(
     sender: { id: event.user, name: await nameOf(event.user), isBot: false },
     text,
     attachments,
-    addressedToBot: true,
+    // A reply in someone else's thread keeps its place in the channel's conversation.
+    ...(!addressed && thread ? { replyTo: thread } : {}),
+    addressedToBot: addressed,
     sentAt: Math.round(Number(event.ts) * 1000),
   };
 }

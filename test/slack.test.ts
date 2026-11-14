@@ -50,7 +50,7 @@ function fakeSocket() {
 const auth = () => ({ user_id: "UBOT", user: "alex", bot_id: "B1" });
 
 describe("slack messages", () => {
-  it("takes DMs, mentions and threads it is in; ignores the rest", async () => {
+  it("takes DMs, mentions and threads it is in; keeps the rest of the channel as background", async () => {
     const threads = new Set<string>();
     const dm = await toInbound(
       { type: "message", channel: "D1", channel_type: "im", user: "U1", text: "hi &amp; bye", ts: "1700000000.000100" },
@@ -66,7 +66,17 @@ describe("slack messages", () => {
     });
 
     const chatter = { type: "message", channel: "C1", channel_type: "channel", user: "U1", ts: "2.0" };
-    expect(await toInbound({ ...chatter, text: "lunch?" }, "UBOT", names, threads)).toBeUndefined();
+    // Not for the bot: stored in the channel's own chat, without triggering.
+    expect(await toInbound({ ...chatter, ts: "1.0", text: "lunch?" }, "UBOT", names, threads)).toMatchObject({
+      chat: { platformId: "C1", kind: "group" },
+      text: "lunch?",
+      addressedToBot: false,
+    });
+    // A reply in a thread the bot is not in is background too, and keeps its place under the root.
+    expect(
+      await toInbound({ ...chatter, ts: "1.5", thread_ts: "1.0", text: "pizza" }, "UBOT", names, threads),
+    ).toMatchObject({ chat: { platformId: "C1", kind: "group" }, replyTo: "1.0", addressedToBot: false });
+    expect(threads.size).toBe(0);
 
     const mention = await toInbound(
       { ...chatter, text: "<@UBOT> ask <@U2> about <https://x.org|this>" },
@@ -75,8 +85,9 @@ describe("slack messages", () => {
       threads,
     );
     expect(mention).toMatchObject({
-      chat: { platformId: "C1:2.0", kind: "thread" },
+      chat: { platformId: "C1:2.0", kind: "thread", parent: { platformId: "C1" } },
       text: "ask @Li Si about this (https://x.org)",
+      addressedToBot: true,
     });
     // A follow-up in that thread needs no @.
     expect(
