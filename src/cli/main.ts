@@ -41,6 +41,7 @@ const OPTIONS = {
   status: { type: "string" },
   at: { type: "string" },
   every: { type: "string" },
+  by: { type: "string" },
   chat: { type: "string" },
   name: { type: "string" },
   harness: { type: "string" },
@@ -326,19 +327,39 @@ async function agentCommand(group: string, action: string | undefined, args: str
         at: flags.at,
         every: flags.every,
         chat: flags.chat,
+        from: flags.from,
       });
       print(reminder, () => `set ${reminder.id}, next at ${time(reminder.nextFireAt)}`);
       return true;
     }
     case "reminder list": {
-      const reminders = await call()<{ id: string; body: string; rule: string; nextFireAt: number }[]>(
-        "GET",
-        "/v1/agent/reminders",
-      );
+      const reminders = await call()<
+        { id: string; body: string; rule: string; nextFireAt: number; sourceMessageId: string | null }[]
+      >("GET", "/v1/agent/reminders");
       print(reminders, () =>
         reminders.length
-          ? reminders.map((r) => `${r.id}  ${time(r.nextFireAt)}  ${r.rule}  ${r.body}`).join("\n")
+          ? reminders
+              .map(
+                (r) =>
+                  `${r.id}  ${time(r.nextFireAt)}  ${r.rule}  ${r.body}${r.sourceMessageId ? `  (from ${r.sourceMessageId})` : ""}`,
+              )
+              .join("\n")
           : "no reminders",
+      );
+      return true;
+    }
+    case "reminder snooze": {
+      const id = need(args[0], "reminder_id_required", "usage: mingle reminder snooze <reminder-id> --by 2h");
+      const by = need(flags.by, "duration_required", "pass --by with a duration, like --by 2h");
+      const reminder = await call()<{ id: string; rule: string; nextFireAt: number }>(
+        "POST",
+        `/v1/agent/reminders/${id}/snooze`,
+        { by },
+      );
+      print(reminder, () =>
+        reminder.rule === "once"
+          ? `${reminder.id} snoozed, next at ${time(reminder.nextFireAt)}`
+          : `${reminder.id} snoozed, next at ${time(reminder.nextFireAt)}, then ${reminder.rule} again`,
       );
       return true;
     }
@@ -674,7 +695,7 @@ For agents (inside a session):
   mingle contact list | name <user> "name"
   mingle file get <file>
   mingle task create | list | update
-  mingle reminder set | list | cancel
+  mingle reminder set | list | snooze | cancel
   mingle whoami | manual
 
 Add --json for machine-readable output.`;

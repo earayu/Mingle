@@ -195,6 +195,14 @@ try {
     now + 86_400_000,
     now,
   );
+  // A recurring one that has fired: the list shows when, quietly, after the next time.
+  insert(
+    "INSERT INTO reminders (id, agent_id, body, rule, timezone, next_fire_at, last_fired_at, created_at) VALUES ('r2', ?, 'Post the morning summary of new trail reports and the weekend forecast', 'daily@09:00', 'Asia/Shanghai', ?, ?, ?)",
+    alex.id,
+    now + 3 * 3_600_000,
+    now - 21 * 3_600_000,
+    now - 7 * 86_400_000,
+  );
   insert(
     "UPDATE agents SET status = 'working', status_detail = 'Bash: curl -s https://api.weather.example/forecast?lat=39.99&lon=116.19' WHERE id = ?",
     alex.id,

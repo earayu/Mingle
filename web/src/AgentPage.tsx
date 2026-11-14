@@ -749,6 +749,12 @@ function Work({ work, error, onRetry }: { work: WorkData | null; error: boolean;
                 </span>
                 <span className="text-caption text-ink2">
                   {r.nextFireAt ? shortDateTime(r.nextFireAt, locale) : ""}
+                  {r.lastFiredAt ? (
+                    <span className="text-ink3">
+                      {" · "}
+                      {t("agent.reminderLastFired", { time: shortDateTime(r.lastFiredAt, locale) })}
+                    </span>
+                  ) : null}
                 </span>
               </GroupRow>
             ))}

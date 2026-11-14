@@ -399,6 +399,86 @@ describe("agent CLI", () => {
     expect(mingle.store.reminders(current.agentId)).toHaveLength(0);
   });
 
+  it("quotes the message a reminder was set for, snoozes it, and records when it fired", async () => {
+    let env: Record<string, string> = {};
+    const outputs: Record<string, string> = {};
+    current = await rig(async (t) => {
+      env = t.options.env as Record<string, string>;
+      if (t.input.startsWith("[reminder=")) {
+        outputs.reminder = t.input;
+        const id = /^\[reminder=(r\w+)/.exec(t.input)?.[1] as string;
+        outputs.snooze = (await runCli(env, ["reminder", "snooze", id, "--by", "2h"])).stdout;
+        return;
+      }
+      const [id] = messageIds(t.input);
+      const chat = /chat=(c\w+)/.exec(t.input)?.[1] as string;
+      outputs.once = (
+        await runCli(env, ["reminder", "set", "Check the forecast", "--in", "1h", "--from", id as string])
+      ).stdout;
+      outputs.every = (
+        await runCli(env, ["reminder", "set", "Look at the trail report", "--every", "6h", "--chat", chat])
+      ).stdout;
+      outputs.missing = (await runCli(env, ["reminder", "set", "x", "--in", "1h", "--from", "mnope1"])).stderr;
+      outputs.list = (await runCli(env, ["reminder", "list"])).stdout;
+      await runCli(env, ["message", "reply", id as string], "I'll check once the forecast is out.");
+    });
+    const { channel, mingle } = current;
+    const agentId = current.agentId;
+    const inbound = channel.receive({ text: "is the ridge route open?" });
+    await until(() => channel.sent.length === 1);
+    await until(() => !mingle.runtime(agentId)?.busy);
+
+    expect(outputs.once).toMatch(/^set r\w+, next at/);
+    expect(outputs.missing).toMatch(/^error: message_not_found/);
+    const source = mingle.store.messageByPlatformId(
+      mingle.store.reminders(agentId)[0]?.chatId as string,
+      inbound.platformId,
+    );
+    const [once, every] = mingle.store.reminders(agentId);
+    // The chat comes from the message.
+    expect(once).toMatchObject({ body: "Check the forecast", sourceMessageId: source?.id, lastFiredAt: null });
+    expect(once?.chatId).toBe(source?.chatId);
+    expect(every).toMatchObject({ rule: "every:6h", sourceMessageId: null });
+    expect(outputs.list).toContain(`Check the forecast  (from ${source?.id})`);
+
+    // Firing quotes the source message, header included, so the agent can reply to it.
+    const firedAt = Date.now() + 2 * 3_600_000;
+    mingle.fireReminders(firedAt);
+    await until(() => outputs.snooze);
+    expect(outputs.reminder).toMatch(
+      new RegExp(
+        `^\\[reminder=${once?.id} chat=${source?.chatId} time=.+\\]\nCheck the forecast\n` +
+          `> \\[msg=${source?.id} chat=${source?.chatId} im=telegram group="Weekend hikes" .+\\]\n> is the ridge route open\\?$`,
+      ),
+    );
+    // A fired one-off can still be snoozed: it fires again 2h from now.
+    expect(outputs.snooze).toMatch(new RegExp(`^${once?.id} snoozed, next at `));
+    const snoozed = mingle.store.reminder(agentId, once?.id as string);
+    expect(snoozed?.lastFiredAt).toBe(firedAt);
+    expect(Math.abs((snoozed?.nextFireAt ?? 0) - (Date.now() + 2 * 3_600_000))).toBeLessThan(60_000);
+
+    // A recurring reminder: only the next fire moves, then it keeps its rule.
+    const result = await runCli(env, ["reminder", "snooze", every?.id as string, "--by", "1h"]);
+    expect(result.stdout).toMatch(/snoozed, next at .+, then every:6h again$/m);
+    const moved = mingle.store.reminder(agentId, every?.id as string);
+    expect(Math.abs((moved?.nextFireAt ?? 0) - (Date.now() + 3_600_000))).toBeLessThan(60_000);
+    const at = (moved?.nextFireAt as number) + 1000;
+    await until(() => !mingle.runtime(agentId)?.busy);
+    mingle.fireReminders(at);
+    const after = mingle.store.reminder(agentId, every?.id as string);
+    expect(after).toMatchObject({ lastFiredAt: at, nextFireAt: at + 6 * 3_600_000 });
+    // Without --from there is nothing to quote.
+    await until(() => outputs.reminder?.includes("Look at the trail report"));
+    expect(outputs.reminder).not.toContain("\n> ");
+
+    expect((await runCli(env, ["reminder", "snooze", "rnope1", "--by", "1h"])).stderr).toMatch(
+      /^error: reminder_not_found/,
+    );
+    expect((await runCli(env, ["reminder", "snooze", every?.id as string])).stderr).toMatch(
+      /^error: duration_required/,
+    );
+  });
+
   it("refuses to run without an agent session", async () => {
     current = await rig(async () => {});
     const result = await runCli({ MINGLE_CLI: current.mingle.cliPath, MINGLE_API: "", MINGLE_TOKEN: "" }, [

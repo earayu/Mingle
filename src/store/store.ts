@@ -115,7 +115,10 @@ export interface Reminder {
   rule: string;
   timezone: string;
   chatId: string | null;
+  /** The message the reminder was set for; when it fires, the agent sees it quoted. */
+  sourceMessageId: string | null;
   nextFireAt: number | null;
+  lastFiredAt: number | null;
   createdAt: number;
 }
 
@@ -859,14 +862,35 @@ export class Store {
 
   // --------------------------------------------------------------- reminders
 
-  createReminder(input: Omit<Reminder, "id" | "createdAt">): Reminder {
+  createReminder(
+    input: Omit<Reminder, "id" | "createdAt" | "lastFiredAt" | "sourceMessageId"> & { sourceMessageId?: string | null },
+  ): Reminder {
     const id = this.mint("reminders", "r", 3);
     this.db
       .prepare(
-        "INSERT INTO reminders (id, agent_id, body, rule, timezone, chat_id, next_fire_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        `INSERT INTO reminders (id, agent_id, body, rule, timezone, chat_id, source_message_id, next_fire_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, input.agentId, input.body, input.rule, input.timezone, input.chatId, input.nextFireAt, this.now());
-    return this.reminders(input.agentId).find((r) => r.id === id) as Reminder;
+      .run(
+        id,
+        input.agentId,
+        input.body,
+        input.rule,
+        input.timezone,
+        input.chatId,
+        input.sourceMessageId ?? null,
+        input.nextFireAt,
+        this.now(),
+      );
+    return this.reminder(input.agentId, id) as Reminder;
+  }
+
+  /** One of the agent's reminders, including a one-off that has already fired. */
+  reminder(agentId: string, id: string): Reminder | undefined {
+    const row = this.db.prepare("SELECT * FROM reminders WHERE id = ? AND agent_id = ?").get(id, agentId) as
+      | Row
+      | undefined;
+    return row && toReminder(row);
   }
 
   reminders(agentId: string): Reminder[] {
@@ -887,8 +911,17 @@ export class Store {
     return rows.map(toReminder);
   }
 
-  setReminderNext(id: string, next: number | null): void {
-    this.db.prepare("UPDATE reminders SET next_fire_at = ? WHERE id = ?").run(next, id);
+  /** A reminder fired at `at`; `next` is when it fires again, null for a one-off. */
+  markReminderFired(id: string, at: number, next: number | null): void {
+    this.db.prepare("UPDATE reminders SET next_fire_at = ?, last_fired_at = ? WHERE id = ?").run(next, at, id);
+  }
+
+  /** Move the next fire. A recurring reminder goes back to its rule after that one. */
+  setReminderNext(agentId: string, id: string, next: number): Reminder | undefined {
+    const changed = this.db
+      .prepare("UPDATE reminders SET next_fire_at = ? WHERE id = ? AND agent_id = ?")
+      .run(next, id, agentId).changes;
+    return changed ? this.reminder(agentId, id) : undefined;
   }
 
   deleteReminder(agentId: string, id: string): boolean {
@@ -989,7 +1022,9 @@ function toReminder(r: Row): Reminder {
     rule: String(r.rule),
     timezone: String(r.timezone),
     chatId: str(r.chat_id),
+    sourceMessageId: str(r.source_message_id),
     nextFireAt: r.next_fire_at === null ? null : Number(r.next_fire_at),
+    lastFiredAt: r.last_fired_at === null || r.last_fired_at === undefined ? null : Number(r.last_fired_at),
     createdAt: Number(r.created_at),
   };
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Failure, failureOf, type Harness, type HarnessSession } from "../harness/harness.ts";
 import type { Agent, AgentStatus, Store } from "../store/store.ts";
-import { formatMessage } from "./format.ts";
+import { renderMessage } from "./format.ts";
 import { MEMORY_LIMIT, memoryHint, memoryHintDue, memorySize, readRole } from "./home.ts";
 import { renderManual } from "./manual.ts";
 
@@ -442,12 +442,11 @@ export class AgentRuntime {
     const { store } = this.deps;
     const message = store.message(messageId);
     const chat = message && store.chat(message.chatId);
-    const connection = chat && store.connection(chat.connectionId);
-    if (!message || !chat || !connection) return "";
-    const contact = message.senderId ? store.contactByPlatformId(chat.connectionId, message.senderId) : undefined;
+    if (!message || !chat) return "";
     // In a group, how much was said there without the agent, so it can read back when it matters.
     const unseen = chat.kind === "dm" ? 0 : store.unseen(chat.id, message.createdAt);
-    const text = formatMessage(message, chat, connection.platform, { ownerId: connection.ownerId, contact, unseen });
+    const text = renderMessage(store, message, { unseen });
+    if (!text) return "";
     if (!this.retried.delete(messageId)) return text;
     // An old message coming back: the agent should know it is late, not treat it as new.
     return `[mingle] Retry: ${message.id} was not answered when it arrived (see its time). Reply to it now, and say briefly that the answer is late.\n${text}`;

@@ -135,13 +135,18 @@ Statuses: `todo`, `in_progress`, `done`, `closed` (will not be done). When a tas
 A reminder wakes you later with a message to yourself.
 
 ```bash
-"$MINGLE_CLI" reminder set "Check the forecast again" --in 6h --chat c12
+"$MINGLE_CLI" reminder set "Check whether Saturday's forecast is out" --in 6h --from m8f2a
 "$MINGLE_CLI" reminder set "Post the morning summary" --every daily@09:00 --chat c12
 "$MINGLE_CLI" reminder list
+"$MINGLE_CLI" reminder snooze r2 --by 2h
 "$MINGLE_CLI" reminder cancel r2
 ```
 
 `--in` takes a duration (`30m`, `6h`, `2d`); `--at` an ISO 8601 time; `--every` a rule (`every:2h`, `daily@09:00`, `weekly:mon,fri@09:00`) in your owner's time zone.
+
+When a reminder is about something someone asked, set it with `--from <message-id>` instead of `--chat`. When it fires, that message is quoted under the reminder (lines starting with `> `), so you can answer it with `message reply`.
+
+When a reminder fires and the thing is not ready yet, `snooze` it rather than setting a new one. `--by` counts from now. A recurring reminder fires once more at that time and then follows its rule again. To change a reminder, cancel it and set a new one.
 
 ## When a command fails
 

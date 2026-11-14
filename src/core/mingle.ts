@@ -20,7 +20,7 @@ import { VERSION } from "../version.ts";
 import { Brains } from "./brains.ts";
 import { checkEnvName, checkEnvValue, decodeEnvValue, encodeEnvValue, envRef } from "./env.ts";
 import { MingleError, notFound } from "./errors.ts";
-import { formatReminder } from "./format.ts";
+import { formatReminder, renderMessage } from "./format.ts";
 import { createHome, memorySize, writeRole } from "./home.ts";
 import { slugify } from "./ids.ts";
 import { BACKOFF_MS, type LinkEvent, type LinkState, step, stored } from "./link.ts";
@@ -1116,8 +1116,11 @@ export class Mingle {
           next = null;
         }
       }
-      this.store.setReminderNext(reminder.id, next);
-      this.runtimes.get(reminder.agentId)?.enqueueText(formatReminder(reminder, now));
+      this.store.markReminderFired(reminder.id, now, next);
+      const source = reminder.sourceMessageId ? this.store.message(reminder.sourceMessageId) : undefined;
+      const agentName = this.store.agent(reminder.agentId)?.name;
+      const quoted = source && renderMessage(this.store, source, agentName ? { agentName } : {});
+      this.runtimes.get(reminder.agentId)?.enqueueText(formatReminder(reminder, now, quoted || undefined));
     }
   }
 

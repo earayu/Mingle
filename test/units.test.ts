@@ -6,7 +6,7 @@ import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toInbound } from "../src/channels/telegram/telegram.ts";
-import { excerpt, formatMessage } from "../src/core/format.ts";
+import { excerpt, formatMessage, formatReminder } from "../src/core/format.ts";
 import { split } from "../src/core/outbox.ts";
 import { nextFire, parseDuration } from "../src/core/schedule.ts";
 import { applyShellEnvironment } from "../src/platform/shell-env.ts";
@@ -113,6 +113,41 @@ describe("message header contacts", () => {
     const named = { ...contact, name: "Mei W.", alias: "Mei" };
     expect(formatMessage(message, chat, "wechat", { contact: named })).toContain('from="Mei" user=u7k2 time=');
     expect(formatMessage(message, chat, "wechat", { contact: { ...named, alias: null } })).toContain('from="Mei W."');
+  });
+});
+
+describe("formatReminder", () => {
+  const reminder = {
+    id: "r2",
+    agentId: "a1",
+    body: "Check the forecast",
+    rule: "once",
+    timezone: "UTC",
+    chatId: "c3",
+    sourceMessageId: "m4",
+    nextFireAt: null,
+    lastFiredAt: null,
+    createdAt: 0,
+  };
+
+  it("quotes the source message line by line under the reminder", () => {
+    const text = formatReminder(reminder, 0, '[msg=m4 chat=c3 im=slack dm from="Ana"]\nfirst\nsecond');
+    expect(text.split("\n").slice(1)).toEqual([
+      "Check the forecast",
+      '> [msg=m4 chat=c3 im=slack dm from="Ana"]',
+      "> first",
+      "> second",
+    ]);
+  });
+
+  it("cuts a long source and marks the cut", () => {
+    const text = formatReminder(reminder, 0, `[msg=m4]\n${"字".repeat(2000)}`);
+    expect(text.endsWith("…")).toBe(true);
+    expect([...text].length).toBeLessThan(600);
+  });
+
+  it("is just the reminder without a source", () => {
+    expect(formatReminder(reminder, 0)).toMatch(/^\[reminder=r2 chat=c3 time=.+\]\nCheck the forecast$/);
   });
 });
 

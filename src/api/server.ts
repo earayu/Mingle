@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import QRCode from "qrcode";
 import type { CredentialField, OnboardingMethod, Platform } from "../channels/channel.ts";
 import { contactAlias, MingleError, notFound } from "../core/errors.ts";
-import { excerpt, formatMessage } from "../core/format.ts";
+import { excerpt, renderMessage } from "../core/format.ts";
 import { readRole } from "../core/home.ts";
 import { renderManual } from "../core/manual.ts";
 import type { Mingle } from "../core/mingle.ts";
@@ -63,14 +63,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
     await next();
   });
 
-  const render = (agent: Agent, m: Message) => {
-    const chat = store.chat(m.chatId);
-    const connection = chat && store.connection(chat.connectionId);
-    if (!chat || !connection) return "";
-    const contact =
-      m.direction === "in" && m.senderId ? store.contactByPlatformId(chat.connectionId, m.senderId) : undefined;
-    return formatMessage(m, chat, connection.platform, { ownerId: connection.ownerId, agentName: agent.name, contact });
-  };
+  const render = (agent: Agent, m: Message) => renderMessage(store, m, { agentName: agent.name });
 
   app.get("/v1/agent/whoami", (c) => {
     const agent = c.get("agent");
@@ -264,13 +257,33 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   app.post("/v1/agent/reminders", async (c) => {
     const agent = c.get("agent");
-    const body = await c.req.json<{ text: string; in?: string; at?: string; every?: string; chat?: string }>();
+    const body = await c.req.json<{
+      text: string;
+      in?: string;
+      at?: string;
+      every?: string;
+      chat?: string;
+      from?: string;
+    }>();
     if (!body.text?.trim())
       throw new MingleError(
         "text_required",
         'say what to be reminded of: mingle reminder set "Check the forecast" --in 6h',
       );
     if (body.chat && !store.agentChat(agent.id, body.chat)) throw notFound("chat", body.chat);
+    // Set for a message: its chat is the reminder's chat.
+    let chatId = body.chat ?? null;
+    if (body.from) {
+      const source = store.agentMessage(agent.id, body.from);
+      if (!source) throw notFound("message", body.from);
+      if (chatId && chatId !== source.chatId) {
+        throw new MingleError(
+          "chat_mismatch",
+          `${body.from} is in ${source.chatId}; leave out --chat when you pass --from`,
+        );
+      }
+      chatId = source.chatId;
+    }
     const now = Date.now();
     let rule = "once";
     let next: number;
@@ -292,9 +305,21 @@ export function createApi(mingle: Mingle): Hono<Env> {
       body: body.text.trim(),
       rule,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      chatId: body.chat ?? null,
+      chatId,
+      sourceMessageId: body.from ?? null,
       nextFireAt: next,
     });
+    return c.json(reminder);
+  });
+
+  // "Not yet, look again in 2h": the next fire moves to `by` from now; a recurring reminder then keeps its rule.
+  app.post("/v1/agent/reminders/:id/snooze", async (c) => {
+    const agent = c.get("agent");
+    const { by } = await c.req.json<{ by?: string }>();
+    if (!by) throw new MingleError("duration_required", "say how long to wait: mingle reminder snooze r2 --by 2h");
+    const next = Date.now() + parseDuration(by);
+    const reminder = store.setReminderNext(agent.id, c.req.param("id"), next);
+    if (!reminder) throw notFound("reminder", c.req.param("id"));
     return c.json(reminder);
   });
 
