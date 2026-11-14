@@ -5,10 +5,14 @@ import {
   type AvailableInstallation,
   createCursorRuntime,
   defaultRuntimes,
+  type EventObserver,
   type Runtime,
+  type RuntimeEventBody,
   type Session,
   UnsupportedOptionError,
 } from "@botiverse/oar";
+import { createSessionKernel } from "@botiverse/oar/kernel";
+import { eventsOf, usageOf } from "@botiverse/oar/observe";
 import { scriptedRuntime } from "@botiverse/oar/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { oarHarness } from "../src/harness/harness.ts";
@@ -378,4 +382,72 @@ describe("stopping work", () => {
     expect(await session.abort()).toBe(true);
     expect(seen).toEqual(["self", "ended:aborted"]);
   });
+});
+
+describe("turn usage", () => {
+  it.each(["before end", "after end", "earlier frame"] as const)(
+    "reports the complete turn once when usage is %s",
+    async (order) => {
+      const kernel = createSessionKernel("usage-fixture");
+      const frame = (...events: RuntimeEventBody[]) => kernel.frame({ type: "fixture", native: {}, events });
+      const usage = (input: number, output: number, cacheRead: number, cacheWrite: number): RuntimeEventBody => ({
+        kind: "usage",
+        usage: { total: { input, output, cacheRead, cacheWrite } },
+      });
+      const end: RuntimeEventBody = { kind: "turn_ended", outcome: { kind: "completed" } };
+      const fixture = {
+        ...fakeSession(kernel.sessionId),
+        events: (observer: EventObserver) =>
+          kernel.rawEvents((record) => {
+            for (const event of eventsOf(record)) observer(event);
+          }),
+        usage: () => usageOf(kernel.records(), kernel.sessionId),
+      } as unknown as Session;
+      const native = {
+        ...scriptedRuntime({ turn: () => {} }),
+        session: async () => fixture,
+      };
+      const onTurnUsage = vi.fn();
+      const callbacks: string[] = [];
+      const session = await oarHarness({ require: () => native }).open(
+        { harness: "scripted", cwd: cwd(), appendSystemPrompt: PROMPT, env: ENV },
+        {
+          ...events,
+          onTurnUsage: (value) => {
+            onTurnUsage(value);
+            callbacks.push("usage");
+          },
+          onTurnEnded: () => {
+            callbacks.push("ended");
+          },
+        },
+      );
+      try {
+        frame(usage(1000, 100, 100, 200));
+        kernel.request("toRuntime", { kind: "prompt", input: "first" });
+        frame(usage(1100, 110, 130, 240));
+        const final = usage(1300, 130, 190, 320);
+        if (order === "earlier frame") {
+          frame(final);
+          frame(end);
+        } else frame(...(order === "before end" ? [final, end] : [end, final]));
+        expect(onTurnUsage.mock.calls).toEqual([[{ input: 300, output: 30, cacheRead: 90, cacheWrite: 120 }]]);
+        expect(callbacks).toEqual(["usage", "ended"]);
+        // Repeating a usage report outside a turn must not report the turn twice.
+        frame(final);
+        expect(onTurnUsage).toHaveBeenCalledTimes(1);
+        // A background wake must start its own baseline, not reuse the previous prompted turn.
+        frame({ kind: "text_delta", text: "background completion" });
+        frame(end, usage(1500, 150, 240, 400));
+        expect(onTurnUsage.mock.calls[1]).toEqual([{ input: 200, output: 20, cacheRead: 50, cacheWrite: 80 }]);
+        // Nor may that turn's spend bleed into the next prompted turn.
+        kernel.request("toRuntime", { kind: "prompt", input: "next" });
+        frame(usage(1550, 155, 250, 420), end);
+        expect(onTurnUsage.mock.calls[2]).toEqual([{ input: 50, output: 5, cacheRead: 10, cacheWrite: 20 }]);
+        expect(onTurnUsage).toHaveBeenCalledTimes(3);
+      } finally {
+        await session.dispose();
+      }
+    },
+  );
 });

@@ -166,6 +166,23 @@ describe("cold-start input", () => {
     expect(text).not.toMatch(/reset|new session|fresh session|summar/i);
   });
 
+  it.each(["pause", "ignore"] as const)("excludes ignored messages produced by %s before limiting history", (mode) => {
+    const now = Date.now();
+    const kept = inbound(dm, "Keep this conversation", now - 60_000);
+    store.moveInbound([kept.id], "deliver", "prior-turn");
+    store.moveInbound([kept.id], "reply");
+    for (let i = 0; i < 30; i++) {
+      const ignored = inbound(dm, `Discarded request ${i}`, now - 1000 + i);
+      if (mode === "ignore") store.moveInbound([ignored.id], "fail");
+      store.moveInbound([ignored.id], mode);
+      expect(store.message(ignored.id)?.state).toBe("ignored");
+    }
+    expect(store.recentConversation(agentId, 1).map((m) => m.id)).toEqual([kept.id]);
+    const text = buildColdContext({ store, agentId, agentName: "Alex", homeDir: home, actions: [], exclude: [], now });
+    expect(text).toContain(kept.body);
+    expect(text).not.toContain("Discarded request");
+  });
+
   it("keeps only the latest 25 messages and leaves out empty blocks", () => {
     const now = Date.now();
     for (let i = 0; i < 30; i++) inbound(dm, `message ${i}`, now - (30 - i) * 1000);
