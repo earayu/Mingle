@@ -115,3 +115,40 @@ describe.skipIf(deep.length === 0)("real harnesses, deep turn", () => {
     }, 420_000);
   }
 });
+
+// MING-43: a background command the agent started must not answer after the owner's /stop.
+const backgrounding = deep.filter((t) => t.id === "claude");
+describe.skipIf(backgrounding.length === 0)("real harnesses, /stop with background work", () => {
+  for (const target of backgrounding) {
+    it(`${target.id}: sends nothing from a stopped background command`, async () => {
+      const lines: string[] = [];
+      current = await rig(async () => {}, {
+        harness: target.id,
+        model: target.model ?? null,
+        real: true,
+        coalesceMs: 300,
+        log: (line) => lines.push(line),
+      });
+      const { channel, mingle } = current;
+      const dm = { platformId: "7", kind: "dm" as const, name: "Zhang San" };
+      channel.receive({
+        text: "Run `sleep 30` as a background command (run_in_background), and when it has finished reply with exactly TASK-DONE. Do not reply before it finishes.",
+        chat: dm,
+      });
+      // Stop once the command is running.
+      await until(() => mingle.store.agent(current?.agentId as string)?.status === "working", 120_000);
+      await new Promise((r) => setTimeout(r, 3000));
+      channel.receive({ text: "/stop", chat: dm });
+      await until(() => channel.sent.find((m) => m.text === "Stopped."), 30_000);
+      // Past the end of the command, and the wakeup it would have caused.
+      await new Promise((r) => setTimeout(r, 50_000));
+      console.log(lines.join("\n"));
+      console.log(channel.sent.map((m) => `-> ${m.text}`).join("\n"));
+      expect(channel.sent.map((m) => m.text).join("\n")).not.toMatch(/TASK-DONE/);
+
+      // New work afterwards is answered as usual.
+      channel.receive({ text: "Reply with exactly: PONG", chat: dm });
+      await until(() => channel.sent.find((m) => /PONG/.test(m.text)), 180_000);
+    }, 420_000);
+  }
+});

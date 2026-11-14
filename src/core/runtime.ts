@@ -51,6 +51,11 @@ export class AgentRuntime {
   private disposed = false;
   /** The agent's variables changed during a turn: reopen once it ends. */
   private stale = false;
+  /**
+   * The owner stopped the agent's work and nothing has been delivered since. A turn the harness
+   * begins on its own now (a background command finishing) is aborted, and the agent cannot send.
+   */
+  private stopped = false;
   /** Messages the owner asked to try again; their next delivery says so. */
   private readonly retried = new Set<string>();
 
@@ -108,11 +113,23 @@ export class AgentRuntime {
     this.schedule();
   }
 
-  /** Abort the current turn. Pending messages stay pending. */
+  /** True between an owner's stop and the next input Mingle delivers: the agent may not send. */
+  get halted(): boolean {
+    return this.stopped;
+  }
+
+  /**
+   * Stop the agent's work: the current turn and the background tasks it left running, so
+   * none of it answers later. Messages in that turn are not nudged about; pending messages
+   * stay pending and are delivered as usual. False when there was nothing to stop.
+   */
   async stop(): Promise<boolean> {
-    if (!this.session || !this.running) return false;
-    await this.session.abort();
-    return true;
+    if (!this.session) return false;
+    // Set before aborting: the harness may begin a turn of its own while the abort is under way.
+    this.stopped = true;
+    const stopped = (await this.session.abort()) || this.running;
+    if (!stopped) this.stopped = false;
+    return stopped;
   }
 
   /** Reopen the session with fresh settings (role or harness changed), serialized with delivery. */
@@ -199,6 +216,8 @@ export class AgentRuntime {
       throw error;
     }
     const inputId = randomUUID();
+    // New input: whatever comes next is work Mingle asked for, not the stopped work resuming.
+    this.stopped = false;
     // Mark first: a fast agent can reply before deliver() returns, and its reply must win.
     const delivered = new Set(
       this.deps.store.moveInbound(
@@ -280,7 +299,12 @@ export class AgentRuntime {
         env: { ...own, ...this.deps.env() },
       },
       {
-        onTurnStarted: () => {
+        onTurnStarted: (self) => {
+          if (self && this.stopped) {
+            // The stopped work coming back (a background command ended and woke the agent).
+            this.deps.log?.(`${this.agentId}: aborted a turn the harness began after a stop`);
+            void this.session?.abort().catch(() => {});
+          }
           this.running = true;
           this.setStatus("thinking");
           this.deps.onActivity?.("thinking");
@@ -320,8 +344,10 @@ export class AgentRuntime {
   private afterTurn(): void {
     const { store } = this.deps;
     const awaiting = store.awaitingReply(this.agentId);
-    const fresh = awaiting.filter((m) => !store.wasNudged(m.id));
-    const stale = awaiting.filter((m) => store.wasNudged(m.id));
+    // After the owner's stop, a nudge would restart the work they stopped: what is
+    // unanswered is marked so at once, for the owner to retry or ignore.
+    const fresh = this.stopped ? [] : awaiting.filter((m) => !store.wasNudged(m.id));
+    const stale = this.stopped ? awaiting : awaiting.filter((m) => store.wasNudged(m.id));
     const givenUp = store.moveInbound(
       stale.map((m) => m.id),
       "give_up",

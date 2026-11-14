@@ -299,3 +299,83 @@ describe("undeclared open-time refusals", () => {
     await expect(open("flaky", runtime)).rejects.toBe(error);
   });
 });
+
+describe("stopping work", () => {
+  /** A session whose events the test emits, recording the controls it receives. */
+  const driven = (options: { stopTask?: boolean; abortRejected?: boolean } = {}) => {
+    let emit: (event: Record<string, unknown>) => void = () => {};
+    const calls = { aborts: 0, stoppedTasks: [] as string[] };
+    const session = {
+      ...fakeSession(),
+      events: (observer: (event: Record<string, unknown>) => void) => {
+        emit = (event) => observer({ agentPath: [], ...event });
+        return () => {};
+      },
+      abort: async () => {
+        calls.aborts++;
+        return options.abortRejected ? { kind: "rejected", code: "not_running", reason: "idle" } : { kind: "accepted" };
+      },
+      ...(options.stopTask === false
+        ? {}
+        : {
+            stopTask: async (taskId: string) => {
+              calls.stoppedTasks.push(taskId);
+              return { kind: "accepted" };
+            },
+          }),
+    } as unknown as Session;
+    const runtime = {
+      ...scriptedRuntime({ id: "claude", turn: () => {} }),
+      installation: async () => ({ kind: "available", via: "bundled" }),
+      session: async () => session,
+    } as unknown as Runtime;
+    const seen: string[] = [];
+    const opening = oarHarness({ require: () => runtime }).open(
+      { harness: "claude", cwd: cwd(), appendSystemPrompt: PROMPT, env: ENV },
+      {
+        onTurnStarted: (self) => seen.push(self ? "self" : "prompted"),
+        onTurnEnded: (outcome) => seen.push(`ended:${outcome.kind}`),
+        onActivity: () => {},
+      },
+    );
+    return { opening, emit: (event: Record<string, unknown>) => emit(event), calls, seen };
+  };
+
+  it("reports a turn the harness begins on its own, once", async () => {
+    const { opening, emit, seen } = driven();
+    await opening;
+    emit({ kind: "turn_started" });
+    emit({ kind: "tool_call_started", tool: "Bash" });
+    emit({ kind: "turn_ended", outcome: { kind: "completed" } });
+    // A background command ended: the harness wakes the agent without a prompt.
+    emit({ kind: "text_delta" });
+    emit({ kind: "tool_call_started", tool: "Bash" });
+    emit({ kind: "turn_ended", outcome: { kind: "completed" } });
+    expect(seen).toEqual(["prompted", "ended:completed", "self", "ended:completed"]);
+  });
+
+  it("stops the background tasks a turn left running, and only those still running", async () => {
+    const { opening, emit, calls } = driven();
+    const session = await opening;
+    emit({ kind: "turn_started" });
+    emit({ kind: "task_started", taskId: "t1", taskType: "shell", background: true });
+    emit({ kind: "task_started", taskId: "t2", taskType: "shell", background: true });
+    emit({ kind: "task_started", taskId: "t3", taskType: "other", ambient: true });
+    emit({ kind: "task_ended", taskId: "t2", status: "completed" });
+    emit({ kind: "turn_ended", outcome: { kind: "completed" } });
+    // Idle, but a background command is still running: there is something to stop.
+    expect(await session.abort()).toBe(true);
+    expect(calls.aborts).toBe(0);
+    expect(calls.stoppedTasks).toEqual(["t1"]);
+    emit({ kind: "task_ended", taskId: "t1", status: "stopped" });
+    expect(await session.abort()).toBe(false);
+  });
+
+  it("closes a turn it began itself when the harness no longer has it", async () => {
+    const { opening, emit, seen } = driven({ abortRejected: true, stopTask: false });
+    const session = await opening;
+    emit({ kind: "tool_call_started", tool: "Bash" });
+    expect(await session.abort()).toBe(true);
+    expect(seen).toEqual(["self", "ended:aborted"]);
+  });
+});
