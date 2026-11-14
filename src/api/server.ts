@@ -188,11 +188,14 @@ export function createApi(mingle: Mingle): Hono<Env> {
     const limit = clamp(Number(c.req.query("limit") ?? 30), 1, 200);
     const around = c.req.query("around");
     const since = c.req.query("since");
+    const before = c.req.query("before");
+    if ([around, since, before].filter(Boolean).length > 1)
+      throw new MingleError("flags_conflict", "pass only one of --before, --since and --around");
     const messages = around
       ? store.chatAround(chat.id, around, limit)
       : since
         ? store.chatSince(chat.id, since, limit)
-        : store.chatMessages(chat.id, limit, c.req.query("before"));
+        : store.chatMessages(chat.id, limit, before);
     if (!messages) throw notFound("message", around ?? since ?? "");
     return c.json(messages.map((m) => ({ id: m.id, text: render(agent, m) })));
   });

@@ -647,8 +647,8 @@ export class Store {
     const marks = scope.map(() => "?").join(", ");
     const spoke = this.db
       .prepare(
-        `SELECT max(created_at) AS at FROM messages WHERE direction = 'out' AND created_at <= ?
-         AND chat_id IN (SELECT id FROM chats WHERE id IN (${marks}) OR parent_id IN (${marks}))`,
+        `SELECT max(created_at) AS at FROM messages WHERE direction = 'out' AND state IN ('sent', 'uncertain')
+         AND created_at <= ? AND chat_id IN (SELECT id FROM chats WHERE id IN (${marks}) OR parent_id IN (${marks}))`,
       )
       .get(before, ...scope, ...scope) as Row;
     const row = this.db
