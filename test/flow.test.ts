@@ -523,6 +523,7 @@ describe("admin API (console)", () => {
       "slack",
       "discord",
       "telegram",
+      "github",
     ]);
     expect(platforms.find((p) => p.platform === "telegram")?.onboarding).not.toBeNull();
     expect(platforms.find((p) => p.platform === "feishu")?.onboarding).toBeNull();

@@ -315,6 +315,8 @@ try {
     ["connect-slack", `/a/${long.slug}/connect/slack`],
     ["connect-discord", `/a/${long.slug}/connect/discord`],
     ["connect-telegram", `/a/${alex.slug}/connect/telegram`],
+    // The token guide; signing in with a code needs Mingle's OAuth App and a live call to GitHub.
+    ["connect-github", `/a/${long.slug}/connect/github`],
     // Live checks of this Mac's own permissions; read-only, they never make macOS ask anything.
     ...(process.platform === "darwin" ? [["connect-imessage", `/a/${alex.slug}/connect/imessage`]] : []),
     ["onboard-idle", `/a/${idleAgent.slug}`],
@@ -414,6 +416,10 @@ try {
     },
     "connect-telegram": (dom) => {
       assert.ok(/_\d{3}_bot</.test(dom), "Telegram guide has no username to copy");
+    },
+    "connect-github": (dom) => {
+      assert.ok(/-agent</.test(dom), "GitHub guide has no username to copy");
+      assert.ok(dom.includes("scopes=notifications,repo"), "GitHub token link does not fill in the scopes");
     },
     connect: (dom, zh) =>
       checkPlatformCounts(dom, zh, [

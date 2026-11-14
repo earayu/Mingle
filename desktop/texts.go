@@ -162,7 +162,7 @@ func (t texts) offlineBecause(reason string) string {
 func (t texts) platform(p string) string {
 	zh := map[string]string{"wechat": "微信", "wecom": "企业微信", "feishu": "飞书", "dingtalk": "钉钉"}
 	en := map[string]string{"wechat": "WeChat", "wecom": "WeCom", "feishu": "Feishu", "dingtalk": "DingTalk"}
-	other := map[string]string{"qq": "QQ", "slack": "Slack", "discord": "Discord", "telegram": "Telegram"}
+	other := map[string]string{"qq": "QQ", "slack": "Slack", "discord": "Discord", "telegram": "Telegram", "github": "GitHub"}
 	if name, ok := other[p]; ok {
 		return name
 	}

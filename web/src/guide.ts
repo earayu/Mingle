@@ -11,6 +11,8 @@ const TOKEN_SHAPES: Readonly<Record<string, RegExp>> = {
   "slack.botToken": /xoxb-[A-Za-z0-9-]+/,
   "slack.appToken": /xapp-[A-Za-z0-9-]+/,
   "discord.token": /[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{20,}/,
+  // Classic personal access tokens and OAuth tokens; fine-grained ones cannot read notifications.
+  "github.token": /gh[po]_[A-Za-z0-9]{36,}/,
 };
 
 /** True when every field's token has a shape Mingle knows, so a full form can connect without a click. */
@@ -44,9 +46,23 @@ export function pickTokens(
   return next;
 }
 
-/** What a guide's text can name: the agent, and a Telegram username made from it. */
+/** What a guide's text can name: the agent, and the usernames made from it for Telegram and GitHub. */
 export function guideVars(agent: Pick<AgentView, "id" | "slug" | "name">): Record<string, string> {
-  return { name: agent.name.trim(), username: telegramUsername(agent) };
+  return { name: agent.name.trim(), username: telegramUsername(agent), handle: githubUsername(agent) };
+}
+
+/**
+ * GitHub usernames are up to 39 letters, digits and single hyphens, not at either end. The agent's
+ * own name is likely taken, and the suffix says what the account is.
+ */
+export function githubUsername(agent: Pick<AgentView, "slug">): string {
+  const base = agent.slug
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32)
+    .replace(/-+$/, "");
+  return `${base || "mingle"}-agent`;
 }
 
 /**

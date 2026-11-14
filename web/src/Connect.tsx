@@ -16,9 +16,11 @@ import { errorText, type MessageKey, useI18n } from "./i18n.ts";
 import { PlatformIcon } from "./platforms.tsx";
 import { usePolling } from "./poll.ts";
 import {
+  ArrowUpRight,
   BackIcon,
   Button,
   Copyable,
+  copyText,
   Field,
   Input,
   LinkButton,
@@ -112,9 +114,11 @@ function PlatformGrid({
               ? t("connect.addAnother")
               : p.onboarding?.kind === "qr"
                 ? t("connect.howQr")
-                : p.onboarding
-                  ? optional(t, `${p.platform}.how`, "connect.howToken")
-                  : t("connect.soon");
+                : p.onboarding?.kind === "device"
+                  ? t(`${p.platform}.how` as MessageKey)
+                  : p.onboarding
+                    ? optional(t, `${p.platform}.how`, "connect.howToken")
+                    : t("connect.soon");
           return (
             <button
               key={p.platform}
@@ -160,18 +164,25 @@ function PlatformFlow({ agent, info, onDone }: { agent: AgentView; info: Platfor
     );
   }
   if (manual) {
+    // A device-flow platform's fallback is its own token guide, not a developer console's.
+    const device = info.onboarding?.kind === "device";
     return (
       <CredentialsFlow
         agent={agent}
         info={info}
         fields={info.manualFields}
-        stepsKey={`${info.platform}.manualSteps` as MessageKey}
-        {...(info.manualSetupUrl ? { setupUrl: info.manualSetupUrl } : {})}
-        setupLabelKey="connect.openConsole"
+        stepsKey={`${info.platform}.${device ? "steps" : "manualSteps"}` as MessageKey}
+        {...(info.manualSetupUrl ? { setupUrl: withAgentName(info.manualSetupUrl, agent.name) } : {})}
+        {...(device
+          ? { backKey: `${info.platform}.backToCode` as MessageKey }
+          : { setupLabelKey: "connect.openConsole" as MessageKey })}
         onDone={onDone}
         onBack={() => setManual(false)}
       />
     );
+  }
+  if (info.onboarding?.kind === "device") {
+    return <DeviceFlow agent={agent} info={info} onDone={onDone} onManual={() => setManual(true)} />;
   }
   return (
     <QrFlow
@@ -207,6 +218,7 @@ function CredentialsFlow({
   stepsKey,
   setupUrl,
   setupLabelKey,
+  backKey,
   onDone,
   onBack,
 }: {
@@ -216,6 +228,7 @@ function CredentialsFlow({
   stepsKey: MessageKey;
   setupUrl?: string;
   setupLabelKey?: MessageKey;
+  backKey?: MessageKey;
   onDone: () => void;
   onBack?: () => void;
 }) {
@@ -224,10 +237,12 @@ function CredentialsFlow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [bot, setBot] = useState<string | null>(null);
   /** What was last sent automatically, so a failed token is not sent again until it changes. */
   const autoSent = useRef("");
   const platformName = t(`platform.${info.platform}` as MessageKey);
   const vars = guideVars(agent);
+  const doneText = optionalText(t, `${info.platform}.done`, { bot: "{bot}" });
 
   const submit = useCallback(
     async (event?: FormEvent) => {
@@ -235,16 +250,18 @@ function CredentialsFlow({
       setBusy(true);
       setError(null);
       try {
-        await api.connect(agent.id, info.platform, values);
+        const connection = await api.connect(agent.id, info.platform, values);
+        setBot(connection.bot);
         setConnected(true);
-        setTimeout(onDone, 900);
+        // A platform with something to say once connected (where to try it) leaves time to read it.
+        setTimeout(onDone, doneText ? 4000 : 900);
       } catch (e) {
         setError(errorText(t, e));
       } finally {
         setBusy(false);
       }
     },
-    [agent.id, info.platform, values, onDone, t],
+    [agent.id, info.platform, values, onDone, t, doneText],
   );
 
   /** Pasting the platform's whole message is fine: each token is picked out, into the field it belongs to. */
@@ -277,7 +294,7 @@ function CredentialsFlow({
               state={connected ? "done" : "todo"}
               title={<GuideText text={line} vars={vars} />}
             >
-              {i === 0 && setupUrl ? (
+              {i === (SETUP_STEP[info.platform] ?? 0) && setupUrl ? (
                 <LinkButton href={setupUrl}>{t(setupLabelKey ?? (`${info.platform}.setup` as MessageKey))}</LinkButton>
               ) : null}
             </Step>
@@ -321,7 +338,7 @@ function CredentialsFlow({
               </Button>
               {onBack ? (
                 <Button variant="ghost" onClick={onBack}>
-                  {t("qr.backToQr")}
+                  {t(backKey ?? "qr.backToQr")}
                 </Button>
               ) : null}
             </div>
@@ -329,10 +346,17 @@ function CredentialsFlow({
           </Step>
         </Steps>
       </form>
-      {connected ? <p className="text-green">{t("qr.done", { platform: platformName })}</p> : null}
+      {connected ? (
+        <p className="rise text-headline font-medium text-green">
+          {doneText ? doneText.replaceAll("{bot}", bot ?? agent.name) : t("qr.done", { platform: platformName })}
+        </p>
+      ) : null}
     </div>
   );
 }
+
+/** The guide step that carries the setup link, where it is not the first (GitHub signs in first). */
+const SETUP_STEP: Partial<Record<Platform, number>> = { github: 1 };
 
 /**
  * A step's sentence. A `backticked` part is something to type elsewhere, shown as a copy chip.
@@ -542,6 +566,181 @@ function FlowTitle({ platform, title }: { platform: Platform; title: string }) {
   );
 }
 
+/**
+ * Sign in with a code (GitHub's device flow): the person signs in as the agent's own account,
+ * enters the code Mingle shows, and authorizes. Mingle notices by itself and connects.
+ */
+function DeviceFlow({
+  agent,
+  info,
+  onDone,
+  onManual,
+}: {
+  agent: AgentView;
+  info: PlatformInfo;
+  onDone: () => void;
+  onManual: () => void;
+}) {
+  const { t } = useI18n();
+  const platform = info.platform;
+  const platformName = t(`platform.${platform}` as MessageKey);
+  const { sessionId, state, now, restart } = useOnboarding(agent.id, platform, (next) => {
+    if (next.state === "done") setTimeout(onDone, 4000);
+  });
+  const [opened, setOpened] = useState(false);
+  const vars = guideVars(agent);
+  const s = state.state;
+  const expired =
+    (state.state === "device" && state.expiresAt <= now) || (state.state === "failed" && state.code === "expired");
+  const minutes = state.state === "device" ? Math.max(1, Math.ceil((state.expiresAt - now) / 60_000)) : 0;
+  const done = s === "done";
+  const step2: StepState = done ? "done" : opened ? "done" : "now";
+  const step3: StepState = done ? "done" : opened && !expired && s !== "failed" ? "now" : "later";
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-3">
+        <FlowTitle platform={platform} title={t("connect.flowTitle", { platform: spaced(platformName) })} />
+        <p className="text-ink2">{t(`${platform}.intro` as MessageKey, { name: agent.name })}</p>
+      </div>
+      <Steps>
+        <Step
+          n={1}
+          state={done ? "done" : "todo"}
+          title={t(`${platform}.account` as MessageKey, vars)}
+          hint={t(`${platform}.accountWhy` as MessageKey, vars)}
+        >
+          <p className="text-small text-ink2">
+            <GuideText text={t(`${platform}.accountHow` as MessageKey)} vars={vars} />
+          </p>
+          <LinkButton href="https://github.com/signup" small>
+            {t(`${platform}.signup` as MessageKey)}
+          </LinkButton>
+        </Step>
+        <Step n={2} state={step2} title={t(`${platform}.code` as MessageKey)} open={!done}>
+          {state.state === "device" && !expired ? (
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="selectable rounded-control border border-line2 bg-bg2 px-3 py-1.5 font-mono text-title2 font-semibold tracking-[0.12em]">
+                  {state.userCode}
+                </span>
+                <a
+                  href={state.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => {
+                    void copyText(state.userCode);
+                    setOpened(true);
+                  }}
+                  className="inline-flex h-[34px] shrink-0 items-center gap-1.5 rounded-control bg-accent px-3.5 font-medium whitespace-nowrap text-white transition-[filter] duration-[120ms] hover:brightness-110"
+                >
+                  {t(`${platform}.openCode` as MessageKey)}
+                  <ArrowUpRight />
+                </a>
+              </div>
+              <p className="text-caption text-ink3">
+                {t(`${platform}.codeHint` as MessageKey, { minutes: String(minutes) })}
+              </p>
+            </div>
+          ) : expired ? (
+            <div className="flex flex-col gap-2">
+              <p className="text-small text-ink2">{t(`${platform}.codeExpired` as MessageKey)}</p>
+              <Button className="self-start" onClick={restart}>
+                {t(`${platform}.newCode` as MessageKey)}
+              </Button>
+            </div>
+          ) : s === "failed" && state.state === "failed" ? (
+            <div className="flex flex-col gap-2">
+              <Problem title={t("connect.failed")} tone="red">
+                {errorTextFor(t, state.code)}
+              </Problem>
+              <Button className="self-start" onClick={restart}>
+                {t("connect.retry")}
+              </Button>
+            </div>
+          ) : done ? null : (
+            <Waiting>{t(`${platform}.codeLoading` as MessageKey)}</Waiting>
+          )}
+          {!done && sessionId ? (
+            <button type="button" onClick={onManual} className="self-start text-small text-accent hover:underline">
+              {t(`${platform}.manual` as MessageKey)}
+            </button>
+          ) : null}
+        </Step>
+        <Step n={3} state={step3} title={t(`${platform}.authorize` as MessageKey)}>
+          <Waiting>{t(`${platform}.authorizeWaiting` as MessageKey)}</Waiting>
+        </Step>
+      </Steps>
+      {state.state === "done" ? (
+        <p className="rise text-headline font-medium text-green">
+          {t(`${platform}.done` as MessageKey, { bot: state.bot ?? agent.name })}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Start an onboarding session and follow it until it is done; `restart` begins a new one. */
+function useOnboarding(agentId: string, platform: Platform, onState?: (state: OnboardingState) => void) {
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [state, setState] = useState<OnboardingState>({ state: "starting" });
+  const [attempt, setAttempt] = useState(0);
+  const [now, setNow] = useState(Date.now());
+  const onStateRef = useRef(onState);
+  onStateRef.current = onState;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new attempt restarts the flow
+  useEffect(() => {
+    let id: string | null = null;
+    let stopped = false;
+    setState({ state: "starting" });
+    api
+      .startOnboarding(agentId, platform)
+      .then((r) => {
+        id = r.id;
+        if (stopped) api.cancelOnboarding(r.id).catch(() => {});
+        else setSessionId(r.id);
+      })
+      .catch((e) => setState({ state: "failed", code: (e as { code?: string }).code ?? "unknown" }));
+    return () => {
+      stopped = true;
+      if (id) api.cancelOnboarding(id).catch(() => {});
+    };
+  }, [agentId, platform, attempt]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let active = true;
+    const tick = async () => {
+      const next = await api.onboarding(sessionId).catch(() => null);
+      if (!active || !next) return;
+      setState(next);
+      if (next.state === "done") {
+        active = false;
+        clearInterval(timer);
+      }
+      onStateRef.current?.(next);
+    };
+    const timer = setInterval(tick, 1500);
+    tick();
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const restart = () => {
+    setSessionId(null);
+    setAttempt((n) => n + 1);
+  };
+  return { sessionId, state, now, restart };
+}
+
 /** Scan-to-create: the QR, then the phone's confirmation, then (maybe) an admin's approval. */
 function QrFlow({
   agent,
@@ -555,10 +754,9 @@ function QrFlow({
   onManual?: () => void;
 }) {
   const { t } = useI18n();
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [state, setState] = useState<OnboardingState>({ state: "starting" });
-  const [attempt, setAttempt] = useState(0);
-  const [now, setNow] = useState(Date.now());
+  const { sessionId, state, now, restart } = useOnboarding(agent.id, info.platform, (next) => {
+    if (next.state === "done") setTimeout(onDone, next.pendingApproval ? 2500 : 1200);
+  });
   const platformName = t(`platform.${info.platform}` as MessageKey);
   // Scanning with another account adds a bot; the ones already here keep working.
   const existing = agent.connections.filter((c) => c.platform === info.platform).length;
@@ -568,56 +766,8 @@ function QrFlow({
       ? t(anotherKey as MessageKey, { count: String(existing) })
       : null;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new attempt restarts the flow
-  useEffect(() => {
-    let id: string | null = null;
-    let stopped = false;
-    setState({ state: "starting" });
-    api
-      .startOnboarding(agent.id, info.platform)
-      .then((r) => {
-        id = r.id;
-        if (stopped) api.cancelOnboarding(r.id).catch(() => {});
-        else setSessionId(r.id);
-      })
-      .catch((e) => setState({ state: "failed", code: (e as { code?: string }).code ?? "unknown" }));
-    return () => {
-      stopped = true;
-      if (id) api.cancelOnboarding(id).catch(() => {});
-    };
-  }, [agent.id, info.platform, attempt]);
-
-  useEffect(() => {
-    if (!sessionId) return;
-    let active = true;
-    const tick = async () => {
-      const next = await api.onboarding(sessionId).catch(() => null);
-      if (!active || !next) return;
-      setState(next);
-      if (next.state === "done") {
-        active = false;
-        setTimeout(onDone, next.pendingApproval ? 2500 : 1200);
-      }
-    };
-    tick();
-    const timer = setInterval(tick, 1500);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [sessionId, onDone]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
   // Where the platform does not take the name from Mingle, the phone may ask for one.
   const nameHint = optionalText(t, `${info.platform}.qrName`);
-  const restart = () => {
-    setSessionId(null);
-    setAttempt((n) => n + 1);
-  };
   const expired =
     (state.state === "qr" && state.expiresAt <= now) || (state.state === "failed" && state.code === "expired");
   const remaining = state.state === "qr" ? Math.max(0, Math.round((state.expiresAt - now) / 1000)) : 0;

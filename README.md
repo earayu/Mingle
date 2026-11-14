@@ -4,7 +4,7 @@ English · [中文](README_CN.md) · [mingle.build](https://mingle.build)
 
 **Bring your agent companion into the chat apps you already use. Runs on your machine, no server.**
 
-Create an agent on your own computer: it has a name, a role, a memory and a home directory, and it is driven by a coding agent you already use: Claude Code, Codex, Cursor, OpenCode, Kimi Code, Qwen Code, DeepSeek Harness and every other harness [OAR](https://github.com/botiverse/oar) drives. The agent joins WeChat, WeCom, Feishu, DingTalk, QQ, Slack, Discord and Telegram as a bot, and you can talk to it in iMessage on a Mac by texting yourself, where people can @-mention it, hand it tasks and hear back from it.
+Create an agent on your own computer: it has a name, a role, a memory and a home directory, and it is driven by a coding agent you already use: Claude Code, Codex, Cursor, OpenCode, Kimi Code, Qwen Code, DeepSeek Harness and every other harness [OAR](https://github.com/botiverse/oar) drives. The agent joins WeChat, WeCom, Feishu, DingTalk, QQ, Slack, Discord and Telegram as a bot, answers @-mentions in GitHub issues and pull requests from an account of its own, and you can talk to it in iMessage on a Mac by texting yourself, where people can @-mention it, hand it tasks and hear back from it.
 
 - **One agent, every chat app, one memory.** Like a person, the same agent is in your Feishu work group, your WeChat family chat and your Discord server at once, and remembers all of it. Ask it in WeChat what the team decided in Feishu this morning, or have it pass a message from Slack to Telegram.
 - **Your own chat apps.** No new chat platform. The agent shows up in the groups and direct messages you already have.

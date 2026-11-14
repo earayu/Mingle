@@ -55,7 +55,8 @@ export type Platform =
   | "slack"
   | "discord"
   | "telegram"
-  | "imessage";
+  | "imessage"
+  | "github";
 
 export interface ConnectionView {
   id: string;
@@ -183,6 +184,7 @@ export interface PlatformInfo {
   platform: Platform;
   onboarding:
     | { kind: "qr"; desktopLink?: boolean }
+    | { kind: "device" }
     | { kind: "credentials"; fields: CredentialField[]; setupUrl?: string }
     | null;
   manualFields: CredentialField[];
@@ -202,9 +204,10 @@ export type OnboardingState =
   | { state: "starting" }
   | { state: "qr"; qrSvg: string; url: string; expiresAt: number }
   | { state: "scanned" }
+  | { state: "device"; userCode: string; url: string; expiresAt: number }
   | { state: "awaiting_approval" }
   | { state: "needs_code"; retry: boolean }
-  | { state: "done"; connectionId: string; pendingApproval: boolean }
+  | { state: "done"; connectionId: string; pendingApproval: boolean; bot?: string | null }
   | { state: "failed"; code: string };
 
 export interface Task {
@@ -269,7 +272,7 @@ export const api = {
   activity: (id: string) => call<Activity[]>("GET", `/v1/admin/agents/${id}/activity?limit=30`),
   work: (id: string) => call<{ tasks: Task[]; reminders: Reminder[] }>("GET", `/v1/admin/agents/${id}/work`),
   connect: (id: string, platform: Platform, credentials: Record<string, string>) =>
-    call<{ id: string }>("POST", `/v1/admin/agents/${id}/connections`, { platform, credentials }),
+    call<{ id: string; bot: string | null }>("POST", `/v1/admin/agents/${id}/connections`, { platform, credentials }),
   disconnect: (connectionId: string) => call("DELETE", `/v1/admin/connections/${connectionId}`),
   /** Try an offline bot again now. */
   reconnect: (connectionId: string) => call("POST", `/v1/admin/connections/${connectionId}/reconnect`),

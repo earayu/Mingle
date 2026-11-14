@@ -4,7 +4,7 @@
 
 ## 项目
 
-Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claude Code、Codex 等 harness 驱动，以机器人身份加入微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram，也能在 Mac 的 iMessage 里通过自聊和 owner 对话。本地运行，没有服务端。不预设公司或工作场景。
+Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claude Code、Codex 等 harness 驱动，以机器人身份加入微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram，也能在 Mac 的 iMessage 里通过自聊和 owner 对话，或用自己的 GitHub 账号在 issue 和 PR 里被 @。本地运行，没有服务端。不预设公司或工作场景。
 
 注意区分两个"agent"：读本文件的你是开发 Mingle 的 coding agent；文档里的 Agent 指 Mingle 的产品对象。
 
@@ -12,7 +12,7 @@ Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claud
 
 ## 当前状态
 
-M3 进行中，进度见 `docs/spec.md` 11.1–11.3。已实现：存储、Agent 运行时、本地 API、`mingle` CLI、控制台（`web/`）、全部八个平台的适配器和文件收发、iMessage 自聊适配器（只在 macOS 上注册）、macOS 桌面应用（`desktop/`）。
+M3 进行中，进度见 `docs/spec.md` 11.1–11.3。已实现：存储、Agent 运行时、本地 API、`mingle` CLI、控制台（`web/`）、全部八个平台的适配器和文件收发、iMessage 自聊适配器（只在 macOS 上注册）、GitHub 适配器（issue 和 PR 里的 @）、macOS 桌面应用（`desktop/`）。
 
 代码地图：
 

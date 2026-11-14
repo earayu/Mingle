@@ -12,7 +12,7 @@
 
 **把你的 Agent 伙伴请进你已经在用的 IM。本地运行，没有服务器。**
 
-用户在自己的电脑上创建 Agent：有名字、头像、角色、记忆和自己的主目录，由本机已安装的 Claude Code、Codex 等 harness 驱动。Agent 以机器人身份出现在微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram 的群聊和私聊里，也可以在 Mac 上的 iMessage 里，在你给自己发消息的对话中和你聊（6.6），可以被 @、接任务、主动回报。
+用户在自己的电脑上创建 Agent：有名字、头像、角色、记忆和自己的主目录，由本机已安装的 Claude Code、Codex 等 harness 驱动。Agent 以机器人身份出现在微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram 的群聊和私聊里，也可以在 Mac 上的 iMessage 里，在你给自己发消息的对话中和你聊（6.6），还可以用一个自己的 GitHub 账号在 issue 和 PR 里被 @（6.7），可以被 @、接任务、主动回报。
 
 Mingle 不预设使用场景。同一个 Agent 可以是私聊里的个人助理、朋友群里的成员、社区里的答疑者，也可以是工作群里的协作者。角色由用户写的一段描述决定。
 
@@ -57,6 +57,7 @@ Mingle 不预设使用场景。同一个 Agent 可以是私聊里的个人助理
    - 飞书、钉钉、企业微信：控制台显示二维码，手机扫码创建机器人。
    - Slack：按预置 App Manifest 创建应用，粘贴两个 token。
    - Telegram、Discord：粘贴 bot token。
+   - GitHub：用 Agent 自己的 GitHub 账号登录，在 GitHub 上输入控制台显示的验证码；或粘贴一个 classic token（6.7）。
 5. 如果所在组织要求管理员审核，控制台显示"等待管理员审核"，通过后自动转为"已连接"。
 6. 把机器人拉进群。群里 `@Alex 昨天那件事后来怎么样了`，Alex 回复。
 7. 在另一个 IM 私聊 Alex 问同一件事，Alex 接得上。
@@ -163,7 +164,7 @@ erDiagram
 
 **收到即有回执，进度实时可见。** 这一步不经过 Agent，所以即使它正忙，发消息的人也立刻知道没有被漏掉、正在做什么：
 
-- **表情**：消息落库后，Mingle 立刻在这条消息上加"处理中"的表情，回复后换成"完成"，出错时换成"出错"。飞书用 OnIt → DONE / ERROR；Telegram 用 👀，回复后清除，出错 👎；没有表情能力的平台（个人微信）改为显示"正在输入"。
+- **表情**：消息落库后，Mingle 立刻在这条消息上加"处理中"的表情，回复后换成"完成"，出错时换成"出错"。飞书用 OnIt → DONE / ERROR；Telegram 用 👀，回复后清除，出错 👎；GitHub 用 👀，回复后换成 🚀，出错换成 😕；没有表情能力的平台（个人微信）改为显示"正在输入"。
 - **实时回复**：平台能改写已发消息时，Mingle 同时以引用回复的形式开一条"实时回复"，先显示"正在思考…"，满 3 秒后带上已用时间（"正在思考 · 5 秒"），随后列出 Agent 正在做的事（运行命令、查看文件、查资料……），约每秒刷新一次。Agent 用 `mingle message reply` 回复这条消息时，答案直接写进这条实时回复，原地变成答案；群里会 @ 提问的人。飞书用流式卡片，Telegram 用可编辑的消息。QQ 不开实时回复：实测它的流式消息只显示第一帧，进度会一直停在"正在思考 · 0 秒"，旁边再出现真正的答案；QQ 私聊改为处理期间持续显示"正在输入"（每 50 秒续一次，最多到被动回复窗口的 4.5 分钟），答案作为普通回复发出。
 - **收尾**：Agent 若用 `message send` 而不是 `reply` 作答，实时回复收成"已回复，见下方消息"；未回复、被 `/stop` 叫停、出错时，各自收成一句说明，不会一直停在"正在思考"。飞书流式卡片约 10 分钟后不再接受更新，超过 9 分钟的任务改为另发一条消息作答。
 
@@ -476,7 +477,7 @@ MSG
 
 ### 6.1 首批八个平台
 
-全部使用平台官方的出站长连接，不需要公网地址。
+全部使用平台官方的出站长连接，不需要公网地址。之后加入的 GitHub 见 6.7。
 
 | 平台 | 接入方式 | 连接方式 | 可能需要管理员审核 |
 |---|---|---|---|
@@ -600,6 +601,22 @@ stateDiagram-v2
 - **去重**：同一条消息若同时以"发出"和"收到"出现在 60 秒内，只算一次；每份副本只配对一次，owner 连发两句一样的话仍是两条。
 - **发消息**：AppleScript `send … to chat id <chat.guid>`；主动私聊 owner 用 `participant`。文件要先复制到 `~/Library/Messages/Attachments/mingle/` 下再发：实测「信息」只从自己的附件目录发文件，放在别处时会发出一个空气泡且不报错。发出后在 `chat.db` 里找到这条消息的 guid 作为 id。能力降级：不能引用回复（`quote_dropped`）、不能点回应、没有"正在输入"、Markdown 转纯文本。
 - **补投和断线重连**：连上时补投最近 10 分钟（不早于接入时间）的自聊消息，核心按消息 id 去重，所以 Mingle 没运行时发的消息也会回复。每次轮询检查数据库文件是否还是原来那个；读失败或文件被替换时上报 `reconnecting` 并退避重开，从上次读到的行继续。权限被收回时上报 `permission_missing`，停下等用户（6.4）。
+
+### 6.7 GitHub
+
+2026-11-15（MING-70，调研见 MING-69）。在 issue、PR、PR 行内 review 评论里 `@` Agent 的 GitHub 账号，Agent 在原楼里回复。本机轮询，不需要服务器。
+
+- **身份**：Agent 用一个自己的 GitHub 账号（GitHub 允许每人额外注册一个用于自动化的机器账号）。控制台建议的用户名是 Agent 的 slug 加 `-agent`。不用 GitHub App：App 不能被 @ 成通知，收评论只能靠 webhook，需要公网地址。也不用人自己的账号：别人 @ 的是人，Agent 用人的身份回复会冒名。
+- **接入**：渠道只用 REST API，代码在 `src/channels/github/`。`git` / `gh` 由 Agent 背后的 harness 自己在干活时使用，Mingle 不管。
+- **登录**：OAuth Device Flow。控制台显示 8 位验证码，"复制验证码并打开 GitHub"按钮把码放进剪贴板并打开 `github.com/login/device`；用户以 Agent 的账号登录、粘贴、点 Authorize，Mingle 每几秒自己查一次，授权后自动连上。scope 是 `notifications repo`：通知 API 只认 classic 权限模型，fine-grained token 和 GitHub App token 都读不了通知。Device Flow 需要 Mingle 注册的 OAuth App 的公开 client ID（不需要 secret），由 `MINGLE_GITHUB_CLIENT_ID` 提供；没有时控制台改为粘贴 classic token 的引导（链接预填 token 名和两个 scope），有时也可以点"改用 token"。粘贴的 token 先查 `X-OAuth-Scopes`，缺 scope 或没有这个头（fine-grained）时直接报 `insufficient_scope`，不等到连上以后才失败。
+- **收 @**：轮询 `GET /notifications?participating=true`，带上次的 `ETag`（`If-None-Match`），没有变化时返回 304，不计入限额；间隔取 `X-Poll-Interval`（实测 60 秒）和 60 秒中较大的一个，出错时指数退避到最多 15 分钟。只处理 `reason` 为 `mention`、`team_mention`、`comment`（Agent 评论过的楼有新动静）、`author`（Agent 自己开的 issue / PR）的通知，其他的保持未读，不动。
+- **定位评论**：通知只说明哪个 issue / PR 有动静。先把这一条标记已读（`PATCH /notifications/threads/{id}`），再读它上次已读（`last_read_at`，从未读过时往前 7 天）之后的内容：issue 或 PR 正文、issue 评论、PR 行内 review 评论和 review 总结。先标已读再读，读的过程中新来的评论会让它重新变成未读，下一轮还能拿到，不会漏；读失败的楼留在内存里下一轮重试。消息去重靠 Mingle 已有的 `platform_id`。
+- **什么算 @ 它**：正文里有完整的 `@用户名`（不算邮箱和更长的用户名）；`team_mention` 时有 `@org/team`；或者是 Agent 自己开的 review 楼里的回复（相当于聊天里回复它）。楼里其他协作者的评论存为不触发的背景消息（4.2），Agent 可以用 `message read` 看到。
+- **安全**：只处理 `author_association` 为 `OWNER`、`MEMBER`、`COLLABORATOR` 的内容。公开仓库里其他人的 @ 和评论一律丢弃，连背景消息也不存，避免陌生人往 Agent 的上下文里塞指令。Agent 自己发的内容不处理，不会自己触发自己；其他机器人（`type: Bot`）照旧被核心忽略。
+- **回复**：issue 和 PR 对话用 `POST issues/{n}/comments`；回复行内 review 评论时用 `POST pulls/{n}/comments/{root}/replies`，落在原 review 楼里（GitHub 只接受楼的第一条评论 ID，所以消息 ID 里带上楼的根）。
+- **Channel 映射**：issue / PR 是 `ChatRef(kind: "thread")`，`platformId` 为 `owner/repo#n`，名字带标题。消息 ID：`i:<n>`（正文）、`ic:<id>`（issue 评论）、`rc:<id>@<root>`（行内 review 评论）、`rv:<id>`（review 总结，不能加表情）。Markdown 原生，单条上限 65536；API 不能上传附件，带文件时文字照发、报 `files_dropped`，只有文件时发送失败（`files_unsupported`）。
+- **不开实时回复。** 原设计是先发一条"正在思考"再 PATCH 编辑。GitHub 的邮件和推送通知在评论创建时发出、带的是当时的正文，之后的编辑不会再通知，所以订阅者收到的会是"正在思考…"而不是答案，编辑记录里还会留下一串进度。改为只用 👀 表示处理中，答案作为一条新评论发出。
+- **暂不支持 Discussion。** REST API 没有 Discussion 评论的读写，要走 GraphQL（`addDiscussionComment`），通知里 Discussion 的定位方式也还没实测。Discussion 的通知目前保持未读、不处理。
 
 ## 7. 整体架构
 
@@ -854,6 +871,7 @@ docs/             文档
 | 个人账号接入（MING-52） | 完成（2026-11-14）：原则见 1.4、6.6，各平台评估见 6.6。iMessage 自聊形态在真机上跑通（12.1）；专用 Apple ID 形态没有测试环境，不开放 |
 | 多微信号与通讯录（MING-55） | 完成（2026-11-14）：见 4.2、6.1。`contacts` 表和迁移 006，消息头带 `user=`，`mingle contact list / name`，控制台连接行给 owner 起名、动态按名字显示；请求微信二维码时带上本机已有的 token。测试覆盖迁移补建、名字优先级、两个 owner 在同一平台时不显示"你"、Agent 用 CLI 起名后消息头和动态更新、`local_token_list` 和 `already_connected`。手机端提示待实测（12.2） |
 | 群聊背景消息（MING-62） | 完成（2026-11-15）：见 4.2。来源行的 `unseen` 和 `in`、`message read --since`、Slack 存下没 @ 它的频道消息，迁移 010 加 `chats.parent_id`。测试覆盖计数（含线程和所属频道）、`--since`、Slack 映射和不触发；Slack 真机未复测 |
+| GitHub 渠道（MING-70） | 完成（2026-11-15）：见 6.7。设备码和 token 两种接入、通知轮询、评论定位、协作者限制、issue 评论和 review 楼内回复、👀 → 🚀 表情。单元测试覆盖；真实 GitHub 上的结果见 12.1，独立机器账号的端到端和 Device Flow 待验证（12.2） |
 | 更多 harness、审批转发 | 未开始 |
 
 ## 12. 验证记录
@@ -960,6 +978,7 @@ docs/             文档
 | 飞书 #3 私聊 | 通过。收到 `M38R3-FEISHU-PONG` |
 | 飞书 #7 收图片、PDF | 通过。网页版拖放实际发送 PNG 和一页 PDF，Mingle 入站记录包含附件，Agent 分别识别出 `MINGLE IMAGE 31415`、`MINGLE PDF 2718`。附件与文字问题分开发送，均有客户端回复和入站记录 |
 | 冷启动重建上下文（MING-64，初步） | 2026-11-15，`spikes/cold-start-live.ts`，真实 Claude Code 2.1.322（本机默认模型 Haiku 5.5），一次成对对照，不替代数日观察。两个 Agent 历史相同：几轮聊天定下集合时间、地点和分工，再贴一份约 37 万字符的文档，上下文到 17.1 万 token。空闲 65 分钟后问同样两个问题。**成本**：冷轮 A（续用）cache_write 162,275、input 342,440；B（重建）cache_write 18,680、input 53,311，缓存写入少 88%。**质量**：问近期聊天里定下的事（集合时间地点、谁不来、谁带急救包），两边都答对。问只在那份长文档里的细节，A 答对；B 只看到截断的消息开头，回答"只看到前一部分"，请用户重贴，没有自己去读原文。据此改了截断写法：截断处注明原文还在，并给出 `message read <chat> --around <msg>`，这一改动还没有重测。结论：明显更省，但会丢掉只存在于旧上下文里的细节，保持默认关闭 |
+| GitHub 渠道（MING-70） | 2026-11-15，真实 GitHub REST API，一个私有临时仓库，维护者账号的 classic token，Node 24 `fetch`。**轮询**：`If-Modified-Since` 每次都返回 200 并计入限额；`If-None-Match` 带上次的 `ETag` 返回 304，`X-RateLimit-Remaining` 不减，所以改用 ETag。`X-Poll-Interval` 为 60。**回复**：issue 评论正常发出，Markdown 渲染；行内 review 评论的回复落在原楼（`in_reply_to_id` 是楼的根）；不存在的 issue 返回 404，映射为 `chat_gone`。**表情**：👀 → 🚀 在 issue 上换好，出错时留下 😕。**入站**：用真实 issue、PR、行内 review 评论和 review 总结的返回解析，三条 `@` 都识别为找它、其余协作者内容存为背景；github-actions 发的 `@` 是 `author_association: NONE`、`type: Bot`，被丢弃，而且这个账号没有收到它的通知。**整条链路**：把这个 token 当作 `alex-agent`，用真实 Claude Code 跑 Mingle：issue 里 `@alex-agent` → 👀 → Agent 用 `mingle message reply` 回复，评论出现在 issue 里 → 🚀。这一步的通知列表是合成的（不碰维护者自己的通知），真正的机器账号和 Device Flow 见 12.2 |
 | 本轮未重跑的项 | 保留此前结果；未重做离线补推、群聊和飞书停止回归，不扩大本轮通过范围 |
 
 接入条件复查：钉钉官方开发者后台显示当前账号“还未加入组织”；企业微信管理后台要求扫码；QQ 开放平台显示 QQ 扫码登录，未提供现成账号快捷登录；Telegram 网页版要求扫码、手机号或 Passkey 登录。QQ 与企业微信桌面端各进行一次普通调试入口尝试，未取得可操作的 CDP 入口，不据此断言平台永远不支持。个人微信沿用此前 iLink 出码记录，仍缺手机扫码条件。Discord 已确认可以复用桌面登录态进入开发者后台，创建应用的 hCaptcha 仍需人工完成，本轮未再次尝试该验证码。
@@ -986,6 +1005,7 @@ docs/             文档
 | iMessage 专用 Apple ID 形态 | 别人私聊、群聊 @ | 第二个 Apple ID 和一个单独的 macOS 用户或一台 Mac；开放前必须真机跑通 |
 | Windows、Linux 实机 | 安装、托盘（左键开窗、右键菜单、首次关窗提示）、开机自启、保持唤醒、自动更新；凭据走 DPAPI、Secret Service；Codex 在 PowerShell 里按指南调用 `mingle` | 一台 Windows 和一台 Linux 桌面机 |
 | 自动更新未覆盖路径 | 更早正式版（含 0.1.0）的升级、原生更新器实际选择增量包、界面“重启以更新”按钮；0.1.6 → 0.1.7 的 macOS 下载、验签、退出替换和数据保留已通过；0.1.7 → 0.1.8、0.1.8 → 0.1.9、0.1.9 → 0.1.10 的签名增量包重建与旧数据启动已通过，这三次原生自动更新流程未测（12.1） | 保留旧版的隔离安装和可操作原生窗口的测试环境 |
+| GitHub 机器账号端到端 | 用独立的机器账号：Device Flow 授权、别人 `@` 它后通知到达和标记已读、非协作者 `@` 不触发；组织成员关系不公开时 `author_association` 是否仍为 `MEMBER` | Mingle 的 OAuth App client ID（`MINGLE_GITHUB_CLIENT_ID`），一个机器账号 |
 | 离线补推 | Telegram、Discord、个人微信、QQ、企业微信、钉钉断开期间是否补推；飞书和 Slack 的更多断连条件 | 各平台已接入的机器人；飞书一次约 5 分钟恢复补推、Slack 一次约 2 分钟断连未补推但恢复后新消息可回复，均见 12.1，不外推为平台保证 |
 | 冷启动重建上下文（MING-64） | 一个真实 Agent 连续数日的冷轮 cache-write 与回答质量对照，以及实际触发的频率；截断提示改动后，Agent 是否会自己去读原文 | 用 `MINGLE_COLD_START=<agent>` 在日常使用的 Agent 上跑几天，按 `cold turn` 日志对比。一次短时对照见 12.1：缓存写入少 88%，但长文档里的细节会丢，所以保持默认关闭 |
 

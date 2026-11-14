@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CredentialField } from "../web/src/api.ts";
-import { guideVars, looksRight, pickTokens, recognizable, telegramUsername } from "../web/src/guide.ts";
+import { githubUsername, guideVars, looksRight, pickTokens, recognizable, telegramUsername } from "../web/src/guide.ts";
 
 const TELEGRAM: CredentialField[] = [{ key: "token", labelKey: "telegram.token", secret: true }];
 const SLACK: CredentialField[] = [
@@ -52,5 +52,20 @@ describe("connect guides", () => {
     }
     expect(telegramUsername({ id: "a1", slug: "alex" })).toMatch(/^alex_\d{3}_bot$/);
     expect(guideVars({ id: "a1", slug: "alex", name: " Alex " }).name).toBe("Alex");
+  });
+
+  it("suggests a GitHub username from the agent, and picks a classic token out of what is pasted", () => {
+    expect(githubUsername({ slug: "alex" })).toBe("alex-agent");
+    expect(githubUsername({ slug: "Weekend Hikes!!" })).toBe("weekend-hikes-agent");
+    expect(githubUsername({ slug: "周末" })).toBe("mingle-agent");
+    expect(githubUsername({ slug: "a".repeat(60) })).toHaveLength(38);
+    expect(guideVars({ id: "a_1", slug: "alex", name: "Alex" }).handle).toBe("alex-agent");
+
+    const GITHUB: CredentialField[] = [{ key: "token", labelKey: "github.token", secret: true }];
+    const token = `ghp_${"A1b2".repeat(9)}`;
+    expect(pickTokens(GITHUB, {}, "token", `Your token: ${token}  (copy it now)`)).toEqual({ token });
+    expect(recognizable(GITHUB)).toBe(true);
+    // Fine-grained tokens cannot read notifications, so they do not connect on paste.
+    expect(looksRight(GITHUB[0] as CredentialField, `github_pat_${"x".repeat(40)}`)).toBe(false);
   });
 });
