@@ -18,10 +18,17 @@ export function formatMessage(
   message: Message,
   chat: Chat,
   platform: Platform,
-  opts: { ownerId?: string | null; agentName?: string; contact?: Contact | undefined } = {},
+  opts: {
+    ownerId?: string | null;
+    agentName?: string;
+    contact?: Contact | undefined;
+    /** On delivery: messages around this one that did not reach the agent (docs/spec.md 4.2). */
+    unseen?: number;
+  } = {},
 ): string {
   const parts = [`msg=${message.id}`, `chat=${chat.id}`, `im=${platform}`];
   parts.push(chat.kind === "dm" ? "dm" : `group=${quote(chat.name ?? chat.platformId)}`);
+  if (chat.parentId) parts.push(`in=${chat.parentId}`);
   if (message.direction === "out") {
     parts.push(`from=${quote(opts.agentName ?? "you")}`, "you");
   } else {
@@ -36,6 +43,7 @@ export function formatMessage(
   if (message.replyTo) parts.push(`reply_to=${message.replyTo}`);
   for (const a of message.attachments) parts.push(`file=${a.id}:${quote(a.name)}`);
   parts.push(`time=${localTime(message.createdAt)}`);
+  if (opts.unseen) parts.push(`unseen=${opts.unseen}`);
   return `[${parts.join(" ")}]\n${message.body}`;
 }
 
