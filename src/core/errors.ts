@@ -13,7 +13,7 @@ export class MingleError extends Error {
 }
 
 export const notFound = (
-  what: "message" | "chat" | "file" | "task" | "reminder" | "agent" | "connection",
+  what: "message" | "chat" | "file" | "task" | "reminder" | "agent" | "connection" | "contact",
   id: string,
 ) => {
   const list: Record<typeof what, string> = {
@@ -23,7 +23,18 @@ export const notFound = (
     task: `no task ${id}. Run "mingle task list --all"`,
     reminder: `no reminder ${id}. Run "mingle reminder list"`,
     agent: `no agent ${id}. Run "mingle agent list"`,
+    contact: `no contact ${id}. Contact IDs appear in message headers as user=<id>; run "mingle contact list"`,
     connection: `no connection ${id}. "mingle status" shows connection IDs in brackets`,
   };
   return new MingleError(`${what}_not_found`, list[what], 404);
 };
+
+/** A name the owner or an agent gives a contact: one line, trimmed, at most 64 characters. Empty clears it. */
+export function contactAlias(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string") throw new MingleError("name_invalid", "pass the name as text");
+  const name = value.replace(/\s+/g, " ").trim();
+  if (!name) return null;
+  if ([...name].length > 64) throw new MingleError("name_too_long", "keep the name to 64 characters or fewer");
+  return name;
+}

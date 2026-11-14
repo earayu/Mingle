@@ -66,6 +66,10 @@ export interface ConnectionView {
   /** When Mingle tries an offline bot again by itself; null when it waits for the person or is connected. */
   retryAt: number | null;
   owner: boolean;
+  /** The owner as the agent's address book names them; name is null until someone names them. */
+  ownerContact: { id: string; name: string | null } | null;
+  /** Another bot on this platform has a different owner, so this one's owner needs a name. */
+  ownerShared: boolean;
   /** Where to add the bot to a server, for platforms where that is a separate step. */
   invite: string | null;
 }
@@ -97,6 +101,9 @@ export interface Activity {
   chat: { id: string; kind: "dm" | "group" | "thread"; name: string | null };
   sender: string | null;
   senderIsOwner: boolean;
+  /** An owner, and the only one on this platform: an unnamed one can be called "you". */
+  senderIsOnlyOwner: boolean;
+  contactId: string | null;
   body: string;
   state: string;
   files: string[];
@@ -236,6 +243,9 @@ export const api = {
     call<{ ignored: string[] }>("POST", `/v1/admin/agents/${id}/messages/ignore`, { ids }),
   remove: (id: string) => call("DELETE", `/v1/admin/agents/${id}`),
   openHome: (id: string) => call("POST", `/v1/admin/agents/${id}/open-home`),
+  /** Name someone in the agent's address book; an empty name clears it. */
+  nameContact: (id: string, contactId: string, name: string) =>
+    call<{ id: string; name: string | null }>("PATCH", `/v1/admin/agents/${id}/contacts/${contactId}`, { name }),
   activity: (id: string) => call<Activity[]>("GET", `/v1/admin/agents/${id}/activity?limit=30`),
   work: (id: string) => call<{ tasks: Task[]; reminders: Reminder[] }>("GET", `/v1/admin/agents/${id}/work`),
   connect: (id: string, platform: Platform, credentials: Record<string, string>) =>

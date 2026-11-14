@@ -9,7 +9,7 @@ import { VERSION } from "../version.ts";
 
 /**
  * One command, two audiences:
- * - an agent inside its session (MINGLE_TOKEN set): message, chat, file, task, reminder, whoami, manual;
+ * - an agent inside its session (MINGLE_TOKEN set): message, chat, contact, file, task, reminder, whoami, manual;
  * - the owner in a terminal: start, status, agent, connect, disconnect, harnesses.
  */
 
@@ -35,6 +35,7 @@ const OPTIONS = {
   out: { type: "string" },
   from: { type: "string" },
   all: { type: "boolean" },
+  clear: { type: "boolean" },
   status: { type: "string" },
   at: { type: "string" },
   every: { type: "string" },
@@ -222,6 +223,33 @@ async function agentCommand(group: string, action: string | undefined, args: str
             ? `members: ${info.members.map((m) => m.name).join(", ")}`
             : "members: not available on this chat app",
         ].join("\n"),
+      );
+      return true;
+    }
+    case "contact list": {
+      const contacts = await call()<
+        { id: string; platform: string; name: string | null; platformName: string | null; owner: boolean }[]
+      >("GET", "/v1/agent/contacts");
+      print(contacts, () =>
+        contacts.length
+          ? contacts
+              .map((k) => {
+                const given =
+                  k.name && k.name !== k.platformName && k.platformName ? `  (${k.platformName} on ${k.platform})` : "";
+                return `${k.id}  ${k.platform}  ${k.name ? JSON.stringify(k.name) : "no name"}${given}${k.owner ? "  owner" : ""}`;
+              })
+              .join("\n")
+          : "no contacts yet: nobody has messaged you",
+      );
+      return true;
+    }
+    case "contact name": {
+      const usage = 'usage: mingle contact name <user-id> "name" | mingle contact name <user-id> --clear';
+      const id = need(args[0], "contact_required", usage);
+      const name = flags.clear ? null : need(args.slice(1).join(" ").trim(), "name_required", usage);
+      const contact = await call()<{ id: string; name: string | null }>("PATCH", `/v1/agent/contacts/${id}`, { name });
+      print(contact, () =>
+        contact.name ? `${contact.id} is now ${JSON.stringify(contact.name)}` : `${contact.id} has no name now`,
       );
       return true;
     }
@@ -601,6 +629,7 @@ For the owner:
 For agents (inside a session):
   mingle message reply <msg> | send --to <chat> | read <chat> | search <words>
   mingle chat list | info <chat>
+  mingle contact list | name <user> "name"
   mingle file get <file>
   mingle task create | list | update
   mingle reminder set | list | cancel

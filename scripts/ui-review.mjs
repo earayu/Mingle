@@ -82,6 +82,8 @@ try {
   });
   await admin("POST", `/v1/admin/agents/${pausedAgent.id}/pause`);
   const pauseAgent = await admin("POST", "/v1/admin/agents", { name: "Nova", harness, role: "" });
+  // One agent on two WeChat accounts (MING-55): two owners, one named, one not.
+  const sharedAgent = await admin("POST", "/v1/admin/agents", { name: "嘟嘟", harness, role: "" });
 
   // Seed chats and history straight into the database.
   const db = new DatabaseSync(join(home, "mingle.db"));
@@ -240,6 +242,48 @@ try {
   for (let i = 0; i < 31; i++) {
     msg(`h${i}`, "c7", "in", "Owner", `Later message ${i}`, "unanswered", 60_000 - i * 1000);
   }
+  conn("n10", sharedAgent.id, "wechat", "嘟嘟", "connected", null, "me@im.wechat");
+  conn("n11", sharedAgent.id, "wechat", "嘟嘟", "connected", null, "her@im.wechat");
+  const contact = (id, connection, platformId, alias) =>
+    insert(
+      "INSERT INTO contacts (id, connection_id, platform_id, name, alias, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?, ?)",
+      id,
+      connection,
+      platformId,
+      alias,
+      now,
+      now,
+    );
+  contact("u2me", "n10", "me@im.wechat", "Maximiliana Alexandrovna Konstantinopolskaya");
+  contact("u3hr", "n11", "her@im.wechat", null);
+  insert(
+    "INSERT INTO chats (id, connection_id, platform_id, kind, created_at, updated_at) VALUES ('c8','n10','me@im.wechat','dm',?,?)",
+    now,
+    now,
+  );
+  insert(
+    "INSERT INTO chats (id, connection_id, platform_id, kind, created_at, updated_at) VALUES ('c9','n11','her@im.wechat','dm',?,?)",
+    now,
+    now,
+  );
+  const wechatMsg = (id, chat, sender, body, ago) =>
+    insert(
+      "INSERT INTO messages (id, chat_id, direction, platform_id, sender_id, sender_name, body, triggers, state, created_at) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?)",
+      id,
+      chat,
+      sender ? "in" : "out",
+      id,
+      sender,
+      body,
+      sender ? 1 : 0,
+      sender ? "replied" : "sent",
+      now - ago,
+    );
+  wechatMsg("m50", "c8", "me@im.wechat", "周末去哪儿吃饭？", 600_000);
+  wechatMsg("m51", "c8", null, "可以试试西山脚下那家农家菜。", 590_000);
+  wechatMsg("m52", "c9", "her@im.wechat", "帮我记一下周六带伞", 300_000);
+  wechatMsg("m53", "c9", null, "记下了，周六早上提醒你。", 290_000);
+  insert("UPDATE agents SET status = 'idle', has_replied = 1 WHERE id = ?", sharedAgent.id);
   insert("UPDATE agents SET status = 'idle' WHERE id = ?", idleAgent.id);
   insert("UPDATE agents SET status = 'thinking', status_detail = 'Reading the route notes' WHERE id = ?", busyAgent.id);
   insert("UPDATE agents SET status = 'idle' WHERE id = ?", offAgent.id);
@@ -266,6 +310,7 @@ try {
     ["onboard-done", `/a/${doneAgent.slug}`],
     ["no-bot", `/a/${lonelyAgent.slug}`],
     ["paused", `/a/${pausedAgent.slug}`],
+    ["shared-wechat", `/a/${sharedAgent.slug}`],
   ];
   const checkPlatformCounts = (dom, zh, expected) => {
     const buttons = [...dom.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map((match) => match[0]);
@@ -326,6 +371,12 @@ try {
       assert.ok(!dom.includes('class="spin'), "inactive agent shows a spinner");
       // Offline is never a dead end: a way to reconnect is right there.
       assert.ok(dom.includes(zh ? "重新连接" : "Reconnect"), "offline bot has no reconnect action");
+    },
+    // Two owners on WeChat: neither is "you"; the unnamed one shows its contact ID.
+    "shared-wechat": (dom, zh) => {
+      assert.ok(dom.includes(zh ? "未命名 · u3hr" : "Unnamed · u3hr"), "unnamed second owner not labelled");
+      assert.ok(dom.includes("Maximiliana"), "named owner not shown by name");
+      assert.ok(!/>\s*(你|You)\s*</.test(dom), "an owner shared between two people shows as you");
     },
     paused: (dom, zh) => {
       assert.ok(dom.includes(zh ? "已暂停" : "is paused"), "paused agent does not say so");
@@ -413,6 +464,7 @@ try {
     envSlug: helper.slug,
     emptySlug: lonelyAgent.slug,
     pauseSlug: pauseAgent.slug,
+    sharedSlug: sharedAgent.slug,
     envSecret: ENV_SECRET,
     chrome: CHROME,
     out: OUT,

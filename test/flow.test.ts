@@ -46,7 +46,7 @@ describe("message flow", () => {
     expect(channel.acks).toContain(inbound.platformId);
     await until(() => mingle.store.message(stored?.id as string)?.state === "replied");
     expect(current.turns[0]?.input).toMatch(
-      /^\[msg=m\w+ chat=c\w+ im=telegram group="Weekend hikes" from="Zhang San" time=.+\]\nwhat's the weather on Saturday\?$/,
+      /^\[msg=m\w+ chat=c\w+ im=telegram group="Weekend hikes" from="Zhang San" user=u\w+ time=.+\]\nwhat's the weather on Saturday\?$/,
     );
   });
 
@@ -687,5 +687,82 @@ describe("binding a bot again", () => {
     expect(mingle.store.connections()).toHaveLength(1);
     expect(JSON.parse((await secrets.get(first.secretRef)) as string)).toEqual({ token: "rotated" });
     expect(mingle.store.connection(first.id)?.state).toBe("connected");
+  });
+});
+
+describe("contacts", () => {
+  it("tells two owners on one platform apart, and lets the agent and the console name them", async () => {
+    const seen: string[] = [];
+    current = await rig(async (t) => {
+      const env = t.options.env as Record<string, string>;
+      seen.push(t.input);
+      const user = /user=(u\w+)/.exec(t.input)?.[1] as string;
+      if (!t.input.includes("from=")) {
+        const named = await runCli(env, ["contact", "name", user, "Mei"]);
+        if (named.code !== 0) throw new Error(named.stderr);
+      }
+      for (const id of messageIds(t.input)) await runCli(env, ["message", "reply", id], "ok");
+    });
+    const { mingle, agentId, admin, channel } = current;
+    const mine = mingle.store.connections(agentId)[0] as { id: string };
+    mingle.store.updateConnection(mine.id, { ownerId: "me" });
+    // A second bot on the same platform, scanned by someone else: it has its own owner.
+    const hers = mingle.store.createConnection({ agentId, platform: "telegram", secretRef: "telegram:bot2" });
+    mingle.store.updateConnection(hers.id, { ownerId: "her", botId: "bot2", botName: "@alex_bot" });
+
+    const dm = { platformId: "me", kind: "dm" as const };
+    channel.receive({ text: "hello from me", chat: dm, sender: { id: "me", name: "", isBot: false } });
+    await until(() => channel.sent.length === 1);
+    expect(seen[0]).toMatch(/ dm user=u\w+ owner time=/);
+    expect(seen[0]).not.toContain("from=");
+
+    const activity = async () =>
+      (await admin("GET", `/v1/admin/agents/${agentId}/activity`)).json as {
+        body: string;
+        sender: string | null;
+        senderIsOwner: boolean;
+        senderIsOnlyOwner: boolean;
+        contactId: string | null;
+      }[];
+    const fromMe = (await activity()).find((m) => m.body === "hello from me");
+    // Two owners on one platform: neither may be shown as "you".
+    expect(fromMe).toMatchObject({ senderIsOwner: true, senderIsOnlyOwner: false, contactId: expect.any(String) });
+
+    // The agent named the unnamed sender, so its next message carries the name.
+    expect(mingle.store.contact(fromMe?.contactId as string)?.alias).toBe("Mei");
+    channel.receive({ text: "me again", chat: dm, sender: { id: "me", name: "", isBot: false } });
+    // It may arrive as a new turn or be steered into the one still finishing.
+    const again = await until(() =>
+      current?.turns.flatMap((t) => [t.input, ...t.steered]).find((input) => input.includes("me again")),
+    );
+    expect(again).toMatch(/ dm from="Mei" user=u\w+ owner time=/);
+    expect((await activity()).find((m) => m.body === "me again")?.sender).toBe("Mei");
+
+    // The console renames it, and sees the owner on the connection.
+    const renamed = await admin("PATCH", `/v1/admin/agents/${agentId}/contacts/${fromMe?.contactId}`, {
+      name: "  Wei  ",
+    });
+    expect(renamed.json).toEqual({ id: fromMe?.contactId, name: "Wei" });
+    const status = (await admin("GET", `/v1/admin/agents/${agentId}`)).json as {
+      connections: { id: string; ownerShared: boolean; ownerContact: { name: string | null } | null }[];
+    };
+    expect(status.connections.find((c) => c.id === mine.id)).toMatchObject({
+      ownerShared: true,
+      ownerContact: { name: "Wei" },
+    });
+    expect(
+      (await admin("PATCH", `/v1/admin/agents/${agentId}/contacts/${fromMe?.contactId}`, { name: "x".repeat(65) }))
+        .status,
+    ).toBe(400);
+    expect((await admin("PATCH", `/v1/admin/agents/${agentId}/contacts/unope`, { name: "x" })).status).toBe(404);
+
+    // One owner per platform again: an unnamed owner can be "you".
+    await mingle.removeConnection(hers.id);
+    await admin("PATCH", `/v1/admin/agents/${agentId}/contacts/${fromMe?.contactId}`, { name: "" });
+    // A second bot owned by the same account does not make two people either.
+    const another = mingle.store.createConnection({ agentId, platform: "telegram", secretRef: "telegram:bot3" });
+    mingle.store.updateConnection(another.id, { ownerId: "me", botId: "bot3" });
+    const alone = (await activity()).find((m) => m.body === "hello from me");
+    expect(alone).toMatchObject({ sender: null, senderIsOnlyOwner: true });
   });
 });

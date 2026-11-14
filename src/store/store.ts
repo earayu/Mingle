@@ -44,6 +44,23 @@ export interface Connection {
   ownerId: string | null;
 }
 
+/** One person as one bot sees them: the agent's address book (docs/spec.md 3). */
+export interface Contact {
+  id: string;
+  connectionId: string;
+  platformId: string;
+  /** The latest name the platform reported. */
+  name: string | null;
+  /** The name the owner or the agent gave them. Wins over `name`. */
+  alias: string | null;
+  updatedAt: number;
+}
+
+/** What to call a contact: the given name, else the platform's, else nothing. */
+export function contactName(contact: Pick<Contact, "name" | "alias"> | undefined): string | null {
+  return contact?.alias || contact?.name || null;
+}
+
 export interface Chat {
   id: string;
   connectionId: string;
@@ -110,14 +127,16 @@ export class Store {
     this.now = now;
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-    this.migrate();
+    const from = this.migrate();
+    if (from < 6) this.backfillContacts();
   }
 
   close(): void {
     this.db.close();
   }
 
-  private migrate(): void {
+  /** Apply pending migrations. Returns the version the database was at before. */
+  private migrate(): number {
     const current = Number((this.db.prepare("PRAGMA user_version").get() as Row).user_version);
     const files = readdirSync(MIGRATIONS)
       .filter((f) => /^\d+_.+\.sql$/.test(f))
@@ -136,6 +155,26 @@ export class Store {
         throw error;
       }
     }
+    return current;
+  }
+
+  /** On upgrade to contacts: everyone who already wrote, and every known owner, gets an entry. */
+  private backfillContacts(): void {
+    const senders = this.db
+      .prepare(
+        `SELECT c.connection_id, m.sender_id,
+           (SELECT m2.sender_name FROM messages m2 JOIN chats c2 ON c2.id = m2.chat_id
+            WHERE c2.connection_id = c.connection_id AND m2.sender_id = m.sender_id
+              AND m2.sender_name IS NOT NULL AND m2.sender_name <> '' AND m2.sender_name <> m2.sender_id
+            ORDER BY m2.created_at DESC LIMIT 1) AS name
+         FROM messages m JOIN chats c ON c.id = m.chat_id
+         WHERE m.direction = 'in' AND m.sender_id IS NOT NULL
+         GROUP BY c.connection_id, m.sender_id`,
+      )
+      .all() as Row[];
+    for (const r of senders) this.touchContact(String(r.connection_id), String(r.sender_id), str(r.name));
+    const owners = this.db.prepare("SELECT id, owner_id FROM connections WHERE owner_id IS NOT NULL").all() as Row[];
+    for (const r of owners) this.touchContact(String(r.id), String(r.owner_id), null);
   }
 
   /** Mint an ID not yet used in `table`. */
@@ -313,6 +352,72 @@ export class Store {
       platform: String(r.platform) as Platform,
       lastAt: r.last_at === null ? null : Number(r.last_at),
     }));
+  }
+
+  // ---------------------------------------------------------------- contacts
+
+  /**
+   * The contact for this person on this bot, created on first sight. A non-empty platform name
+   * that is not just the ID replaces the stored one; the alias is never touched here.
+   */
+  touchContact(connectionId: string, platformId: string, name: string | null | undefined): Contact {
+    const reported = name?.trim() && name.trim() !== platformId ? name.trim() : null;
+    const existing = this.contactByPlatformId(connectionId, platformId);
+    const t = this.now();
+    if (existing) {
+      if (reported && reported !== existing.name) {
+        this.db.prepare("UPDATE contacts SET name = ?, updated_at = ? WHERE id = ?").run(reported, t, existing.id);
+        return { ...existing, name: reported, updatedAt: t };
+      }
+      return existing;
+    }
+    const id = this.mint("contacts", "u", 4);
+    this.db
+      .prepare(
+        "INSERT INTO contacts (id, connection_id, platform_id, name, alias, created_at, updated_at) VALUES (?, ?, ?, ?, NULL, ?, ?)",
+      )
+      .run(id, connectionId, platformId, reported, t, t);
+    return this.contact(id) as Contact;
+  }
+
+  contact(id: string): Contact | undefined {
+    const row = this.db.prepare("SELECT * FROM contacts WHERE id = ?").get(id) as Row | undefined;
+    return row && toContact(row);
+  }
+
+  contactByPlatformId(connectionId: string, platformId: string): Contact | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM contacts WHERE connection_id = ? AND platform_id = ?")
+      .get(connectionId, platformId) as Row | undefined;
+    return row && toContact(row);
+  }
+
+  /** The contact, if it belongs to one of this agent's connections. */
+  agentContact(agentId: string, id: string): Contact | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT k.* FROM contacts k JOIN connections n ON n.id = k.connection_id WHERE k.id = ? AND n.agent_id = ?",
+      )
+      .get(id, agentId) as Row | undefined;
+    return row && toContact(row);
+  }
+
+  /** Everyone this agent knows, most recently changed first. */
+  agentContacts(agentId: string): (Contact & { platform: Platform; owner: boolean })[] {
+    const rows = this.db
+      .prepare(
+        `SELECT k.*, n.platform, (n.owner_id IS NOT NULL AND n.owner_id = k.platform_id) AS is_owner
+         FROM contacts k JOIN connections n ON n.id = k.connection_id
+         WHERE n.agent_id = ? ORDER BY k.updated_at DESC`,
+      )
+      .all(agentId) as Row[];
+    return rows.map((r) => ({ ...toContact(r), platform: String(r.platform) as Platform, owner: r.is_owner === 1 }));
+  }
+
+  /** Give a contact a name, or clear it with null to go back to the platform's. */
+  setContactAlias(id: string, alias: string | null): Contact | undefined {
+    this.db.prepare("UPDATE contacts SET alias = ?, updated_at = ? WHERE id = ?").run(alias, this.now(), id);
+    return this.contact(id);
   }
 
   // ---------------------------------------------------------------- messages
@@ -620,6 +725,17 @@ function toConnection(r: Row): Connection {
     stateDetail: str(r.state_detail),
     secretRef: str(r.secret_ref),
     ownerId: str(r.owner_id),
+  };
+}
+
+function toContact(r: Row): Contact {
+  return {
+    id: String(r.id),
+    connectionId: String(r.connection_id),
+    platformId: String(r.platform_id),
+    name: str(r.name),
+    alias: str(r.alias),
+    updatedAt: Number(r.updated_at),
   };
 }
 

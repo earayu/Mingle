@@ -6,6 +6,9 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 ## Unreleased
 
 - On macOS, chat apps no longer go offline with "can't find this bot's credentials" after Mingle restarts. The Keychain kept only the first 128 characters of each bot's credentials (and of long environment variables), and returned names in other scripts in a form Mingle could not read. Credentials are now saved in full and checked when saved. Bots that already show this error need to be connected again once: scan or enter the credentials again for the same agent.
+- One agent can be on several WeChat accounts, for example yours and a family member's: each scan adds its own connection and the ones already there stay connected. The scan page now says so. Scanning an account that is already connected here says it is already connected, instead of claiming it is bound to another bot.
+- Agents now keep an address book. Every message header names the sender's contact (`user=u7k2p`), and an agent can name people with `mingle contact name` when the chat app gives no name, as personal WeChat never does. You can name each bot's owner from its row under Chat apps.
+- Recent activity shows the names from that address book. An unnamed owner is shown as "You" only when it cannot be two people; with two owners on one platform each shows as "Unnamed" with its ID until named.
 
 ## 0.1.8
 

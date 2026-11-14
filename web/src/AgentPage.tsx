@@ -25,6 +25,7 @@ import {
   Group,
   GroupRow,
   HarnessIcon,
+  Input,
   MoreMenu,
   PageHeader,
   PauseIcon,
@@ -262,7 +263,15 @@ export function AgentPage({
                   tabIndex={-1}
                   className="rounded-card focus:outline-2 focus:outline-offset-4 focus:outline-accent"
                 >
-                  <Connections agent={agent} onConnect={connect} onChanged={onChanged} />
+                  <Connections
+                    agent={agent}
+                    onConnect={connect}
+                    onChanged={() => {
+                      void onChanged();
+                      // A renamed owner shows by the new name in the activity right away.
+                      void refreshActivity();
+                    }}
+                  />
                 </section>
                 <RoleEditor agent={agent} onSaved={onChanged} />
                 <Brain agent={agent} onSaved={onChanged} />
@@ -629,7 +638,16 @@ function ChatAppsSummary({ agent, onManage }: { agent: AgentView; onManage: () =
         {agent.connections.map((c) => (
           <GroupRow key={c.id} className="min-h-[44px]">
             <PlatformIcon platform={c.platform} size={22} />
-            <span className="min-w-0 flex-1 truncate">{c.bot ?? t(`platform.${c.platform}` as MessageKey)}</span>
+            <span className="min-w-0 flex-1 truncate">
+              {c.bot ?? t(`platform.${c.platform}` as MessageKey)}
+              {/* Two bots of one platform look alike: say whose each is. */}
+              {c.ownerShared ? (
+                <span className="text-ink3">
+                  {" · "}
+                  {c.ownerContact?.name ?? t("connection.ownerUnnamed")}
+                </span>
+              ) : null}
+            </span>
             <StatusDot state={c.state} />
           </GroupRow>
         ))}
@@ -771,7 +789,7 @@ function Connections({
       ) : (
         <Group>
           {agent.connections.map((c) => (
-            <ConnectionRow key={c.id} connection={c} onChanged={onChanged} />
+            <ConnectionRow key={c.id} agentId={agent.id} connection={c} onChanged={onChanged} />
           ))}
         </Group>
       )}
@@ -779,18 +797,32 @@ function Connections({
   );
 }
 
-function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; onChanged: () => void }) {
+function ConnectionRow({
+  agentId,
+  connection,
+  onChanged,
+}: {
+  agentId: string;
+  connection: ConnectionView;
+  onChanged: () => void;
+}) {
   const { t } = useI18n();
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [naming, setNaming] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const platform = t(`platform.${connection.platform}` as MessageKey);
+  const owner = connection.ownerContact;
+  // Another bot on this platform has a different owner: name them, or both read as "you".
+  const shared = connection.ownerShared;
   const hint =
     connection.state === "error"
       ? connectionDetail(t, connection)
       : connection.state === "connected" && !connection.owner
         ? t("connection.noOwner")
-        : null;
+        : shared && owner && !owner.name
+          ? t("connection.nameOwnerHint", { platform })
+          : null;
   return (
     <GroupRow className="flex-wrap">
       <PlatformIcon platform={connection.platform} size={32} />
@@ -802,10 +834,23 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
           <StatusDot state={connection.state} />
           <span className="truncate">
             {platform} · {t(`connection.${connection.state}` as MessageKey)}
+            {owner && (owner.name || shared)
+              ? ` · ${owner.name ? t("connection.ownerIs", { name: owner.name }) : t("connection.ownerUnnamed")}`
+              : null}
           </span>
         </span>
       </span>
-      {confirming ? (
+      {naming && owner ? (
+        <OwnerNameForm
+          agentId={agentId}
+          contactId={owner.id}
+          initial={owner.name ?? ""}
+          onDone={(saved) => {
+            setNaming(false);
+            if (saved) onChanged();
+          }}
+        />
+      ) : confirming ? (
         <span className="flex shrink-0 items-center gap-1.5">
           <span className="hidden text-small text-ink2 sm:inline">{t("connection.removeAsk")}</span>
           <Button
@@ -847,7 +892,10 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
           ) : null}
           <MoreMenu
             label={t("agent.more")}
-            items={[{ label: t("connection.remove"), danger: true, onSelect: () => setConfirming(true) }]}
+            items={[
+              ...(owner ? [{ label: t("connection.nameOwner"), onSelect: () => setNaming(true) }] : []),
+              { label: t("connection.remove"), danger: true, onSelect: () => setConfirming(true) },
+            ]}
           />
         </span>
       )}
@@ -856,6 +904,61 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
         <p className={`w-full pl-11 text-caption ${connection.state === "error" ? "text-red" : "text-ink3"}`}>{hint}</p>
       ) : null}
     </GroupRow>
+  );
+}
+
+/** Name a bot's owner, so two people on one platform are not both "you". Empty clears the name. */
+function OwnerNameForm({
+  agentId,
+  contactId,
+  initial,
+  onDone,
+}: {
+  agentId: string;
+  contactId: string;
+  initial: string;
+  onDone: (saved: boolean) => void;
+}) {
+  const { t } = useI18n();
+  const [name, setName] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <form
+      className="flex w-full flex-col gap-1.5 pl-11"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError(null);
+        try {
+          await api.nameContact(agentId, contactId, name);
+          onDone(true);
+        } catch (err) {
+          setError(errorText(t, err));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <span className="flex flex-wrap items-center gap-1.5">
+        <Input
+          className="min-w-0 flex-1"
+          aria-label={t("connection.ownerName")}
+          placeholder={t("connection.ownerName")}
+          value={name}
+          maxLength={64}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+        />
+        <Button small variant="primary" type="submit" disabled={busy}>
+          {t("connection.ownerNameSave")}
+        </Button>
+        <Button small variant="ghost" type="button" onClick={() => onDone(false)}>
+          {t("agent.deleteNo")}
+        </Button>
+      </span>
+      {error ? <p className="text-caption text-red">{error}</p> : null}
+    </form>
   );
 }
 
@@ -1112,7 +1215,14 @@ function ActivityList({
   return (
     <Group>
       {items.map((m) => {
-        const who = m.sender ?? (m.senderIsOwner ? t("activity.you") : t("activity.someone"));
+        // "You" only when it cannot be two people: two WeChat accounts are each an owner.
+        const who =
+          m.sender ??
+          (m.senderIsOnlyOwner
+            ? t("activity.you")
+            : m.contactId
+              ? t("activity.unnamed", { id: m.contactId })
+              : t("activity.someone"));
         const where = m.chat.kind === "dm" ? t("chat.dm") : (m.chat.name ?? t("chat.group"));
         return (
           <div key={m.id} className={`flex gap-3 px-4 py-3 ${m.direction === "out" ? "bg-bg2" : ""}`}>
