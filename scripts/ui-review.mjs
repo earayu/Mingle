@@ -411,6 +411,7 @@ try {
     slug: alex.slug,
     singleSlug: long.slug,
     envSlug: helper.slug,
+    emptySlug: lonelyAgent.slug,
     pauseSlug: pauseAgent.slug,
     envSecret: ENV_SECRET,
     chrome: CHROME,
