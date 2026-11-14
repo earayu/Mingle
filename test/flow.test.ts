@@ -526,6 +526,10 @@ describe("admin API (console)", () => {
     ]);
     expect(platforms.find((p) => p.platform === "telegram")?.onboarding).not.toBeNull();
     expect(platforms.find((p) => p.platform === "feishu")?.onboarding).toBeNull();
+    expect(platforms.find((p) => p.platform === "telegram")).toMatchObject({ setup: false, manualSetupUrl: null });
+    // Only platforms with local prerequisites (iMessage) answer setup checks; actions are a fixed list.
+    expect((await admin("GET", "/v1/admin/platforms/telegram/setup")).status).toBe(404);
+    expect((await admin("POST", "/v1/admin/platforms/telegram/setup/open_messages")).status).toBe(404);
 
     const activity = (await admin("GET", `/v1/admin/agents/${agentId}/activity`)).json as {
       direction: string;

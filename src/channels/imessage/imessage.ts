@@ -11,6 +11,7 @@ import type {
   Channel,
   ChannelConnection,
   ChannelEvents,
+  ChannelSetup,
   InboundAttachment,
   InboundMessage,
   OutboundMessage,
@@ -52,6 +53,21 @@ export interface IMessageOptions {
   /** How long to look for a sent message in the database before giving up on its id. */
   readonly sentLookupMs?: number;
   readonly now?: () => number;
+  /** Setup checks (docs/spec.md 6.6). Defaults read this Mac. */
+  readonly setup?: SetupProbe;
+}
+
+/** How the setup checks look at this Mac, replaceable in tests. */
+export interface SetupProbe {
+  /** iMessage accounts Messages has turned on, read from its preferences (no permission needed). */
+  readonly activeAccounts?: () => Promise<number | undefined>;
+  /** The user's privacy database; readable only with Full Disk Access. */
+  readonly tccPath?: string;
+  /** The app macOS holds responsible for this process: the one permissions are granted to. */
+  readonly bundleId?: string;
+  readonly appPath?: (bundleId: string) => Promise<string | undefined>;
+  /** Runs `open` with these arguments. */
+  readonly open?: (args: readonly string[]) => Promise<void>;
 }
 
 const CAPABILITIES: Capabilities = {
@@ -86,6 +102,7 @@ export function imessageChannel(options: IMessageOptions = {}): Channel {
   return {
     platform: "imessage",
     onboarding: { kind: "credentials", fields: [] },
+    setup: imessageSetup(dbPath, runScript, options.setup ?? {}),
 
     async *onboard() {
       let fromDb: string[];
@@ -319,6 +336,161 @@ export function imessageChannel(options: IMessageOptions = {}): Channel {
       };
     },
   };
+}
+
+// ------------------------------------------------------------------- setup
+
+const SETTINGS_PANES: Readonly<Record<string, string>> = {
+  open_full_disk_access: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+  open_automation: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+};
+
+/**
+ * What the connect screen checks every few seconds, in the order the person does it: Messages
+ * signed in to iMessage, Full Disk Access, permission to control Messages. None of the checks
+ * makes macOS ask anything; only "allow_automation", clicked by the person, does.
+ */
+function imessageSetup(dbPath: string, runScript: ScriptRunner, probe: SetupProbe): ChannelSetup {
+  const activeAccounts = probe.activeAccounts ?? readActiveAccounts;
+  const tccPath = probe.tccPath ?? join(homedir(), "Library", "Application Support", "com.apple.TCC", "TCC.db");
+  const bundleId = probe.bundleId ?? process.env.__CFBundleIdentifier;
+  const appPath = probe.appPath ?? findApp;
+  const open = probe.open ?? openWith;
+  /** Set once controlling Messages worked here, in case the privacy database cannot be read. */
+  let allowed = false;
+  let signedIn = false;
+  let app: { path?: string; name: string } | undefined;
+
+  const appInfo = async () => {
+    if (app) return app;
+    const path = bundleId ? await appPath(bundleId).catch(() => undefined) : undefined;
+    // Without an app (started by launchd or over SSH), macOS asks about the Node.js binary itself.
+    app = path
+      ? { path, name: basename(path).replace(/\.app$/, "") }
+      : { path: process.execPath, name: basename(process.execPath) };
+    return app;
+  };
+
+  return {
+    actions: ["open_messages", "open_full_disk_access", "open_automation", "reveal_app", "allow_automation"],
+
+    async check() {
+      const accounts = await activeAccounts().catch(() => undefined);
+      const signedInState = signedIn || (accounts ?? 0) > 0 ? "ok" : accounts === undefined ? "unknown" : "missing";
+      let disk: "ok" | "missing" | "unknown";
+      try {
+        openDb(dbPath).close();
+        disk = "ok";
+      } catch (error) {
+        // No database at all means Messages was never opened; the first check says what to do.
+        disk = isPermissionError(error) ? "missing" : "unknown";
+      }
+      let automation: "ok" | "missing" | "denied" | "unknown" = disk === "ok" ? "missing" : "unknown";
+      if (allowed) automation = "ok";
+      else if (disk === "ok") automation = automationState(tccPath, bundleId) ?? "missing";
+      return {
+        checks: [
+          { id: "signed_in", state: signedInState },
+          { id: "full_disk_access", state: disk },
+          { id: "automation", state: automation },
+        ],
+        app: (await appInfo()).name,
+      };
+    },
+
+    async act(action) {
+      if (action === "open_messages") return open(["-a", "Messages"]);
+      const pane = SETTINGS_PANES[action];
+      if (pane) return open([pane]);
+      if (action === "reveal_app") {
+        const { path } = await appInfo();
+        if (path) await open(["-R", path]);
+        return;
+      }
+      if (action === "allow_automation") {
+        // macOS shows its "allow to control Messages" prompt now; the call returns once answered.
+        try {
+          signedIn = parseAccounts(await runScript(ACCOUNT_SCRIPT, [], 120_000)).length > 0;
+          allowed = true;
+        } catch (error) {
+          if (!isAutomationDenied(error)) throw error;
+        }
+      }
+    },
+  };
+}
+
+/** Permission to control Messages, as the privacy database records it for this app. */
+function automationState(tccPath: string, bundleId: string | undefined): "ok" | "denied" | undefined {
+  let rows: { client: string; auth_value: number }[];
+  try {
+    const db = new DatabaseSync(tccPath, { readOnly: true });
+    try {
+      rows = db
+        .prepare(
+          "SELECT client, auth_value FROM access WHERE service = 'kTCCServiceAppleEvents' AND indirect_object_identifier = 'com.apple.MobileSMS'",
+        )
+        .all() as { client: string; auth_value: number }[];
+    } finally {
+      db.close();
+    }
+  } catch {
+    return undefined;
+  }
+  // Without knowing which app we run under, any app allowed is the best guess; connecting confirms it.
+  const ours = bundleId ? rows.filter((r) => r.client === bundleId) : rows;
+  if (ours.some((r) => r.auth_value === 2)) return "ok";
+  if (ours.some((r) => r.auth_value === 0)) return "denied";
+  return undefined;
+}
+
+/** How many iMessage accounts Messages has active. Undefined when the preferences cannot be read. */
+function readActiveAccounts(): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    execFile(
+      "defaults",
+      ["read", "com.apple.imservice.ids.iMessage", "ActiveAccounts"],
+      { timeout: 5000 },
+      (error, stdout, stderr) => {
+        // Never signed in on this Mac: the key or the whole domain is missing.
+        if (error) resolve(/does not exist/.test(String(stderr)) ? 0 : undefined);
+        else resolve(countActiveAccounts(String(stdout)));
+      },
+    );
+  });
+}
+
+/** `defaults read` prints `(\n    "6F1C…"\n)`; each quoted or bare entry is one account. */
+export function countActiveAccounts(output: string): number {
+  return output
+    .replace(/[()]/g, "")
+    .split(/[,\n]/)
+    .map((s) => s.trim().replace(/^"|"$/g, ""))
+    .filter(Boolean).length;
+}
+
+function findApp(bundleId: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile(
+      "mdfind",
+      [`kMDItemCFBundleIdentifier == "${bundleId.replace(/["\\]/g, "")}"`],
+      { timeout: 3000 },
+      (error, stdout) =>
+        resolve(
+          error
+            ? undefined
+            : String(stdout)
+                .split("\n")
+                .find((l) => l.endsWith(".app")),
+        ),
+    );
+  });
+}
+
+function openWith(args: readonly string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile("open", [...args], { timeout: 10_000 }, (error) => (error ? reject(error) : resolve()));
+  });
 }
 
 // ---------------------------------------------------------------- database

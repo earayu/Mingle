@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import type { Navigate } from "./App.tsx";
 import {
   type AgentView,
@@ -7,13 +7,18 @@ import {
   type OnboardingState,
   type Platform,
   type PlatformInfo,
+  type SetupCheckState,
+  type SetupState,
 } from "./api.ts";
 import { useCached } from "./cache.ts";
+import { guideVars, looksRight, pickTokens, recognizable } from "./guide.ts";
 import { errorText, type MessageKey, useI18n } from "./i18n.ts";
 import { PlatformIcon } from "./platforms.tsx";
+import { usePolling } from "./poll.ts";
 import {
   BackIcon,
   Button,
+  Copyable,
   Field,
   Input,
   LinkButton,
@@ -141,6 +146,7 @@ function PlatformGrid({
 
 function PlatformFlow({ agent, info, onDone }: { agent: AgentView; info: PlatformInfo; onDone: () => void }) {
   const [manual, setManual] = useState(false);
+  if (info.setup) return <SetupFlow agent={agent} info={info} onDone={onDone} />;
   if (info.onboarding?.kind === "credentials") {
     return (
       <CredentialsFlow
@@ -160,6 +166,8 @@ function PlatformFlow({ agent, info, onDone }: { agent: AgentView; info: Platfor
         info={info}
         fields={info.manualFields}
         stepsKey={`${info.platform}.manualSteps` as MessageKey}
+        {...(info.manualSetupUrl ? { setupUrl: info.manualSetupUrl } : {})}
+        setupLabelKey="connect.openConsole"
         onDone={onDone}
         onBack={() => setManual(false)}
       />
@@ -198,6 +206,7 @@ function CredentialsFlow({
   fields,
   stepsKey,
   setupUrl,
+  setupLabelKey,
   onDone,
   onBack,
 }: {
@@ -206,6 +215,7 @@ function CredentialsFlow({
   fields: CredentialField[];
   stepsKey: MessageKey;
   setupUrl?: string;
+  setupLabelKey?: MessageKey;
   onDone: () => void;
   onBack?: () => void;
 }) {
@@ -214,57 +224,90 @@ function CredentialsFlow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  /** What was last sent automatically, so a failed token is not sent again until it changes. */
+  const autoSent = useRef("");
   const platformName = t(`platform.${info.platform}` as MessageKey);
+  const vars = guideVars(agent);
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await api.connect(agent.id, info.platform, values);
-      setConnected(true);
-      setTimeout(onDone, 900);
-    } catch (e) {
-      setError(errorText(t, e));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const submit = useCallback(
+    async (event?: FormEvent) => {
+      event?.preventDefault();
+      setBusy(true);
+      setError(null);
+      try {
+        await api.connect(agent.id, info.platform, values);
+        setConnected(true);
+        setTimeout(onDone, 900);
+      } catch (e) {
+        setError(errorText(t, e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [agent.id, info.platform, values, onDone, t],
+  );
+
+  /** Pasting the platform's whole message is fine: each token is picked out, into the field it belongs to. */
+  const change = (key: string, raw: string) => setValues(pickTokens(fields, values, key, raw));
+
+  const filled = fields.every((f) => values[f.key]?.trim());
+  const shaped = recognizable(fields) && fields.every((f) => looksRight(f, values[f.key] ?? ""));
+  // Tokens with the platform's shape connect right away; an App ID and Secret wait for the button,
+  // since a half-typed secret is still "filled".
+  useEffect(() => {
+    if (!filled || !shaped || busy || connected) return;
+    const sent = JSON.stringify(values);
+    if (autoSent.current === sent) return;
+    autoSent.current = sent;
+    void submit();
+  }, [filled, shaped, busy, connected, values, submit]);
 
   const lines = t(stepsKey)
     .split("\n")
     .filter((l) => l.trim());
-  const filled = fields.every((f) => values[f.key]?.trim());
   return (
     <div className="flex flex-col gap-6">
       <FlowTitle platform={info.platform} title={t("connect.flowTitle", { platform: spaced(platformName) })} />
       <form onSubmit={submit}>
         <Steps>
           {lines.map((line, i) => (
-            <Step key={line} n={i + 1} state={connected ? "done" : "todo"} title={line}>
+            <Step
+              key={line}
+              n={i + 1}
+              state={connected ? "done" : "todo"}
+              title={<GuideText text={line} vars={vars} />}
+            >
               {i === 0 && setupUrl ? (
-                <LinkButton href={setupUrl}>{t(`${info.platform}.setup` as MessageKey)}</LinkButton>
+                <LinkButton href={setupUrl}>{t(setupLabelKey ?? (`${info.platform}.setup` as MessageKey))}</LinkButton>
               ) : null}
             </Step>
           ))}
           <Step
             n={lines.length + 1}
             state={connected ? "done" : "now"}
-            title={optional(t, `${info.platform}.form`, "connect.paste")}
+            title={<GuideText text={optional(t, `${info.platform}.form`, "connect.paste")} vars={vars} />}
           >
-            {fields.map((f, i) => (
-              <Field key={f.key} label={t(f.labelKey as MessageKey)}>
-                <Input
-                  autoFocus={i === 0}
-                  required
-                  type={f.secret ? "password" : "text"}
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={values[f.key] ?? ""}
-                  onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-                />
-              </Field>
-            ))}
+            {fields.map((f, i) => {
+              const value = values[f.key] ?? "";
+              const off = Boolean(value.trim()) && !looksRight(f, value);
+              return (
+                <Field
+                  key={f.key}
+                  label={t(f.labelKey as MessageKey)}
+                  {...(off ? { hint: t("connect.tokenShape") } : {})}
+                >
+                  <Input
+                    autoFocus={i === 0}
+                    required
+                    type={f.secret ? "password" : "text"}
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={value}
+                    onChange={(e) => change(f.key, e.target.value)}
+                  />
+                </Field>
+              );
+            })}
             {error ? <Problem title={t("connect.failed")}>{error}</Problem> : null}
             <div className="flex items-center gap-2">
               <Button type="submit" variant="primary" disabled={busy || !filled}>
@@ -282,13 +325,212 @@ function CredentialsFlow({
                 </Button>
               ) : null}
             </div>
-            <p className="text-caption text-ink3">{t("connect.secretNote")}</p>
+            {fields.some((f) => f.secret) ? <p className="text-caption text-ink3">{t("connect.secretNote")}</p> : null}
           </Step>
         </Steps>
       </form>
       {connected ? <p className="text-green">{t("qr.done", { platform: platformName })}</p> : null}
     </div>
   );
+}
+
+/**
+ * A step's sentence. A `backticked` part is something to type elsewhere, shown as a copy chip.
+ * Variables are filled after splitting, so a name with a backtick cannot break the markup.
+ */
+function GuideText({ text, vars = {} }: { text: string; vars?: Record<string, string> }) {
+  const fill = (part: string) => part.replace(/\{(\w+)\}/g, (all, k: string) => vars[k] ?? all);
+  return (
+    <>
+      {text.split("`").map((part, i) =>
+        i % 2 ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: parts of one fixed sentence
+          <Copyable key={i} value={fill(part)} />
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: parts of one fixed sentence
+          <span key={i}>{fill(part)}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+/**
+ * Platforms that need this computer set up first (iMessage: macOS permissions). Every check is
+ * re-read every few seconds, so a step ticks itself off once the person has done it.
+ */
+function SetupFlow({ agent, info, onDone }: { agent: AgentView; info: PlatformInfo; onDone: () => void }) {
+  const { t } = useI18n();
+  const platform = info.platform;
+  const platformName = t(`platform.${platform}` as MessageKey);
+  const [setup, setSetup] = useState<SetupState | null>(null);
+  const [acting, setActing] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const next = await api.setup(platform).catch(() => null);
+    if (next) setSetup(next);
+  }, [platform]);
+  usePolling(refresh, 2000, !connected);
+
+  const act = async (action: string) => {
+    setActing(action);
+    try {
+      setSetup(await api.setupAction(platform, action));
+    } catch (e) {
+      setError(errorText(t, e));
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const connect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.connect(agent.id, platform, {});
+      setConnected(true);
+      setTimeout(onDone, 2500);
+    } catch (e) {
+      setError(errorText(t, e));
+      void refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const app = setup?.app ?? "Mingle";
+  const vars = { ...guideVars(agent), app };
+  const checks = setup?.checks ?? [];
+  const blocking = (s: SetupCheckState) => s === "missing" || s === "denied";
+  const firstOpen = checks.findIndex((c) => c.state !== "ok");
+  // A check that could not be read (an older macOS) does not hold the person back; connecting tells.
+  const ready =
+    setup !== null && checks.every((c) => c.state === "ok" || (c.id === "signed_in" && c.state === "unknown"));
+  const stateOf = (i: number): StepState => {
+    const c = checks[i];
+    if (connected || c?.state === "ok") return "done";
+    if (i === firstOpen) return "now";
+    return c && blocking(c.state) ? "todo" : "later";
+  };
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-3">
+        <FlowTitle platform={platform} title={t("connect.flowTitle", { platform: spaced(platformName) })} />
+        <p className="text-ink2">{t(`${platform}.intro` as MessageKey, { name: agent.name })}</p>
+      </div>
+      {setup === null ? (
+        <Waiting>{t("setup.checking")}</Waiting>
+      ) : (
+        <Steps>
+          {checks.map((c, i) => (
+            <Step
+              key={c.id}
+              n={i + 1}
+              state={stateOf(i)}
+              title={t(`${platform}.check.${c.id}` as MessageKey, vars)}
+              {...(c.state === "ok" ? {} : { hint: optionalText(t, `${platform}.why.${c.id}`, vars) })}
+            >
+              <SetupStepBody platform={platform} id={c.id} state={c.state} vars={vars} acting={acting} onAct={act} />
+            </Step>
+          ))}
+          <Step
+            n={checks.length + 1}
+            state={connected ? "done" : ready ? "now" : "later"}
+            title={t(`${platform}.form` as MessageKey)}
+          >
+            <p className="text-small text-ink2">{t(`${platform}.connectHint` as MessageKey, { name: agent.name })}</p>
+            {error ? <Problem title={t("connect.failed")}>{error}</Problem> : null}
+            <Button variant="primary" className="self-start" disabled={busy || connected} onClick={connect}>
+              {busy ? (
+                <>
+                  <Spinner /> {t("connect.connecting")}
+                </>
+              ) : (
+                t("connect.connect")
+              )}
+            </Button>
+          </Step>
+        </Steps>
+      )}
+      {!connected && setup !== null && !ready ? <p className="text-caption text-ink3">{t("setup.live")}</p> : null}
+      {connected ? (
+        <p className="rise text-headline font-medium text-green">
+          {t(`${platform}.done` as MessageKey, { name: agent.name })}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** What to do for one check that is not done yet, and the buttons that get the person there. */
+function SetupStepBody({
+  platform,
+  id,
+  state,
+  vars,
+  acting,
+  onAct,
+}: {
+  platform: string;
+  id: string;
+  state: SetupCheckState;
+  vars: Record<string, string>;
+  acting: string | null;
+  onAct: (action: string) => void;
+}) {
+  const { t } = useI18n();
+  const how = optionalText(t, `${platform}.how.${id}.${state}`, vars) ?? optionalText(t, `${platform}.how.${id}`, vars);
+  const actions = SETUP_ACTIONS[`${id}.${state}`] ?? SETUP_ACTIONS[id] ?? [];
+  const waiting = actions.find((a) => a === acting);
+  const button = (action: string, primary: boolean): ReactNode => (
+    <Button
+      key={action}
+      small
+      variant={primary ? "default" : "ghost"}
+      disabled={acting !== null}
+      onClick={() => onAct(action)}
+    >
+      {acting === action ? <Spinner /> : null}
+      {t(`setup.action.${action}` as MessageKey, vars)}
+    </Button>
+  );
+  return (
+    <>
+      {how ? (
+        <p className="text-small text-ink2">
+          <GuideText text={how} vars={vars} />
+        </p>
+      ) : null}
+      {actions.length ? (
+        <div className="flex flex-wrap items-center gap-2">{actions.map((a, i) => button(a, i === 0))}</div>
+      ) : null}
+      {waiting ? <Waiting>{optionalText(t, `setup.waiting.${waiting}`, vars) ?? t("setup.checking")}</Waiting> : null}
+    </>
+  );
+}
+
+/** Buttons under a check, by check id, or by id and state where they differ (a refused permission). */
+const SETUP_ACTIONS: Record<string, string[]> = {
+  signed_in: ["open_messages"],
+  "signed_in.unknown": [],
+  full_disk_access: ["open_full_disk_access", "reveal_app"],
+  "full_disk_access.unknown": ["open_messages"],
+  automation: ["allow_automation"],
+  "automation.denied": ["open_automation"],
+};
+
+/** A message that exists only for some platforms or states; undefined where there is none. */
+function optionalText(
+  t: ReturnType<typeof useI18n>["t"],
+  key: string,
+  vars?: Record<string, string>,
+): string | undefined {
+  const text = t(key as MessageKey, vars);
+  return text === key ? undefined : text;
 }
 
 function FlowTitle({ platform, title }: { platform: Platform; title: string }) {
@@ -370,6 +612,8 @@ function QrFlow({
     return () => clearInterval(timer);
   }, []);
 
+  // Where the platform does not take the name from Mingle, the phone may ask for one.
+  const nameHint = optionalText(t, `${info.platform}.qrName`);
   const restart = () => {
     setSessionId(null);
     setAttempt((n) => n + 1);
@@ -453,7 +697,12 @@ function QrFlow({
             </div>
           </div>
         </Step>
-        <Step n={2} state={at(2)} title={t(`${info.platform}.qr2` as MessageKey)}>
+        <Step
+          n={2}
+          state={at(2)}
+          title={t(`${info.platform}.qr2` as MessageKey, { name: agent.name })}
+          {...(nameHint ? { hint: <GuideText text={nameHint} vars={guideVars(agent)} /> } : {})}
+        >
           {state.state === "needs_code" && sessionId ? (
             <CodeForm sessionId={sessionId} retry={state.retry} />
           ) : (

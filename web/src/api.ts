@@ -186,6 +186,16 @@ export interface PlatformInfo {
     | { kind: "credentials"; fields: CredentialField[]; setupUrl?: string }
     | null;
   manualFields: CredentialField[];
+  manualSetupUrl: string | null;
+  /** The platform has local prerequisites to check before connecting (iMessage). */
+  setup: boolean;
+}
+
+export type SetupCheckState = "ok" | "missing" | "denied" | "unknown";
+
+export interface SetupState {
+  checks: { id: string; state: SetupCheckState }[];
+  app?: string;
 }
 
 export type OnboardingState =
@@ -227,6 +237,9 @@ export const api = {
   updateAgent: (id: string, patch: { name?: string; harness?: string; model?: string | null }) =>
     call<AgentView>("PATCH", `/v1/admin/agents/${id}`, patch),
   platforms: () => call<PlatformInfo[]>("GET", "/v1/admin/platforms"),
+  setup: (platform: Platform) => call<SetupState>("GET", `/v1/admin/platforms/${platform}/setup`),
+  setupAction: (platform: Platform, action: string) =>
+    call<SetupState>("POST", `/v1/admin/platforms/${platform}/setup/${action}`),
   createAgent: (input: { name: string; role: string; harness: string; model?: string }) =>
     call<AgentView>("POST", "/v1/admin/agents", input),
   setRole: (id: string, role: string) => call("PUT", `/v1/admin/agents/${id}/role`, { role }),

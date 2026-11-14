@@ -473,14 +473,34 @@ export function createApi(mingle: Mingle): Hono<Env> {
         .map((platform) => {
           let onboarding: OnboardingMethod | null = null;
           let manualFields: readonly CredentialField[] = [];
+          let manualSetupUrl: string | null = null;
+          let setup = false;
           try {
             const channel = mingle.channel(platform);
             onboarding = channel.onboarding;
             manualFields = channel.manualFields ?? [];
+            manualSetupUrl = channel.manualSetupUrl ?? null;
+            setup = Boolean(channel.setup);
           } catch {}
-          return { platform, onboarding, manualFields };
+          return { platform, onboarding, manualFields, manualSetupUrl, setup };
         }),
     );
+  });
+
+  /** Local prerequisites (iMessage: macOS permissions), polled by the connect screen. Never prompts. */
+  app.get("/v1/admin/platforms/:platform/setup", async (c) => {
+    const setup = mingle.channel(c.req.param("platform") as Platform).setup;
+    if (!setup) throw new MingleError("setup_not_needed", "this chat app has nothing to set up on this computer", 404);
+    return c.json(await setup.check());
+  });
+
+  /** A setup step the person clicked: open a settings pane, or let macOS ask for a permission. */
+  app.post("/v1/admin/platforms/:platform/setup/:action", async (c) => {
+    const setup = mingle.channel(c.req.param("platform") as Platform).setup;
+    const action = c.req.param("action");
+    if (!setup?.actions.includes(action)) throw new MingleError("setup_action_unknown", "reload the page", 404);
+    await setup.act(action);
+    return c.json(await setup.check());
   });
 
   app.get("/v1/admin/agents/:id/activity", (c) => {

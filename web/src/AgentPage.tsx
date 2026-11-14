@@ -22,6 +22,7 @@ import {
   ApiKeyHint,
   Avatar,
   Button,
+  copyText,
   Group,
   GroupRow,
   HarnessIcon,
@@ -1256,29 +1257,6 @@ function ResetRow({ agent, busy, disabled }: { agent: AgentView; busy: boolean; 
       {result ? <p className={`w-full text-caption ${result.ok ? "text-ink2" : "text-red"}`}>{result.text}</p> : null}
     </GroupRow>
   );
-}
-
-/** Copy text, falling back to a hidden text area where the clipboard API is not offered (some webviews). */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    const area = document.createElement("textarea");
-    area.value = text;
-    area.setAttribute("readonly", "");
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.body.append(area);
-    area.select();
-    try {
-      return document.execCommand("copy");
-    } catch {
-      return false;
-    } finally {
-      area.remove();
-    }
-  }
 }
 
 /** Copy what someone helping needs. Where copying fails, the text shows in place to select by hand. */
