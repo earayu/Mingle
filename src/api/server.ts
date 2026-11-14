@@ -324,7 +324,8 @@ export function createApi(mingle: Mingle): Hono<Env> {
   app.get("/v1/admin/harnesses/:id/models", async (c) => c.json(await mingle.harnessModels(c.req.param("id"))));
   /** Every harness OAR knows, installed or not: the console offers to install or sign in the rest. */
   app.get("/v1/admin/brains", async (c) => {
-    const catalog = (await mingle.options.harness.catalog?.()) ?? [];
+    // `?fresh=1` probes again; without it the last probe answers at once.
+    const catalog = await mingle.brainCatalog(c.req.query("fresh") === "1");
     return c.json(
       catalog.map((brain) => {
         const installJob = mingle.brains.activeInstall(brain.id);

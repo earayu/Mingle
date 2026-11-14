@@ -84,7 +84,8 @@ const INSTALL_MOCK = String.raw`(() => {
   window.fetch = (input, init) => {
     const path = typeof input === "string" ? input : input.url;
     const method = (init && init.method) || "GET";
-    if (method === "GET" && path === "/v1/admin/brains") return Promise.resolve(json(brains(read())));
+    // The console reads the catalog twice: the cached answer, then a fresh probe (?fresh=1).
+    if (method === "GET" && /^\/v1\/admin\/brains(\?fresh=1)?$/.test(path)) return Promise.resolve(json(brains(read())));
     if (method === "GET" && path === "/v1/admin/brains/install-test/install-plan")
       return Promise.resolve(
         json({ kind: "plan", steps: ["echo test-install"], source: "https://example.com/install" }),

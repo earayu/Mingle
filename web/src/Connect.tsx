@@ -8,6 +8,7 @@ import {
   type Platform,
   type PlatformInfo,
 } from "./api.ts";
+import { useCached } from "./cache.ts";
 import { errorText, type MessageKey, useI18n } from "./i18n.ts";
 import { PlatformIcon } from "./platforms.tsx";
 import {
@@ -38,13 +39,7 @@ export function ConnectPage({
   onChanged: () => void;
 }) {
   const { t } = useI18n();
-  const [platforms, setPlatforms] = useState<PlatformInfo[] | null>(null);
-  useEffect(() => {
-    api
-      .platforms()
-      .then(setPlatforms)
-      .catch(() => setPlatforms([]));
-  }, []);
+  const { value: platforms } = useCached<PlatformInfo[]>("platforms", api.platforms, []);
 
   const info = platforms?.find((p) => p.platform === platform);
   const back = () =>
