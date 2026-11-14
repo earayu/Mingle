@@ -5,6 +5,13 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
 ## Unreleased
 
+## 0.1.8
+
+- Initial iMessage support on macOS: connect an Apple ID dedicated to your agent through the Mac's Messages app. Setup asks for your own phone number or email, Full Disk Access, and permission to control Messages. Private chats, group mentions and file transfers are implemented; real-account end-to-end verification is still pending.
+- Settings, brain pickers, model lists and other slow-loading views show their last known data while refreshing, instead of waiting for each harness probe before showing anything. Installing or signing in refreshes the relevant lists.
+- Recent activity, tasks and reminders distinguish loading, empty results and failures, with a retry action when a read fails. Switching agents keeps each agent's activity and work separate.
+- The website has an interactive demo showing one agent across several chat apps, and its demo styles no longer affect other page sections.
+
 ## 0.1.7
 
 - Pause an agent under Settings → Running (or `mingle agent pause`). A paused agent stops what it is doing and takes no messages until you resume it; people who write to it are told once per chat that it is paused, and reminders wait until it resumes. Its memory, settings and chat apps are kept, and it stays paused after a restart. "Stop" still only ends the current piece of work.
