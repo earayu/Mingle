@@ -18,6 +18,7 @@ import type { SecretStore } from "../platform/secrets.ts";
 import { type Agent, type Connection, type Message, Store } from "../store/store.ts";
 import { VERSION } from "../version.ts";
 import { Brains } from "./brains.ts";
+import { coldRebuildFor } from "./cold.ts";
 import { checkEnvName, checkEnvValue, decodeEnvValue, encodeEnvValue, envRef } from "./env.ts";
 import { MingleError, notFound } from "./errors.ts";
 import { formatReminder, renderMessage } from "./format.ts";
@@ -70,6 +71,8 @@ export interface MingleOptions {
   /** Absolute path of the CLI entry script, run with this Node binary. */
   readonly cliEntry: string;
   readonly coalesceMs?: number;
+  /** Which agents open a fresh session on a cold start (`cold.ts`); the value of `MINGLE_COLD_START`. */
+  readonly coldStart?: string;
   readonly reminderTickMs?: number;
   /** How often to look for a jump of the clock, the sign that the computer slept. */
   readonly wakeCheckMs?: number;
@@ -576,6 +579,7 @@ export class Mingle {
       env: () => ({ MINGLE_API: this.apiUrl, MINGLE_TOKEN: token, MINGLE_CLI: this.cliPath }),
       agentEnv: () => this.agentEnv(agent.id),
       ...(this.options.coalesceMs !== undefined ? { coalesceMs: this.options.coalesceMs } : {}),
+      coldStart: { rebuild: coldRebuildFor(this.options.coldStart, agent) },
       onActivity: (kind, detail) => this.replies.activity(agent.id, kind, detail),
       onSettled: (ids, outcome, why) => {
         const note = why && { ...why, harness: this.harnessName(agent.id) };

@@ -104,6 +104,14 @@ erDiagram
 - 上下文接近上限时由 harness 自身压缩；压缩前提示 Agent 更新 `MEMORY.md`。
 - 会话损坏或更换 harness 时新建会话，Agent 靠 `MEMORY.md` 和消息记录恢复。会话可丢，Agent 不丢。
 
+**冷启动（借鉴 Raft 的 Constructed Initial Context，默认关闭，见 12.2）。** 会话长时间空闲后，harness 的提示缓存已经过期，下一轮要把整段历史重新写进缓存。会话很大时这一轮最贵。冷启动不再续用这个会话，而是新开一个，第一条输入由 Mingle 组装：
+
+- **条件**：Agent 空闲超过 1 小时（从上一轮结束算），会话上下文超过 128K token（OAR 的 `contextUsage().tokens`），并且这次输入不是插话：正在工作时进来的消息照常送进当前一轮。Mingle 重启后、harness 还没报告上下文大小时不判断，照常续用。
+- **第一条输入**：几块彼此独立的内容，之后才是这次的输入。`MEMORY.md` 开头约 4K token（16 KiB，按行截断，截断时注明还有后文）；跨聊天最近 25 条消息，带来源行（4.2），每条正文最多 1200 字，没触发 Agent 的群消息和发送失败的消息不算；主目录里最近 2 小时改过的文件，只列路径，跳过 `.git`、`node_modules` 和 harness 自己的目录；最近 15 个动作（根 Agent 完成的工具调用，一行一个，如 `Bash: pnpm test`）；最后是触发这次的消息或提醒。不告诉模型会话换过，也不要求它写总结。
+- **可撤回**：被替换的会话 ID 存在 `agents.previous_session_id`，出问题时可以切回去。新会话打开失败时，Agent 仍指向旧会话，下一条输入照常续用。
+- **开关**：先用开发开关，不加界面：`MINGLE_COLD_START=rebuild` 对所有 Agent 生效，或者写逗号分隔的 Agent ID / slug，只对它们生效。不设时照常续用。
+- **测量**：不管开没开，空闲超过 1 小时后的第一轮都会记一行日志：`cold turn mode=resume|rebuild idle=… context=… input=… cache_read=… cache_write=… output=…`，用来对比两种做法。
+
 ### 4.2 消息进入
 
 触发规则：
@@ -202,13 +210,15 @@ Raft 的做法更重。从它的源码和 agent 提示词看：忙碌时只给 a
 
 ### 4.4 启动时注入的内容
 
-每次新建或恢复会话时，Mingle 通过 OAR 的 `appendSystemPrompt` 向 harness 追加三样东西，保留 harness 自带的系统提示：
+每次新建或恢复会话时（包括 4.1 的冷启动），Mingle 通过 OAR 的 `appendSystemPrompt` 向 harness 追加三样东西，保留 harness 自带的系统提示：
 
 1. `ROLE.md` 的内容：它是谁。
 2. `mingle` CLI 的操作指南：它怎么在 IM 里行动。源文件是 [`src/cli/manual.md`](../src/cli/manual.md)，`mingle manual` 打印的也是它，不会不一致。
 3. 提示它先读 `MEMORY.md`。
 
 操作指南末尾列出 owner 给它设的环境变量的名字（"Environment variables set for you: …"），从不写值；harness 收不到环境变量时不列（见 4.9）。
+
+冷启动新开的会话还会在第一条输入前带上 Mingle 组装的近况（4.1）。它只在第一条输入里出现一次，不进 `appendSystemPrompt`，也不写进主目录。
 
 这样主目录里不需要再放 `AGENTS.md` 之类的指令文件。每次打开会话都要重新提供这段内容，否则 harness 压缩上下文后会丢掉它。操作指南用英文写，Agent 按对方使用的语言回复。
 
@@ -664,7 +674,7 @@ flowchart TD
 
 | 表 | 内容 |
 |---|---|
-| `agents` | 名字、slug、头像、harness、模型、权限模式、当前会话 ID、状态 |
+| `agents` | 名字、slug、头像、harness、模型、权限模式、当前会话 ID、冷启动替换掉的上一个会话 ID（4.1）、状态 |
 | `connections` | 所属 Agent、平台、机器人身份、连接状态、凭据引用 |
 | `chats` | 所属连接、平台侧 ID、类型（群 / 私聊 / 话题）、名称、线程所属的群（4.2） |
 | `contacts` | 所属连接、平台侧用户 ID、平台给的名字、owner 或 Agent 起的名字。升级时从已有消息的发送者和 owner 补建 |

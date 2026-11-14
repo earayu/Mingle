@@ -113,6 +113,19 @@ export interface HarnessEvents {
   onTurnEnded(outcome: TurnEnd): void;
   /** Something visible happened inside a turn: reasoning, text, or a tool call. */
   onActivity(kind: "thinking" | "tool", detail?: string): void;
+  /** The root agent finished a tool call: its name and, where the harness reports it, its input. */
+  onAction?(tool: string, input?: string): void;
+  /** What the turn that just ended cost, once the harness reports it. */
+  onTurnUsage?(usage: TurnUsage): void;
+}
+
+/** Tokens one turn used, every model call in it together. */
+export interface TurnUsage {
+  /** All input, cache reads and writes included. */
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
 }
 
 export type DeliverOutcome = "prompted" | "steered" | "queued" | "rejected";
@@ -122,6 +135,8 @@ export interface HarnessSession {
   /** True when this open resumed `resume`; false when a fresh session replaced it. */
   readonly resumed: boolean;
   deliver(text: string, inputId: string): Promise<{ outcome: DeliverOutcome; reason?: string }>;
+  /** Tokens in the session's context as the harness last reported it; null before it has. */
+  contextTokens?(): number | null;
   /**
    * Stop the agent's work: the running turn, and the background tasks (commands, subagents) it
    * left running, where the harness can stop one task (Claude Code, Codex, Qoder). True when
@@ -574,6 +589,20 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
       let turn: "prompted" | "self" | undefined;
       /** Tasks running beside the turns, which an abort of the turn leaves running. */
       const tasks = new Set<string>();
+      /** The root agent's tool calls in flight, with the latest input reported for each. */
+      const calls = new Map<string, { tool: string; input?: string }>();
+      /** Session token totals when the current turn began; the turn's usage is the difference. */
+      let turnBase: TurnUsage | undefined;
+      let measuring = false;
+      const totals = (): TurnUsage => {
+        const t = session.usage?.().value.total;
+        return {
+          input: t?.input ?? 0,
+          output: t?.output ?? 0,
+          cacheRead: t?.cacheRead ?? 0,
+          cacheWrite: t?.cacheWrite ?? 0,
+        };
+      };
       session.events((event) => {
         switch (event.kind) {
           case "task_started":
@@ -588,6 +617,35 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
             return;
         }
         if (event.agentPath.length > 0) return;
+        switch (event.kind) {
+          case "tool_call_started":
+            calls.set(event.callId, { tool: event.tool, ...(event.input ? { input: event.input } : {}) });
+            break;
+          case "tool_call_input": {
+            const call = calls.get(event.callId);
+            if (call) calls.set(event.callId, { ...call, input: event.input });
+            break;
+          }
+          case "tool_call_ended": {
+            const call = calls.get(event.callId);
+            calls.delete(event.callId);
+            if (call) events.onAction?.(call.tool, call.input);
+            break;
+          }
+          case "usage":
+            // Reported right after the turn ends: what that turn cost, all its model calls together.
+            if (!turn && measuring && turnBase) {
+              measuring = false;
+              const now = totals();
+              events.onTurnUsage?.({
+                input: now.input - turnBase.input,
+                output: now.output - turnBase.output,
+                cacheRead: now.cacheRead - turnBase.cacheRead,
+                cacheWrite: now.cacheWrite - turnBase.cacheWrite,
+              });
+            }
+            break;
+        }
         // Work with no turn open: the harness began a turn on its own (Claude Code wakes the
         // agent when a background command ends). OAR reports turn starts for prompts only.
         if (
@@ -600,10 +658,13 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
         switch (event.kind) {
           case "turn_started":
             turn = "prompted";
+            turnBase = totals();
+            measuring = false;
             events.onTurnStarted();
             break;
           case "turn_ended": {
             turn = undefined;
+            measuring = turnBase !== undefined;
             const outcome = event.outcome as { kind: string; reason?: string; failure?: Failure; resetsAt?: string };
             const resetsAt = outcome.resetsAt ? Date.parse(outcome.resetsAt) : Number.NaN;
             events.onTurnEnded({
@@ -635,6 +696,9 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
           return result.landed === "rejected"
             ? { outcome: "rejected", reason: `${result.code}: ${result.reason}` }
             : { outcome: result.landed };
+        },
+        contextTokens() {
+          return session.contextUsage?.().value?.tokens ?? null;
         },
         async abort() {
           const running = turn;
