@@ -3,6 +3,19 @@
 Each version's section is its release notes, and what the update window shows.
 Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
+## 0.1.11
+
+- Connect an agent's own GitHub account and mention it in issues, pull requests, or review threads. It replies in the original conversation and uses reactions to show progress. Only repository owners, members, and collaborators can trigger it; GitHub Discussions and file uploads are not supported. The default setup uses a classic token; signing in with a device code requires a configured OAuth client ID.
+- Connecting a chat app now walks through one step at a time, with checks and a clear next action. On macOS, the iMessage guide checks access to Messages and explains which app needs each permission.
+- Agents can see when a group conversation has unread background messages and read them before answering, without being interrupted by every message. Message history can be read from a known message onward, and search supports multiple words, quoted phrases, highlighted matches, and clearer guidance when results are incomplete.
+- Reminders can refer back to the message that created them and be snoozed. Snoozing a recurring reminder moves its next occurrence without changing its schedule.
+- Agents sharing the same harness sign-in now share usage-limit waits. Recovery resumes their waiting messages together, including after a restart; agents with their own credentials remain separate. Limits without a reset time are retried with backoff instead of failing immediately.
+- Reconnecting the same bot through two simultaneous setup flows no longer creates duplicate connections. Asynchronous failures in greetings, timers, notifications, and recovery are caught and logged instead of bringing down the process.
+- Message retries, duplicate platform message IDs, invalid API requests, and diagnostic logging handle failures more consistently. Runtime connection information is kept private on disk.
+- An experimental option can rebuild context for a large session after a long idle period. It remains off by default while memory and answer quality are evaluated.
+
+Known limitations: the GitHub machine-account notification and device-code sign-in flow still needs full end-to-end verification; current integration checks used a synthetic notification list. Connecting a second personal WeChat account still needs a real-device check.
+
 ## 0.1.10
 
 - Messages now wait when the brain reports a usage limit with a reset time, and retry automatically after it. Temporary provider failures retry after 1, 5 and 15 minutes before asking you to intervene. Activity shows each waiting message's retry time, with Retry and Ignore controls. Quota waits survive a restart and also hold back new messages.
