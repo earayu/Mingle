@@ -615,6 +615,928 @@ h3 {
   color: var(--accent);
 }
 
+/* The interactive demo: a phone that wears each chat app's look. Skins are approximations, colors per app below. */
+html:not(.js) .demo-section {
+  display: none;
+}
+.demo-section {
+  padding-top: 72px;
+}
+.demo-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 64px;
+  align-items: start;
+}
+.demo-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 32px;
+}
+.demo-list button {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.2s var(--ease),
+    background 0.2s var(--ease);
+}
+.demo-list button:hover {
+  border-color: var(--line2);
+}
+.demo-list button[aria-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+.demo-apps {
+  display: flex;
+  flex: none;
+  width: 40px;
+}
+.demo-apps .app-icon {
+  border-radius: 7px;
+  box-shadow: 0 0 0 2px var(--card);
+}
+.demo-apps .app-icon + .app-icon {
+  margin-left: -6px;
+  margin-top: 14px;
+}
+.demo-text {
+  display: grid;
+  min-width: 0;
+}
+.demo-text b {
+  font-size: 15px;
+  font-weight: 600;
+}
+.demo-text small {
+  color: var(--ink2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.demo-stage {
+  position: sticky;
+  top: 84px;
+}
+.demo-caption {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 14px 0 0;
+  color: var(--ink3);
+  font-size: 13px;
+  text-align: center;
+}
+.demo-caption .av {
+  --size: 20px;
+  font-size: 11px;
+}
+
+/* The phone */
+.phone {
+  --im-bg: #f2f3f5;
+  --im-bar: #ffffff;
+  --im-ink: #1f2329;
+  --im-ink2: #646a73;
+  --im-line: #e4e5e7;
+  --im-in: #ffffff;
+  --im-out: #d6e4ff;
+  --im-out-ink: var(--im-ink);
+  --im-accent: #3370ff;
+  --im-code: rgb(0 0 0 / 0.06);
+  --im-radius: 10px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 680px;
+  border: 10px solid #18181b;
+  border-radius: 46px;
+  background: var(--im-bg);
+  color: var(--im-ink);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  font-size: 14px;
+  line-height: 1.45;
+  isolation: isolate;
+}
+.phone-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 26px 2px;
+  background: var(--im-bar);
+  font-size: 13px;
+  font-weight: 600;
+}
+.phone-bars {
+  display: flex;
+  align-items: end;
+  gap: 2px;
+  height: 10px;
+}
+.phone-bars i {
+  width: 3px;
+  background: currentColor;
+  border-radius: 1px;
+}
+.phone-bars i:nth-child(1) {
+  height: 4px;
+}
+.phone-bars i:nth-child(2) {
+  height: 6px;
+}
+.phone-bars i:nth-child(3) {
+  height: 8px;
+}
+.phone-bars i:nth-child(4) {
+  height: 10px;
+}
+.im-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 6px 14px;
+  background: var(--im-bar);
+  border-bottom: 1px solid var(--im-line);
+}
+.im-back {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-left: 2px solid var(--im-ink);
+  border-bottom: 2px solid var(--im-ink);
+  transform: rotate(45deg);
+  margin: 0 2px 0 4px;
+}
+.im-names {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+}
+.im-title {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.im-sub {
+  color: var(--im-ink2);
+  font-size: 12px;
+}
+.im-app {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 4px;
+  border-radius: 99px;
+  background: var(--im-code);
+  color: var(--im-ink2);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.im-app .app-icon {
+  border-radius: 5px;
+}
+.im-logs {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.im-log {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 12px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scrollbar-width: none;
+}
+.im-log::-webkit-scrollbar {
+  display: none;
+}
+.im-log[hidden] {
+  display: none;
+}
+.im-typing {
+  height: 0;
+  overflow: hidden;
+  padding: 0 16px;
+  color: var(--im-ink2);
+  font-size: 12px;
+  background: var(--im-bg);
+  transition: height 0.2s var(--ease);
+}
+.im-typing.on {
+  height: 22px;
+}
+.im-compose {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  padding: 8px 10px 22px;
+  background: var(--im-bar);
+  border-top: 1px solid var(--im-line);
+}
+.im-input {
+  flex: 1;
+  min-height: 36px;
+  max-height: 96px;
+  overflow: hidden;
+  padding: 8px 12px;
+  border-radius: 18px;
+  background: var(--im-in);
+  border: 1px solid var(--im-line);
+  font-size: 14px;
+}
+.im-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--im-ink2);
+}
+.im-input.draft {
+  border-color: var(--im-accent);
+}
+.im-send {
+  position: relative;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--im-accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.im-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.im-send[hidden],
+.im-input[hidden] {
+  display: none;
+}
+.im-send.pulse {
+  animation: pulse 1.6s infinite;
+}
+.im-send.pulse::after {
+  content: attr(data-tip);
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--im-accent) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.demo-end {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding: 10px 12px 22px;
+  background: var(--im-bar);
+  border-top: 1px solid var(--im-line);
+}
+.demo-end[hidden] {
+  display: none;
+}
+.demo-end .btn {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.demo-banner {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s var(--ease);
+}
+.demo-banner .app-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+}
+.demo-banner.shown {
+  opacity: 1;
+}
+
+/* Avatars: people get a color from their name; Alex looks the same in every app. */
+.av {
+  --size: 34px;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--size);
+  height: var(--size);
+  border-radius: 50%;
+  background: hsl(var(--h, 220) 55% 58%);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+.av-agent {
+  background: linear-gradient(135deg, #7b78ff, #5450d6 60%, #3b37b0);
+}
+.im-head .av {
+  --size: 36px;
+}
+
+/* Messages */
+.m {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  max-width: 100%;
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.3s var(--ease),
+    transform 0.3s var(--ease);
+}
+.m.shown {
+  opacity: 1;
+  transform: none;
+}
+.m.out {
+  flex-direction: row-reverse;
+}
+.mb {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 78%;
+}
+.m.out .mb {
+  align-items: flex-end;
+}
+.nm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+  color: var(--im-ink2);
+  font-size: 12px;
+}
+.nm time {
+  font-size: 11px;
+  opacity: 0.8;
+}
+.tag {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--im-accent) 16%, transparent);
+  color: var(--im-accent);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 15px;
+}
+.tag-owner {
+  background: color-mix(in srgb, #e8a23b 22%, transparent);
+  color: #b56d00;
+}
+.bb {
+  position: relative;
+  padding: 8px 11px;
+  border-radius: var(--im-radius);
+  background: var(--im-in);
+  overflow-wrap: anywhere;
+}
+.m.out .bb {
+  background: var(--im-out);
+  color: var(--im-out-ink);
+}
+.bb p,
+.bb ul {
+  margin: 0;
+}
+.bb p + p,
+.bb p + ul,
+.bb ul + p {
+  margin-top: 4px;
+}
+.bb ul {
+  padding-left: 16px;
+  list-style: disc;
+}
+.bb code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--im-code);
+  font-size: 12px;
+}
+.mention {
+  color: var(--im-accent);
+}
+.meta {
+  display: none;
+}
+.q {
+  margin-bottom: 6px;
+  padding: 2px 8px;
+  border-left: 2px solid var(--im-accent);
+  color: var(--im-ink2);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rx {
+  display: flex;
+  margin-top: 4px;
+}
+.rx:empty {
+  display: none;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 99px;
+  background: var(--im-in);
+  border: 1px solid var(--im-line);
+  font-size: 13px;
+}
+.chip b {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--im-ink2);
+}
+.chip.pop {
+  animation: pop 0.35s var(--ease);
+}
+@keyframes pop {
+  from {
+    transform: scale(0.4);
+  }
+  60% {
+    transform: scale(1.15);
+  }
+}
+.file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 150px;
+}
+.file-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 40px;
+  flex: none;
+  border-radius: 6px;
+  background: #2f9e5a;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+.file span {
+  display: grid;
+}
+.file small {
+  color: var(--im-ink2);
+  font-size: 11px;
+}
+.divider {
+  align-self: center;
+  color: var(--im-ink2);
+  font-size: 11px;
+}
+.divider span {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--im-code);
+}
+
+/* The live reply: "Thinking · 5s", then what it did, then the answer in the same place. */
+.steps {
+  display: grid;
+  gap: 3px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--im-ink2);
+}
+.bb ul.steps {
+  padding: 0;
+  list-style: none;
+}
+.steps li {
+  padding-left: 16px;
+  text-indent: -16px;
+  opacity: 0;
+  transition: opacity 0.3s var(--ease);
+}
+.steps li::before {
+  content: "✓";
+  display: inline-block;
+  width: 16px;
+  text-indent: 0;
+  color: #2f9e5a;
+  font-weight: 700;
+}
+.steps li.shown {
+  opacity: 1;
+}
+.status {
+  color: var(--im-ink2);
+  font-size: 13px;
+}
+.stopped {
+  color: var(--im-ink2);
+  font-style: italic;
+}
+.edited {
+  margin-right: 4px;
+  font-style: italic;
+}
+.im-card .bb {
+  padding: 0;
+  border: 1px solid var(--im-line);
+  min-width: 230px;
+  overflow: hidden;
+}
+.im-card .tx > *:not(.card-head) {
+  margin-left: 12px;
+  margin-right: 12px;
+}
+.im-card .answer:not(:empty),
+.im-card .steps {
+  padding-bottom: 10px;
+}
+.im-card .answer:not(:empty) {
+  padding-top: 10px;
+}
+.im-card .tx > .q {
+  margin-top: 8px;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--im-accent) 12%, transparent);
+}
+.card-head .status {
+  color: var(--im-accent);
+  font-weight: 600;
+}
+.spin {
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--im-accent) 30%, transparent);
+  border-top-color: var(--im-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.toast {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 7px 14px 7px 8px;
+  border-radius: 99px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+  transition:
+    opacity 0.35s var(--ease),
+    transform 0.35s var(--ease);
+}
+.toast.shown {
+  opacity: 1;
+  transform: none;
+}
+.toast-check {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--green);
+  color: #fff;
+  font-size: 11px;
+}
+
+/* Feishu: white bars, light gray canvas, blue accents, names above bubbles, cards for live replies. */
+.phone[data-app="feishu"] .m.agent .bb {
+  border: 1px solid var(--im-line);
+}
+
+/* WeChat: gray canvas, centered title, square-ish avatars, green bubbles for your messages, no names in a direct chat. */
+.phone[data-app="wechat"] {
+  --im-bg: #ededed;
+  --im-bar: #ededed;
+  --im-ink: #191919;
+  --im-ink2: #8c8c8c;
+  --im-line: #dcdcdc;
+  --im-in: #ffffff;
+  --im-out: #95ec69;
+  --im-accent: #07c160;
+  --im-radius: 5px;
+}
+.phone[data-app="wechat"] .im-head {
+  justify-content: center;
+  position: relative;
+}
+.phone[data-app="wechat"] .im-names {
+  flex: none;
+  text-align: center;
+}
+.phone[data-app="wechat"] .im-back {
+  position: absolute;
+  left: 16px;
+}
+.phone[data-app="wechat"] .im-app {
+  position: absolute;
+  right: 12px;
+}
+.phone[data-app="wechat"] .av {
+  border-radius: 6px;
+}
+.phone[data-app="wechat"] .im-head .av {
+  display: none;
+}
+.phone[data-app="wechat"] .im-compose {
+  background: #f7f7f7;
+}
+.phone[data-app="wechat"] .im-input {
+  border-radius: 6px;
+  border: 0;
+}
+.phone[data-app="wechat"] .im-send {
+  border-radius: 6px;
+}
+.phone[data-app="wechat"] .mention {
+  color: inherit;
+}
+
+/* Telegram: a patterned green wallpaper, rounded bubbles with the time inside, ✓✓ on yours, "bot" under the name. */
+.phone[data-app="telegram"] {
+  --im-bg: #c4d8a8;
+  --im-bar: #ffffff;
+  --im-ink: #000000;
+  --im-ink2: #707579;
+  --im-line: #e0e0e0;
+  --im-in: #ffffff;
+  --im-out: #effedd;
+  --im-accent: #3390ec;
+  --im-radius: 14px;
+}
+.phone[data-app="telegram"] .im-logs {
+  background:
+    radial-gradient(circle at 20% 30%, rgb(255 255 255 / 0.25) 0 2px, transparent 3px) 0 0 / 46px 46px,
+    radial-gradient(circle at 70% 70%, rgb(255 255 255 / 0.18) 0 3px, transparent 4px) 0 0 / 62px 62px,
+    linear-gradient(160deg, #d3e3b6, #a9c88c);
+}
+.phone[data-app="telegram"] .im-log > .m .av {
+  display: none;
+}
+.phone[data-app="telegram"] .meta {
+  display: inline-flex;
+  float: right;
+  gap: 3px;
+  margin: 6px 0 -4px 10px;
+  color: var(--im-ink2);
+  font-size: 11px;
+}
+.phone[data-app="telegram"] .m.out .meta {
+  color: #4fae4e;
+}
+.phone[data-app="telegram"] .im-input {
+  border: 0;
+}
+.phone[data-app="telegram"] .chip {
+  border: 0;
+  background: color-mix(in srgb, var(--im-accent) 18%, white);
+}
+
+/* Discord: no bubbles, everyone on the left with name and time, replies shown as a line above, mentions of you in yellow. */
+.phone[data-app="discord"] {
+  --im-bg: #ffffff;
+  --im-bar: #ffffff;
+  --im-ink: #313338;
+  --im-ink2: #5c5e66;
+  --im-line: #e3e5e8;
+  --im-in: transparent;
+  --im-out: transparent;
+  --im-accent: #5865f2;
+  --im-radius: 0;
+}
+.phone[data-app="discord"] .m.out {
+  flex-direction: row;
+}
+.phone[data-app="discord"] .m.out .mb {
+  align-items: stretch;
+}
+.phone[data-app="discord"] .mb {
+  max-width: none;
+  flex: 1;
+}
+.phone[data-app="discord"] .bb {
+  padding: 0;
+}
+.phone[data-app="discord"] .nm {
+  color: var(--im-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.phone[data-app="discord"] .tag {
+  background: var(--im-accent);
+  color: #fff;
+}
+.phone[data-app="discord"] .q {
+  border: 0;
+  padding: 0 0 0 14px;
+  position: relative;
+}
+.phone[data-app="discord"] .q::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  width: 10px;
+  height: 7px;
+  border-left: 2px solid var(--im-line);
+  border-top: 2px solid var(--im-line);
+  border-top-left-radius: 5px;
+}
+.phone[data-app="discord"] .mention {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--im-accent) 15%, transparent);
+  font-weight: 500;
+}
+.phone[data-app="discord"] .m.pinged {
+  margin: 0 -12px;
+  padding: 4px 12px;
+  background: rgb(240 178 50 / 0.1);
+  box-shadow: inset 2px 0 #f0b232;
+}
+.phone[data-app="discord"] .meta {
+  display: inline;
+  font-size: 11px;
+  color: var(--im-ink2);
+}
+.phone[data-app="discord"] .meta time {
+  display: none;
+}
+.phone[data-app="discord"] .im-input {
+  border: 0;
+  border-radius: 8px;
+  background: #ebedef;
+}
+.phone[data-app="discord"] .im-send {
+  border-radius: 8px;
+}
+.phone[data-app="discord"] .hash {
+  margin-right: 4px;
+  color: var(--im-ink2);
+  font-weight: 400;
+}
+.phone[data-app="discord"] .chip {
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--im-accent) 12%, transparent);
+  border-color: var(--im-accent);
+}
+.phone[data-app="discord"] .file {
+  padding: 8px 10px;
+  border: 1px solid var(--im-line);
+  border-radius: 8px;
+  background: #f2f3f5;
+  max-width: 240px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .phone {
+    --im-bg: #17181a;
+    --im-bar: #232427;
+    --im-ink: #e8e9eb;
+    --im-ink2: #8f959e;
+    --im-line: #34363a;
+    --im-in: #2a2b2e;
+    --im-out: #1f3b70;
+    --im-accent: #4c88ff;
+    --im-code: rgb(255 255 255 / 0.08);
+    border-color: #000;
+    box-shadow:
+      0 0 0 1px #3a3a40,
+      var(--shadow);
+  }
+  .phone[data-app="wechat"] {
+    --im-bg: #111111;
+    --im-bar: #191919;
+    --im-ink: #d5d5d5;
+    --im-ink2: #7f7f7f;
+    --im-line: #262626;
+    --im-in: #2c2c2c;
+    --im-out: #3eb575;
+    --im-out-ink: #0d0d0d;
+  }
+  .phone[data-app="wechat"] .im-compose {
+    background: #1e1e1e;
+  }
+  .phone[data-app="telegram"] {
+    --im-bg: #0e1621;
+    --im-bar: #17212b;
+    --im-ink: #f5f5f5;
+    --im-ink2: #7f91a4;
+    --im-line: #101921;
+    --im-in: #182533;
+    --im-out: #2b5278;
+    --im-accent: #6ab3f3;
+  }
+  .phone[data-app="telegram"] .im-logs {
+    background:
+      radial-gradient(circle at 20% 30%, rgb(255 255 255 / 0.04) 0 2px, transparent 3px) 0 0 / 46px 46px,
+      linear-gradient(160deg, #0f1b28, #0b131c);
+  }
+  .phone[data-app="telegram"] .m.out .meta {
+    color: #7dbbf0;
+  }
+  .phone[data-app="telegram"] .chip {
+    background: #2b5278;
+  }
+  .phone[data-app="discord"] {
+    --im-bg: #313338;
+    --im-bar: #313338;
+    --im-ink: #dbdee1;
+    --im-ink2: #949ba4;
+    --im-line: #3f4147;
+    --im-accent: #8b93ff;
+  }
+  .phone[data-app="discord"] .nm {
+    color: #f2f3f5;
+  }
+  .phone[data-app="discord"] .tag {
+    background: #5865f2;
+  }
+  .phone[data-app="discord"] .im-input {
+    background: #383a40;
+  }
+  .phone[data-app="discord"] .file {
+    background: #2b2d31;
+  }
+  .tag-owner {
+    color: #f0b24b;
+  }
+}
+
 /* Brains */
 .brains {
   display: flex;
@@ -910,6 +1832,29 @@ h3 {
   .memory {
     grid-template-columns: 1fr;
   }
+  .demo-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+  }
+  .demo-stage {
+    position: static;
+    max-width: 400px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .demo-list {
+    display: flex;
+    overflow-x: auto;
+    margin: 24px -24px 0;
+    padding: 2px 24px 6px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .demo-list button {
+    flex: none;
+    width: 240px;
+    scroll-snap-align: start;
+  }
   .memory-link {
     transform: rotate(90deg);
   }
@@ -945,5 +1890,14 @@ h3 {
   }
   .chat-float {
     margin-top: 16px;
+  }
+  .demo-list {
+    margin: 24px -18px 0;
+    padding: 2px 18px 6px;
+  }
+  .phone {
+    height: min(640px, 82svh);
+    border-width: 8px;
+    border-radius: 38px;
   }
 }

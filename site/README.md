@@ -4,10 +4,12 @@ The website: two static pages (English at `/`, Chinese at `/zh/`), `llms.txt` fo
 
 ```text
 site/scripts/copy.mjs          every word on the site, en and zh; keep the two in step
+site/scripts/demo.mjs          the homepage demo's scenes (one agent in Feishu, WeChat, Telegram, Discord), en and zh
 site/scripts/build.mjs         renders site/dist from copy.mjs and a release snapshot
 site/scripts/screenshots.mjs   seeds a throwaway Mingle and shoots the console into site/img, light and dark
 site/scripts/review.sh         screenshots the built site at desktop and phone widths into .site-review/
-site/styles.css, site/main.js  the look (DESIGN.md's tokens) and the few behaviors (OS download, copy, motion)
+site/scripts/demo-review.mjs   plays every demo scene in headless Chrome, tapping Send, into .site-review/demo/
+site/styles.css, site/main.js  the look (DESIGN.md's tokens) and the few behaviors (OS download, copy, motion, the demo player)
 site/wrangler.jsonc            deploys site/dist as a static-assets Worker on mingle.build and www.mingle.build
 ```
 
@@ -29,6 +31,7 @@ mkdir -p .site-review
 node scripts/releases.ts snapshot .site-review/latest-release.json   # freeze the published release
 node site/scripts/build.mjs --release .site-review/latest-release.json
 site/scripts/review.sh                            # look at every image in .site-review/
+node site/scripts/demo-review.mjs [--motion]      # every demo scene must finish; look at .site-review/demo/
 ```
 
 ## Deploy

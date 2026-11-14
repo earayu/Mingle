@@ -11,6 +11,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { assetURL, releaseVersion, validateRelease } from "../../scripts/releases.ts";
 import { copy } from "./copy.mjs";
+import { demo } from "./demo.mjs";
 
 const { values } = parseArgs({ options: { release: { type: "string" }, out: { type: "string" } } });
 if (!values.release)
@@ -105,6 +106,65 @@ function chatMock(t) {
   </div>`;
 }
 
+// The interactive demo (site/scripts/demo.mjs): the frame is static, main.js plays the scenes from the inline JSON.
+const demoApps = ["feishu", "wechat", "telegram", "discord"];
+function demoSection(key, t) {
+  const d = demo[key];
+  const data = {
+    owner: d.owner,
+    ui: d.ui,
+    names: Object.fromEntries(demoApps.map((id) => [id, t.platforms[id]])),
+    icons: Object.fromEntries(demoApps.map((id) => [id, platformIcon(id, 18)])),
+    scenes: d.scenes,
+  };
+  const json = JSON.stringify(data).replaceAll("<", "\\u003c");
+  const apps = (s) => [...new Set(Object.values(s.chats).map((c) => c.app))];
+  return `
+<section id="demo" class="section demo-section">
+  <div class="wrap demo-grid">
+    <div class="demo-intro">
+      <p class="eyebrow">${t.demo.eyebrow}</p>
+      <h2>${t.demo.title}</h2>
+      <p class="lead">${t.demo.lead}</p>
+      <div class="demo-list" role="tablist" aria-label="${esc(t.demo.scenes)}">
+        ${d.scenes
+          .map(
+            (
+              s,
+              i,
+            ) => `<button type="button" role="tab" aria-selected="${i === 0}" aria-controls="demo-phone" data-scene="${i}">
+          <span class="demo-apps">${apps(s)
+            .map((id) => platformIcon(id, 22))
+            .join("")}</span>
+          <span class="demo-text"><b>${esc(s.title)}</b><small>${esc(s.blurb)}</small></span>
+        </button>`,
+          )
+          .join("")}
+      </div>
+    </div>
+    <div class="demo-stage">
+      <div class="phone" id="demo-phone" role="tabpanel" data-app="feishu">
+        <div class="phone-status" aria-hidden="true"><span>9:41</span><span class="phone-bars"><i></i><i></i><i></i><i></i></span></div>
+        <div class="im-head"></div>
+        <div class="im-logs"></div>
+        <div class="im-typing" aria-hidden="true"></div>
+        <div class="im-compose">
+          <div class="im-input"></div>
+          <button type="button" class="im-send" disabled>${esc(d.ui.send)}</button>
+        </div>
+        <div class="demo-end" hidden>
+          <button type="button" class="btn btn-small" data-again>${esc(d.ui.again)}</button>
+          <button type="button" class="btn btn-small btn-primary" data-next></button>
+        </div>
+        <div class="demo-banner" aria-hidden="true"></div>
+      </div>
+      <p class="demo-caption"><span class="av av-agent" aria-hidden="true">A</span>${esc(d.ui.caption)}</p>
+    </div>
+  </div>
+  <script type="application/json" id="demo-data">${json}</script>
+</section>`;
+}
+
 function page(key) {
   const t = copy[key];
   const other = Object.entries(copy).filter(([k]) => k !== key);
@@ -196,6 +256,8 @@ ${Object.values(copy)
     </ul>
   </div>
 </section>
+
+${demoSection(key, t)}
 
 <section id="how" class="section">
   <div class="wrap">
