@@ -25,6 +25,7 @@ import {
   Group,
   GroupRow,
   HarnessIcon,
+  Input,
   MoreMenu,
   PageHeader,
   PauseIcon,
@@ -114,6 +115,7 @@ export function AgentPage({
     setActivityError(false);
     setWorkError(false);
     setConfirmDelete(false);
+    setPauseFailure(null);
     setNotice(null);
     setTab("activity");
     setManageRequest(0);
@@ -132,13 +134,18 @@ export function AgentPage({
   const busy = agent.status === "thinking" || agent.status === "working";
   const paused = agent.status === "paused";
   const [switching, setSwitching] = useState(false);
-  const setPaused = async (pause: boolean) => {
+  const [pauseFailure, setPauseFailure] = useState<string | null>(null);
+  // The settings row answers in place, where the click was: it already reads "paused" or not, and
+  // a failure shows under it. The top notice is only for the paused card, which sits up there.
+  const setPaused = async (pause: boolean, from: "card" | "row" = "card") => {
     setSwitching(true);
+    setPauseFailure(null);
     try {
       await (pause ? api.pause(agent.id) : api.resume(agent.id));
-      setNotice(t(pause ? "agent.pausedNotice" : "agent.resumed", { name: agent.name }));
+      if (from === "card") setNotice(t(pause ? "agent.pausedNotice" : "agent.resumed", { name: agent.name }));
     } catch (error) {
-      setNotice(errorText(t, error));
+      if (from === "row") setPauseFailure(errorText(t, error));
+      else setNotice(errorText(t, error));
     } finally {
       setSwitching(false);
     }
@@ -239,17 +246,6 @@ export function AgentPage({
       <div className="flex min-h-0 flex-1">
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           <div className="flex max-w-[680px] flex-col gap-7 px-6 py-6 md:px-8">
-            {confirmDelete ? (
-              <DeleteConfirm
-                agent={agent}
-                onCancel={() => setConfirmDelete(false)}
-                onDeleted={async () => {
-                  // Refresh first: with the old list, "home" would pick the deleted agent again.
-                  await onChanged();
-                  onNavigate({ kind: "home" }, { replace: true });
-                }}
-              />
-            ) : null}
             {notice ? <p className="rise -mb-3 text-small text-ink2">{notice}</p> : null}
             {paused ? <PausedCard name={agent.name} disabled={switching} onResume={() => setPaused(false)} /> : null}
             {agent.status === "error" ? <AgentError agent={agent} /> : null}
@@ -262,14 +258,22 @@ export function AgentPage({
                   tabIndex={-1}
                   className="rounded-card focus:outline-2 focus:outline-offset-4 focus:outline-accent"
                 >
-                  <Connections agent={agent} onConnect={connect} onChanged={onChanged} />
+                  <Connections
+                    agent={agent}
+                    onConnect={connect}
+                    onChanged={() => {
+                      void onChanged();
+                      // A renamed owner shows by the new name in the activity right away.
+                      void refreshActivity();
+                    }}
+                  />
                 </section>
                 <RoleEditor agent={agent} onSaved={onChanged} />
                 <Brain agent={agent} onSaved={onChanged} />
                 <AgentEnv agent={agent} />
                 <Section title={t("agent.lifecycle")}>
                   <Group>
-                    <GroupRow>
+                    <GroupRow className="flex-wrap">
                       <span className="flex min-w-0 flex-1 flex-col">
                         <span>
                           {paused
@@ -285,16 +289,17 @@ export function AgentPage({
                         </span>
                       </span>
                       {paused ? (
-                        <Button small disabled={switching} onClick={() => setPaused(false)}>
+                        <Button small disabled={switching} onClick={() => setPaused(false, "row")}>
                           <PlayIcon />
                           {t("agent.resume")}
                         </Button>
                       ) : (
-                        <Button small disabled={switching} onClick={() => setPaused(true)}>
+                        <Button small disabled={switching} onClick={() => setPaused(true, "row")}>
                           <PauseIcon />
                           {t("agent.pause")}
                         </Button>
                       )}
+                      {pauseFailure ? <p className="w-full text-caption text-red">{pauseFailure}</p> : null}
                     </GroupRow>
                   </Group>
                 </Section>
@@ -311,15 +316,17 @@ export function AgentPage({
                         {t("agent.openHome")}
                       </Button>
                     </GroupRow>
-                    <GroupRow>
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <span>{t("agent.delete")}</span>
-                        <span className="text-caption text-ink2">{t("agent.deleteBody")}</span>
-                      </span>
-                      <Button small variant="danger" onClick={() => setConfirmDelete(true)}>
-                        {t("agent.delete")}
-                      </Button>
-                    </GroupRow>
+                    <DeleteRow
+                      agent={agent}
+                      confirming={confirmDelete}
+                      onAsk={() => setConfirmDelete(true)}
+                      onCancel={() => setConfirmDelete(false)}
+                      onDeleted={async () => {
+                        // Refresh first: with the old list, "home" would pick the deleted agent again.
+                        await onChanged();
+                        onNavigate({ kind: "home" }, { replace: true });
+                      }}
+                    />
                   </Group>
                 </Section>
               </>
@@ -629,7 +636,16 @@ function ChatAppsSummary({ agent, onManage }: { agent: AgentView; onManage: () =
         {agent.connections.map((c) => (
           <GroupRow key={c.id} className="min-h-[44px]">
             <PlatformIcon platform={c.platform} size={22} />
-            <span className="min-w-0 flex-1 truncate">{c.bot ?? t(`platform.${c.platform}` as MessageKey)}</span>
+            <span className="min-w-0 flex-1 truncate">
+              {c.bot ?? t(`platform.${c.platform}` as MessageKey)}
+              {/* Two bots of one platform look alike: say whose each is. */}
+              {c.ownerShared ? (
+                <span className="text-ink3">
+                  {" · "}
+                  {c.ownerContact?.name ?? t("connection.ownerUnnamed")}
+                </span>
+              ) : null}
+            </span>
             <StatusDot state={c.state} />
           </GroupRow>
         ))}
@@ -771,7 +787,7 @@ function Connections({
       ) : (
         <Group>
           {agent.connections.map((c) => (
-            <ConnectionRow key={c.id} connection={c} onChanged={onChanged} />
+            <ConnectionRow key={c.id} agentId={agent.id} connection={c} onChanged={onChanged} />
           ))}
         </Group>
       )}
@@ -779,18 +795,32 @@ function Connections({
   );
 }
 
-function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; onChanged: () => void }) {
+function ConnectionRow({
+  agentId,
+  connection,
+  onChanged,
+}: {
+  agentId: string;
+  connection: ConnectionView;
+  onChanged: () => void;
+}) {
   const { t } = useI18n();
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [naming, setNaming] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const platform = t(`platform.${connection.platform}` as MessageKey);
+  const owner = connection.ownerContact;
+  // Another bot on this platform has a different owner: name them, or both read as "you".
+  const shared = connection.ownerShared;
   const hint =
     connection.state === "error"
       ? connectionDetail(t, connection)
       : connection.state === "connected" && !connection.owner
         ? t("connection.noOwner")
-        : null;
+        : shared && owner && !owner.name
+          ? t("connection.nameOwnerHint", { platform })
+          : null;
   return (
     <GroupRow className="flex-wrap">
       <PlatformIcon platform={connection.platform} size={32} />
@@ -802,10 +832,23 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
           <StatusDot state={connection.state} />
           <span className="truncate">
             {platform} · {t(`connection.${connection.state}` as MessageKey)}
+            {owner && (owner.name || shared)
+              ? ` · ${owner.name ? t("connection.ownerIs", { name: owner.name }) : t("connection.ownerUnnamed")}`
+              : null}
           </span>
         </span>
       </span>
-      {confirming ? (
+      {naming && owner ? (
+        <OwnerNameForm
+          agentId={agentId}
+          contactId={owner.id}
+          initial={owner.name ?? ""}
+          onDone={(saved) => {
+            setNaming(false);
+            if (saved) onChanged();
+          }}
+        />
+      ) : confirming ? (
         <span className="flex shrink-0 items-center gap-1.5">
           <span className="hidden text-small text-ink2 sm:inline">{t("connection.removeAsk")}</span>
           <Button
@@ -847,7 +890,10 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
           ) : null}
           <MoreMenu
             label={t("agent.more")}
-            items={[{ label: t("connection.remove"), danger: true, onSelect: () => setConfirming(true) }]}
+            items={[
+              ...(owner ? [{ label: t("connection.nameOwner"), onSelect: () => setNaming(true) }] : []),
+              { label: t("connection.remove"), danger: true, onSelect: () => setConfirming(true) },
+            ]}
           />
         </span>
       )}
@@ -856,6 +902,61 @@ function ConnectionRow({ connection, onChanged }: { connection: ConnectionView; 
         <p className={`w-full pl-11 text-caption ${connection.state === "error" ? "text-red" : "text-ink3"}`}>{hint}</p>
       ) : null}
     </GroupRow>
+  );
+}
+
+/** Name a bot's owner, so two people on one platform are not both "you". Empty clears the name. */
+function OwnerNameForm({
+  agentId,
+  contactId,
+  initial,
+  onDone,
+}: {
+  agentId: string;
+  contactId: string;
+  initial: string;
+  onDone: (saved: boolean) => void;
+}) {
+  const { t } = useI18n();
+  const [name, setName] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <form
+      className="flex w-full flex-col gap-1.5 pl-11"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError(null);
+        try {
+          await api.nameContact(agentId, contactId, name);
+          onDone(true);
+        } catch (err) {
+          setError(errorText(t, err));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <span className="flex flex-wrap items-center gap-1.5">
+        <Input
+          className="min-w-0 flex-1"
+          aria-label={t("connection.ownerName")}
+          placeholder={t("connection.ownerName")}
+          value={name}
+          maxLength={64}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+        />
+        <Button small variant="primary" type="submit" disabled={busy}>
+          {t("connection.ownerNameSave")}
+        </Button>
+        <Button small variant="ghost" type="button" onClick={() => onDone(false)}>
+          {t("agent.deleteNo")}
+        </Button>
+      </span>
+      {error ? <p className="text-caption text-red">{error}</p> : null}
+    </form>
   );
 }
 
@@ -997,50 +1098,73 @@ function Brain({ agent, onSaved }: { agent: AgentView; onSaved: () => void }) {
   );
 }
 
-function DeleteConfirm({
+/** The delete row asks in place: the question replaces the row the click came from. */
+function DeleteRow({
   agent,
+  confirming,
+  onAsk,
   onCancel,
   onDeleted,
 }: {
   agent: AgentView;
+  confirming: boolean;
+  onAsk: () => void;
   onCancel: () => void;
   onDeleted: () => Promise<void>;
 }) {
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const cancel = () => {
+    setFailure(null);
+    onCancel();
+  };
   return (
-    <div className="rise flex flex-col gap-3 rounded-card border border-red-line bg-red-tint px-4 py-3.5">
-      <div className="flex flex-col gap-0.5">
-        <span className="font-semibold">{t("agent.deleteTitle", { name: agent.name })}</span>
-        <span className="text-small text-ink2">{t("agent.deleteBody")}</span>
-      </div>
-      <div className="flex gap-2">
-        <Button
-          variant="danger"
-          small
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setFailure(null);
-            try {
-              await api.remove(agent.id);
-            } catch (error) {
-              setFailure(errorText(t, error));
-              setBusy(false);
-              return;
-            }
-            await onDeleted();
+    <GroupRow className={`flex-wrap transition-colors duration-[120ms] ${confirming ? "bg-red-tint" : ""}`}>
+      <span className="flex min-w-0 flex-1 flex-col" aria-live="polite">
+        <span className={confirming ? "font-medium" : undefined}>
+          {confirming ? t("agent.deleteTitle", { name: agent.name }) : t("agent.delete")}
+        </span>
+        <span className="text-caption text-ink2">{t("agent.deleteBody")}</span>
+      </span>
+      {confirming ? (
+        // biome-ignore lint/a11y/noStaticElementInteractions: Escape backs out of the question it belongs to
+        <span
+          className="flex shrink-0 items-center gap-1.5"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !busy) cancel();
           }}
         >
-          {t("agent.deleteYes")}
+          <Button
+            small
+            variant="danger"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setFailure(null);
+              try {
+                await api.remove(agent.id);
+              } catch (error) {
+                setFailure(errorText(t, error));
+                setBusy(false);
+                return;
+              }
+              await onDeleted();
+            }}
+          >
+            {t("agent.deleteYes")}
+          </Button>
+          <Button small variant="ghost" autoFocus disabled={busy} onClick={cancel}>
+            {t("agent.deleteNo")}
+          </Button>
+        </span>
+      ) : (
+        <Button small variant="danger" onClick={onAsk}>
+          {t("agent.delete")}
         </Button>
-        <Button variant="ghost" small onClick={onCancel}>
-          {t("agent.deleteNo")}
-        </Button>
-      </div>
-      {failure ? <p className="text-small text-red">{failure}</p> : null}
-    </div>
+      )}
+      {failure ? <p className="w-full text-caption text-red">{failure}</p> : null}
+    </GroupRow>
   );
 }
 
@@ -1112,7 +1236,14 @@ function ActivityList({
   return (
     <Group>
       {items.map((m) => {
-        const who = m.sender ?? (m.senderIsOwner ? t("activity.you") : t("activity.someone"));
+        // "You" only when it cannot be two people: two WeChat accounts are each an owner.
+        const who =
+          m.sender ??
+          (m.senderIsOnlyOwner
+            ? t("activity.you")
+            : m.contactId
+              ? t("activity.unnamed", { id: m.contactId })
+              : t("activity.someone"));
         const where = m.chat.kind === "dm" ? t("chat.dm") : (m.chat.name ?? t("chat.group"));
         return (
           <div key={m.id} className={`flex gap-3 px-4 py-3 ${m.direction === "out" ? "bg-bg2" : ""}`}>

@@ -7,14 +7,21 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import QRCode from "qrcode";
 import type { CredentialField, OnboardingMethod, Platform } from "../channels/channel.ts";
-import { MingleError, notFound } from "../core/errors.ts";
+import { contactAlias, MingleError, notFound } from "../core/errors.ts";
 import { formatMessage } from "../core/format.ts";
 import { readRole } from "../core/home.ts";
 import { renderManual } from "../core/manual.ts";
 import type { Mingle } from "../core/mingle.ts";
 import { nextFire, parseDuration } from "../core/schedule.ts";
 import type { HarnessInfo } from "../harness/harness.ts";
-import type { Agent, Message, TaskStatus } from "../store/store.ts";
+import {
+  type Agent,
+  type Connection,
+  type Contact,
+  contactName,
+  type Message,
+  type TaskStatus,
+} from "../store/store.ts";
 import { VERSION } from "../version.ts";
 
 type Env = { Variables: { agent: Agent } };
@@ -60,7 +67,9 @@ export function createApi(mingle: Mingle): Hono<Env> {
     const chat = store.chat(m.chatId);
     const connection = chat && store.connection(chat.connectionId);
     if (!chat || !connection) return "";
-    return formatMessage(m, chat, connection.platform, { ownerId: connection.ownerId, agentName: agent.name });
+    const contact =
+      m.direction === "in" && m.senderId ? store.contactByPlatformId(chat.connectionId, m.senderId) : undefined;
+    return formatMessage(m, chat, connection.platform, { ownerId: connection.ownerId, agentName: agent.name, contact });
   };
 
   app.get("/v1/agent/whoami", (c) => {
@@ -137,6 +146,27 @@ export function createApi(mingle: Mingle): Hono<Env> {
       members = (await live.listMembers(ref)).map((m) => ({ id: m.id, name: m.name }));
     }
     return c.json({ id: chat.id, platform: connection?.platform, kind: chat.kind, name: chat.name, members });
+  });
+
+  const contactView = (k: Contact & { platform: Platform; owner: boolean }) => ({
+    id: k.id,
+    platform: k.platform,
+    name: contactName(k),
+    platformName: k.name,
+    alias: k.alias,
+    owner: k.owner,
+  });
+
+  app.get("/v1/agent/contacts", (c) => c.json(store.agentContacts(c.get("agent").id).map(contactView)));
+
+  app.patch("/v1/agent/contacts/:id", async (c) => {
+    const agent = c.get("agent");
+    const id = c.req.param("id");
+    if (!store.agentContact(agent.id, id)) throw notFound("contact", id);
+    const body = await c.req.json<{ name?: unknown }>();
+    store.setContactAlias(id, contactAlias(body.name));
+    const updated = store.agentContacts(agent.id).find((k) => k.id === id);
+    return c.json(updated && contactView(updated));
   });
 
   app.get("/v1/agent/chats/:id/messages", (c) => {
@@ -262,22 +292,47 @@ export function createApi(mingle: Mingle): Hono<Env> {
     await next();
   });
 
-  const agentView = (agent: Agent) => ({
-    ...agent,
-    harnessName: mingle.harnessName(agent.id),
-    home: mingle.homeDir(agent),
-    role: readRole(mingle.homeDir(agent)),
-    connections: store.connections(agent.id).map((n) => ({
-      id: n.id,
-      platform: n.platform,
-      bot: n.botName,
-      state: n.state,
-      detail: n.stateDetail,
-      retryAt: mingle.retryAt(n.id),
-      owner: n.ownerId !== null,
-      invite: inviteUrl(n.platform, n.botId, n.botName),
-    })),
-  });
+  const agentView = (agent: Agent) => {
+    const connections = store.connections(agent.id);
+    const shared = sharedOwners(connections);
+    return {
+      ...agent,
+      harnessName: mingle.harnessName(agent.id),
+      home: mingle.homeDir(agent),
+      role: readRole(mingle.homeDir(agent)),
+      connections: connections.map((n) => ({
+        id: n.id,
+        platform: n.platform,
+        bot: n.botName,
+        state: n.state,
+        detail: n.stateDetail,
+        retryAt: mingle.retryAt(n.id),
+        owner: n.ownerId !== null,
+        ownerContact: ownerContact(n.id, n.ownerId),
+        ownerShared: shared.has(n.id),
+        invite: inviteUrl(n.platform, n.botId, n.botName),
+      })),
+    };
+  };
+
+  /**
+   * Connections whose owner is not the only one on that platform: two WeChat accounts scanned by two
+   * people, say. There "you" would be two people, so the console names them instead.
+   */
+  const sharedOwners = (connections: readonly Connection[]): Set<string> =>
+    new Set(
+      connections
+        .filter((n) => n.ownerId)
+        .filter((n) => connections.some((o) => o.platform === n.platform && o.ownerId && o.ownerId !== n.ownerId))
+        .map((n) => n.id),
+    );
+
+  /** Who owns this bot, as the console names them. */
+  const ownerContact = (connectionId: string, ownerId: string | null) => {
+    if (!ownerId) return null;
+    const contact = store.contactByPlatformId(connectionId, ownerId);
+    return contact ? { id: contact.id, name: contactName(contact) } : null;
+  };
 
   const inviteUrl = (platform: Platform, botId: string | null, botName: string | null): string | null => {
     if (!botId) return null;
@@ -376,23 +431,46 @@ export function createApi(mingle: Mingle): Hono<Env> {
   app.get("/v1/admin/agents/:id/activity", (c) => {
     const agent = mingle.agent(c.req.param("id"));
     const limit = clamp(Number(c.req.query("limit") ?? 30), 1, 200);
-    const owners = new Set(store.connections(agent.id).map((n) => `${n.id}:${n.ownerId}`));
+    const connections = store.connections(agent.id);
+    const owners = new Set(connections.map((n) => `${n.id}:${n.ownerId}`));
+    const shared = sharedOwners(connections);
     return c.json(
-      store.agentActivity(agent.id, limit).map((m) => ({
-        id: m.id,
-        direction: m.direction,
-        triggers: m.triggers,
-        platform: m.platform,
-        chat: { id: m.chat.id, kind: m.chat.kind, name: m.chat.name },
-        // A platform ID is not a name: send null and let the console label the person.
-        sender: m.direction === "out" ? agent.name : m.senderName && m.senderName !== m.senderId ? m.senderName : null,
-        senderIsOwner: m.direction === "in" && owners.has(`${m.chat.connectionId}:${m.senderId}`),
-        body: m.body,
-        state: m.state,
-        files: m.attachments.map((a) => a.name),
-        createdAt: m.createdAt,
-      })),
+      store.agentActivity(agent.id, limit).map((m) => {
+        const contact =
+          m.direction === "in" && m.senderId ? store.contactByPlatformId(m.chat.connectionId, m.senderId) : undefined;
+        const senderIsOwner = m.direction === "in" && owners.has(`${m.chat.connectionId}:${m.senderId}`);
+        return {
+          id: m.id,
+          direction: m.direction,
+          triggers: m.triggers,
+          platform: m.platform,
+          chat: { id: m.chat.id, kind: m.chat.kind, name: m.chat.name },
+          // A platform ID is not a name: send null and let the console label the person.
+          sender:
+            m.direction === "out"
+              ? agent.name
+              : (contactName(contact) ?? (m.senderName && m.senderName !== m.senderId ? m.senderName : null)),
+          senderIsOwner,
+          /** The console may call an unnamed owner "you" only when that cannot mean two people. */
+          senderIsOnlyOwner: senderIsOwner && !shared.has(m.chat.connectionId),
+          contactId: contact?.id ?? null,
+          body: m.body,
+          state: m.state,
+          files: m.attachments.map((a) => a.name),
+          createdAt: m.createdAt,
+        };
+      }),
     );
+  });
+
+  /** The owner names someone in the agent's address book, or clears the name with an empty one. */
+  app.patch("/v1/admin/agents/:id/contacts/:contactId", async (c) => {
+    const agent = mingle.agent(c.req.param("id"));
+    const id = c.req.param("contactId");
+    if (!store.agentContact(agent.id, id)) throw notFound("contact", id);
+    const body = await c.req.json<{ name?: unknown }>();
+    const contact = store.setContactAlias(id, contactAlias(body.name));
+    return c.json({ id, name: contactName(contact) });
   });
 
   app.get("/v1/admin/agents/:id/work", (c) => {

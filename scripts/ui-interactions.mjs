@@ -20,6 +20,8 @@ const LOCALES = {
     more: "More",
     remove: "Remove",
     keep: "Keep",
+    deleteAgent: "Delete",
+    deleteAsk: "Delete ",
     chatApps: "Chat apps",
     install: "Install",
     installing: "Installing",
@@ -48,6 +50,10 @@ const LOCALES = {
     noReminders: "No reminders.",
     connectAction: "Connect a chat app",
     retryLoad: "Retry",
+    nameOwner: "Name the owner",
+    ownerUnnamed: "Owner not named",
+    ownerIs: "Owner: ",
+    save: "Save",
   },
   "zh-CN": {
     storage: "zh-CN",
@@ -56,6 +62,8 @@ const LOCALES = {
     more: "更多",
     remove: "移除",
     keep: "保留",
+    deleteAgent: "删除",
+    deleteAsk: "删除 ",
     chatApps: "聊天软件",
     install: "安装",
     installing: "正在安装",
@@ -84,6 +92,10 @@ const LOCALES = {
     noReminders: "没有提醒。",
     connectAction: "连接聊天软件",
     retryLoad: "重试",
+    nameOwner: "给 owner 起名",
+    ownerUnnamed: "owner 未命名",
+    ownerIs: "owner：",
+    save: "保存",
   },
 };
 
@@ -169,6 +181,7 @@ export async function reviewInteractions({
   singleSlug,
   envSlug,
   pauseSlug,
+  sharedSlug,
   emptySlug,
   envSecret,
   chrome,
@@ -851,12 +864,22 @@ export async function reviewInteractions({
       const r = el.getBoundingClientRect();
       return r.width && r.height ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
     };
+    // Settings sections load on their own; a target measured before they land moves under the click.
+    const settled = async (what, fn, ...args) => {
+      let last = await until(what, fn, ...args);
+      for (;;) {
+        await sleep(250);
+        const now = await until(what, fn, ...args);
+        if (now.x === last.x && now.y === last.y) return now;
+        last = now;
+      }
+    };
     const pauseScenario = async (localeName, labels, width) => {
       const tag = `pause ${localeName} ${width}`;
       await metrics(width);
       await goto(`/a/${pauseSlug}`, labels);
       await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.settings));
-      await clickEl(await until("pause button", buttonByText, labels.pause));
+      await clickEl(await settled("pause button", buttonByText, labels.pause));
       await until("paused status", (p) => document.querySelector("header")?.textContent.includes(p), labels.paused);
       assert(await call(pageFits), `${tag}: horizontal overflow`);
       await shot(`${localeName}-${width}-paused-settings`);
@@ -889,6 +912,109 @@ export async function reviewInteractions({
         await pauseScenario(localeName, labels, width);
         passed++;
         console.log(`pause ${localeName} ${width}: passed`);
+      }
+    }
+
+    // --- one agent on two WeChat accounts: name the second owner from its row (MING-55) ---
+    const ownerScenario = async (localeName, labels, width) => {
+      const tag = `owner ${localeName} ${width}`;
+      await metrics(width);
+      await goto(`/a/${sharedSlug}`, labels);
+      await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.settings));
+      const rows = await until("connection rows", (more) => connTriggers(more).length || null, labels.more);
+      assert(rows === 2, `${tag}: expected 2 connection rows, got ${rows}`);
+      await until("unnamed owner", (u) => document.body.textContent.includes(u), labels.ownerUnnamed);
+      assert(await call(pageFits), `${tag}: horizontal overflow`);
+      await shot(`${localeName}-${width}-owner-unnamed`);
+      await openTriggerMenu(labels.more, 1);
+      await clickEl(await call(menuItemCenter, labels.nameOwner));
+      await until("name form", () => document.activeElement?.tagName === "INPUT");
+      const name = "小美 Mei";
+      await send("Input.insertText", { text: name });
+      assert(await call(pageFits), `${tag}: form overflows horizontally`);
+      await shot(`${localeName}-${width}-owner-form`);
+      await clickEl(await until("save button", buttonByText, labels.save));
+      await until("owner named", (want) => document.body.textContent.includes(want), `${labels.ownerIs}${name}`);
+      await shot(`${localeName}-${width}-owner-named`);
+      await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.activity));
+      await until(
+        "activity shows the name",
+        // The activity row's sender, not the side panel, which updates on its own.
+        (want) => [...document.querySelectorAll("span.font-semibold")].some((el) => el.textContent.trim() === want),
+        name,
+      );
+      await shot(`${localeName}-${width}-owner-activity`);
+      // Back to unnamed for the next run.
+      const auth = { headers: { authorization: `Bearer ${token}`, "content-type": "application/json" } };
+      const agent = (await (await fetch(`${url}/v1/admin/status`, auth)).json()).agents.find(
+        (a) => a.slug === sharedSlug,
+      );
+      const contact = agent?.connections.find((c) => c.ownerContact?.name === name)?.ownerContact;
+      assert(contact, `${tag}: API does not show the new name`);
+      await fetch(`${url}/v1/admin/agents/${agent.id}/contacts/${contact.id}`, {
+        method: "PATCH",
+        ...auth,
+        body: JSON.stringify({ name: "" }),
+      });
+    };
+    for (const [localeName, labels] of Object.entries(LOCALES)) {
+      for (const width of [1440, 560]) {
+        await ownerScenario(localeName, labels, width);
+        passed++;
+        console.log(`owner ${localeName} ${width}: passed`);
+      }
+    }
+
+    // --- deleting an agent asks in its own row, in view, and Keep/Escape back out ---
+    const deleteScenario = async (localeName, labels, width) => {
+      const tag = `delete ${localeName} ${width}`;
+      await metrics(width);
+      await goto(`/a/${pauseSlug}`, labels);
+      await clickEl(await call(centerOfText, "header", '[role="radio"]', labels.settings));
+      // The question is a leaf span "Delete <name>?" inside the same row as Keep.
+      const asked = (ask, keep) => {
+        const el = [...document.querySelectorAll("span")].find(
+          (s) => s.children.length === 0 && s.textContent.startsWith(ask) && /[?？]$/.test(s.textContent.trim()),
+        );
+        if (!el) return null;
+        const row = el.closest(".divide-y > *");
+        const r = el.getBoundingClientRect();
+        return {
+          inRow: [...(row?.querySelectorAll("button") ?? [])].some((b) => b.textContent.trim() === keep),
+          visible: r.top >= 0 && r.bottom <= window.innerHeight,
+          focused: document.activeElement?.textContent.trim() === keep,
+        };
+      };
+      const gone = (ask) =>
+        ![...document.querySelectorAll("span")].some(
+          (s) => s.children.length === 0 && s.textContent.startsWith(ask) && /[?？]$/.test(s.textContent.trim()),
+        );
+      for (const leave of ["keep", "escape"]) {
+        await clickEl(await settled("delete button", buttonByText, labels.deleteAgent));
+        const state = await until("delete question", asked, labels.deleteAsk, labels.keep);
+        assert(state.inRow, `${tag}: the question is not in the delete row`);
+        assert(state.visible, `${tag}: the question is out of view`);
+        assert(state.focused, `${tag}: focus is not on Keep`);
+        assert(await call(pageFits), `${tag}: horizontal overflow`);
+        if (leave === "keep") {
+          await shot(`${localeName}-${width}-delete-confirm`);
+          await clickEl(await call(buttonByText, labels.keep));
+        } else {
+          await key("Escape", "Escape", 27);
+        }
+        await until("question gone", gone, labels.deleteAsk);
+      }
+      const auth = { headers: { authorization: `Bearer ${token}` } };
+      const still = (await (await fetch(`${url}/v1/admin/status`, auth)).json()).agents.some(
+        (a) => a.slug === pauseSlug,
+      );
+      assert(still, `${tag}: agent gone after keep`);
+    };
+    for (const [localeName, labels] of Object.entries(LOCALES)) {
+      for (const width of [1440, 560]) {
+        await deleteScenario(localeName, labels, width);
+        passed++;
+        console.log(`delete ${localeName} ${width}: passed`);
       }
     }
 

@@ -175,3 +175,65 @@ describe("onboarding completion", () => {
     }
   });
 });
+
+describe("contacts", () => {
+  it("backfills everyone who wrote and every owner on upgrade, with the latest real name", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mingle-schema-"));
+    const path = join(dir, "mingle.db");
+    try {
+      const db = new DatabaseSync(path);
+      db.exec(schema);
+      for (const f of ["002_owner.sql", "003_failure.sql", "004_onboarding.sql", "005_agent_env.sql"]) {
+        db.exec(readFileSync(new URL(`../src/store/migrations/${f}`, import.meta.url), "utf8"));
+      }
+      db.exec(`
+        PRAGMA user_version = 5;
+        INSERT INTO agents (id, slug, name, harness, created_at, updated_at) VALUES ('a_1', 'dudu', 'Dudu', 'claude', 0, 0);
+        INSERT INTO connections (id, agent_id, platform, state, owner_id, created_at, updated_at) VALUES ('n_1', 'a_1', 'wechat', 'connected', 'me@im.wechat', 0, 0);
+        INSERT INTO connections (id, agent_id, platform, state, owner_id, created_at, updated_at) VALUES ('n_2', 'a_1', 'wechat', 'connected', 'her@im.wechat', 0, 0);
+        INSERT INTO connections (id, agent_id, platform, state, created_at, updated_at) VALUES ('n_3', 'a_1', 'telegram', 'connected', 0, 0);
+        INSERT INTO chats (id, connection_id, platform_id, kind, created_at, updated_at) VALUES ('c1', 'n_1', 'me@im.wechat', 'dm', 0, 0);
+        INSERT INTO chats (id, connection_id, platform_id, kind, created_at, updated_at) VALUES ('c2', 'n_3', '-100', 'group', 0, 0);
+        INSERT INTO messages (id, chat_id, direction, platform_id, sender_id, sender_name, body, state, created_at) VALUES ('m1', 'c1', 'in', 'p1', 'me@im.wechat', '', 'hi', 'replied', 1);
+        INSERT INTO messages (id, chat_id, direction, platform_id, sender_id, sender_name, body, state, created_at) VALUES ('m2', 'c2', 'in', 'p2', '42', 'Zhang', 'a', 'replied', 1);
+        INSERT INTO messages (id, chat_id, direction, platform_id, sender_id, sender_name, body, state, created_at) VALUES ('m3', 'c2', 'in', 'p3', '42', 'Zhang San', 'b', 'replied', 2);
+        INSERT INTO messages (id, chat_id, direction, platform_id, sender_id, sender_name, body, state, created_at) VALUES ('m4', 'c2', 'in', 'p4', '42', '42', 'c', 'replied', 3);
+      `);
+      db.close();
+
+      const store = new Store(path);
+      try {
+        const contacts = store.agentContacts("a_1");
+        const byPlatformId = Object.fromEntries(contacts.map((k) => [k.platformId, k]));
+        expect(Object.keys(byPlatformId).sort()).toEqual(["42", "her@im.wechat", "me@im.wechat"]);
+        expect(byPlatformId["42"]).toMatchObject({ name: "Zhang San", alias: null, owner: false });
+        expect(byPlatformId["me@im.wechat"]).toMatchObject({ name: null, owner: true, connectionId: "n_1" });
+        expect(byPlatformId["her@im.wechat"]).toMatchObject({ name: null, owner: true, connectionId: "n_2" });
+        expect(contacts.every((k) => /^u[2-9a-hjkmnp-z]{4}$/.test(k.id))).toBe(true);
+      } finally {
+        store.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the given name when the platform reports a new one, and ignores IDs posing as names", () => {
+    const store = new Store(":memory:");
+    try {
+      const agent = store.createAgent({ name: "Alex", slug: "alex", harness: "scripted" });
+      const n = store.createConnection({ agentId: agent.id, platform: "telegram", secretRef: "s" });
+      const first = store.touchContact(n.id, "42", "42");
+      expect(first.name).toBeNull();
+      expect(store.touchContact(n.id, "42", "Zhang").id).toBe(first.id);
+      store.setContactAlias(first.id, "Old Zhang");
+      const renamed = store.touchContact(n.id, "42", "Zhang San");
+      expect(renamed).toMatchObject({ name: "Zhang San", alias: "Old Zhang" });
+      expect(store.touchContact(n.id, "42", "").name).toBe("Zhang San");
+      store.deleteConnection(n.id);
+      expect(store.contact(first.id)).toBeUndefined();
+    } finally {
+      store.close();
+    }
+  });
+});

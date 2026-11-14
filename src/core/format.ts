@@ -1,5 +1,5 @@
 import type { Platform } from "../channels/channel.ts";
-import type { Chat, Message, Reminder } from "../store/store.ts";
+import { type Chat, type Contact, contactName, type Message, type Reminder } from "../store/store.ts";
 
 /** ISO 8601 in local time with offset, minute precision: 2026-11-11T14:02+08:00. */
 export function localTime(ms: number): string {
@@ -18,14 +18,19 @@ export function formatMessage(
   message: Message,
   chat: Chat,
   platform: Platform,
-  opts: { ownerId?: string | null; agentName?: string } = {},
+  opts: { ownerId?: string | null; agentName?: string; contact?: Contact | undefined } = {},
 ): string {
   const parts = [`msg=${message.id}`, `chat=${chat.id}`, `im=${platform}`];
   parts.push(chat.kind === "dm" ? "dm" : `group=${quote(chat.name ?? chat.platformId)}`);
   if (message.direction === "out") {
     parts.push(`from=${quote(opts.agentName ?? "you")}`, "you");
   } else {
-    parts.push(`from=${quote(message.senderName || message.senderId || "unknown")}`);
+    // The name the agent or owner gave them, else the platform's. With neither, no `from`: a platform
+    // ID is not a name, and `user=` is how the agent tells people apart and names them.
+    const name = contactName(opts.contact) ?? (message.senderName !== message.senderId ? message.senderName : null);
+    if (name) parts.push(`from=${quote(name)}`);
+    if (opts.contact) parts.push(`user=${opts.contact.id}`);
+    else if (!name) parts.push(`from=${quote(message.senderId || "unknown")}`);
     if (opts.ownerId && message.senderId === opts.ownerId) parts.push("owner");
   }
   if (message.replyTo) parts.push(`reply_to=${message.replyTo}`);

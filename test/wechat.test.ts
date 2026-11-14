@@ -74,6 +74,22 @@ describe("wechat login", () => {
     expect(trustedBaseUrl("sh.ilinkai.weixin.qq.com", "x")).toBe("https://sh.ilinkai.weixin.qq.com/");
   });
 
+  it("sends the bots already here with the QR request, and reports an account that is one of them", async () => {
+    const ilink = fakeIlink({
+      "ilink/bot/get_bot_qrcode": () => ({ qrcode: "Q", qrcode_img_content: "https://liteapp.weixin.qq.com/q/x" }),
+      "ilink/bot/get_qrcode_status": () => ({ status: "binded_redirect" }),
+    });
+    const known = Array.from({ length: 12 }, (_, i) => ({ token: `tok${i}`, botId: `b${i}` }));
+    const events = await collect(
+      wechatChannel({ api: wechatApi(ilink.fetchImpl) }).onboard(undefined, new AbortController().signal, {
+        knownCredentials: async () => [...known, { botId: "no-token" }],
+      }),
+    );
+    const request = ilink.calls.find((c) => c.endpoint === "ilink/bot/get_bot_qrcode");
+    expect(request?.body).toEqual({ local_token_list: known.slice(0, 10).map((c) => c.token) });
+    expect(events.at(-1)).toEqual({ kind: "failed", code: "already_connected" });
+  });
+
   it("reports an account that is already bound elsewhere", async () => {
     const ilink = fakeIlink({
       "ilink/bot/get_bot_qrcode": () => ({ qrcode: "Q", qrcode_img_content: "https://liteapp.weixin.qq.com/q/x" }),

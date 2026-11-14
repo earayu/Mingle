@@ -75,6 +75,11 @@ export interface OnboardingContext {
   readonly agentName?: string;
   /** Resolves with the code the user types in the console after a `needs_code` event. */
   readonly awaitCode?: () => Promise<string>;
+  /**
+   * Credentials of this platform's bots already connected on this computer, newest first. Lets a
+   * platform recognize a rebind instead of treating every scan as a new client. Read only on demand.
+   */
+  readonly knownCredentials?: () => Promise<readonly Credentials[]>;
 }
 
 export type OnboardingFailure =
@@ -84,6 +89,8 @@ export type OnboardingFailure =
   | "invalid_credentials"
   | "network"
   | "already_bound"
+  /** The platform says this account's bot is already connected here, to this computer's Mingle. */
+  | "already_connected"
   /** The app or system denied something only the person can grant (macOS privacy settings, for example). */
   | "permission_missing"
   /** The app the channel drives is not signed in (Messages without iMessage, for example). */
