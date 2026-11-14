@@ -8,7 +8,7 @@ export const copy = {
     title: "Mingle: your agent, in the chats you already use",
     description:
       "Mingle brings Claude Code, Codex or another agent you already have into WeChat, Feishu, Slack, Telegram and more as a bot, with a name, a role and a memory. It runs on your computer. There is no Mingle server.",
-    nav: { how: "How it works", agent: "The agent", brains: "Brains", privacy: "Privacy", cli: "CLI" },
+    nav: { demo: "Try it", how: "How it works", agent: "The agent", brains: "Brains", privacy: "Privacy", cli: "CLI" },
     download: "Download",
     downloadFor: { mac: "Download for Mac", windows: "Download for Windows", linux: "Download for Linux" },
     installTerminal: "Install from a terminal",
@@ -30,6 +30,12 @@ export const copy = {
       reply2: "Done. I'll post the time and meeting point here on Friday at 8 pm.",
     },
     apps: { title: "Eight chat apps. One agent." },
+    demo: {
+      eyebrow: "Try it",
+      title: "One agent. Every chat app. One memory.",
+      lead: "Pick a scene, then tap Send when it's your turn. Alex keeps its name, face and memory in every app; each app shows its own receipts and progress.",
+      scenes: "Scenes",
+    },
     platforms: {
       wechat: "WeChat",
       wecom: "WeCom",
@@ -185,7 +191,7 @@ export const copy = {
     title: "Mingle：把你的 Agent 请进你已经在用的聊天软件",
     description:
       "Mingle 把你已有的 Claude Code、Codex 等 Agent 变成有名字、有角色、有记忆的伙伴，以机器人身份加入微信、飞书、Slack、Telegram 等聊天软件。在你自己的电脑上运行，没有 Mingle 服务器。",
-    nav: { how: "怎么用", agent: "Agent", brains: "大脑", privacy: "隐私", cli: "命令行" },
+    nav: { demo: "试一试", how: "怎么用", agent: "Agent", brains: "大脑", privacy: "隐私", cli: "命令行" },
     download: "下载",
     downloadFor: { mac: "下载 Mac 版", windows: "下载 Windows 版", linux: "下载 Linux 版" },
     installTerminal: "用终端安装",
@@ -207,6 +213,12 @@ export const copy = {
       reply2: "好的。周五晚上 8 点我会在群里发集合时间和地点。",
     },
     apps: { title: "八个聊天软件，同一个 Agent。" },
+    demo: {
+      eyebrow: "试一试",
+      title: "一个 Agent，所有聊天软件，同一份记忆。",
+      lead: "选一个场景，轮到你时点发送。Alex 在每个聊天软件里都是同一个名字、同一个头像、同一份记忆；回执和进度按各家的样子显示。",
+      scenes: "场景",
+    },
     platforms: {
       wechat: "微信",
       wecom: "企业微信",
