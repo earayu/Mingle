@@ -584,6 +584,11 @@ export class Store {
     return { ...message, chat: this.chat(message.chatId) as Chat };
   }
 
+  /** Whether `id` names a message in this chat. */
+  hasMessage(chatId: string, id: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM messages WHERE id = ? AND chat_id = ?").get(id, chatId));
+  }
+
   messageByPlatformId(chatId: string, platformId: string): Message | undefined {
     const row = this.db
       .prepare("SELECT * FROM messages WHERE chat_id = ? AND platform_id = ?")

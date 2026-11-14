@@ -184,6 +184,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
     const before = c.req.query("before");
     if ([around, since, before].filter(Boolean).length > 1)
       throw new MingleError("flags_conflict", "pass only one of --before, --since and --around");
+    if (before && !store.hasMessage(chat.id, before)) throw notFound("message", before);
     const messages = around
       ? store.chatAround(chat.id, around, limit)
       : since

@@ -23,7 +23,7 @@ import { MingleError, notFound } from "./errors.ts";
 import { formatReminder, renderMessage } from "./format.ts";
 import { createHome, memorySize, writeRole } from "./home.ts";
 import { slugify } from "./ids.ts";
-import { BACKOFF_MS, type LinkEvent, type LinkState, step, stored } from "./link.ts";
+import { BACKOFF_MS, type LinkEffect, type LinkEvent, type LinkState, step, stored } from "./link.ts";
 import { LiveReplies, pausedNote, stopNote } from "./live.ts";
 import { Outbox } from "./outbox.ts";
 import type { Paths } from "./paths.ts";
@@ -752,7 +752,18 @@ export class Mingle {
     platform: Platform,
     event: Extract<OnboardingEvent, { kind: "succeeded" }>,
   ): Promise<Connection> {
-    const existing = this.store.connections().find((c) => c.platform === platform && c.botId === event.bot.id);
+    // One bot, one connection: matched by platform bot id or by the secret reference it will
+    // get, so a rebind reuses the connection instead of making a second one. Two onboardings
+    // of the same bot can be in flight at once (the console and the CLI, say); the lookup and
+    // the insert below must stay synchronous, or both would pass the check and create a pair
+    // of connections sharing one secretRef — removing either would then cut the other's
+    // credentials, and every message would arrive twice.
+    const secretRef = `${platform}:${event.bot.id}`;
+    const findExisting = () =>
+      this.store
+        .connections()
+        .find((c) => c.platform === platform && (c.botId === event.bot.id || c.secretRef === secretRef));
+    const existing = findExisting();
     if (existing) {
       // Binding a bot again can hand out new credentials and revoke the old ones (QQ issues a
       // fresh AppSecret on every scan), so the connection that already has this bot keeps
@@ -768,8 +779,17 @@ export class Mingle {
         `this bot is already connected to ${this.store.agent(existing.agentId)?.name ?? "another agent"}`,
       );
     }
-    const secretRef = `${platform}:${event.bot.id}`;
     await this.options.secrets.set(secretRef, JSON.stringify(event.credentials));
+    // The secret write above yielded: a concurrent onboarding of the same bot may have created
+    // the connection meanwhile. Look again with no await before the insert, so only one wins.
+    const raced = findExisting();
+    if (raced) {
+      if (raced.agentId === agentId) return this.store.connection(raced.id) as Connection;
+      throw new MingleError(
+        "bot_in_use",
+        `this bot is already connected to ${this.store.agent(raced.agentId)?.name ?? "another agent"}`,
+      );
+    }
     const connection = this.store.createConnection({ agentId, platform, secretRef });
     this.store.updateConnection(connection.id, {
       botId: event.bot.id,
@@ -779,7 +799,10 @@ export class Mingle {
     // The owner is in the address book from the start, so the console can name them before they write.
     if (event.ownerId) this.store.touchContact(connection.id, event.ownerId, null);
     await this.reconnect(connection.id, event.credentials);
-    if (event.ownerId) void this.greetOwner(connection.id, event.ownerId);
+    if (event.ownerId)
+      void this.greetOwner(connection.id, event.ownerId).catch((error) =>
+        this.log(`greeting failed: ${(error as Error).message}`),
+      );
     return this.store.connection(connection.id) as Connection;
   }
 
@@ -803,9 +826,7 @@ export class Mingle {
   async removeConnection(connectionId: string): Promise<void> {
     const connection = this.store.connection(connectionId);
     if (!connection) return;
-    void this.drive(connectionId, { kind: "remove" }).catch((error) =>
-      this.log(`connection ${connectionId} could not be removed cleanly: ${(error as Error).message}`),
-    );
+    this.drive(connectionId, { kind: "remove" });
     this.links.delete(connectionId);
     if (connection.secretRef) await this.options.secrets.delete(connection.secretRef);
     this.store.deleteConnection(connectionId);
@@ -845,9 +866,18 @@ export class Mingle {
   private drive(id: string, event: LinkEvent, gen?: number, credentials?: Credentials): Promise<void> {
     const link = this.links.get(id);
     if (!link || (gen !== undefined && gen !== link.gen)) return Promise.resolve();
-    const { state, effect } = step(link.state, event, Date.now(), this.options.reconnectDelaysMs ?? BACKOFF_MS);
-    link.state = state;
-    if (state.kind !== "removed") this.store.updateConnection(id, stored(state));
+    // This runs inside timer and adapter callbacks: a store error must not escape as an
+    // uncaught exception and take the whole process down.
+    let state: LinkState;
+    let effect: LinkEffect;
+    try {
+      ({ state, effect } = step(link.state, event, Date.now(), this.options.reconnectDelaysMs ?? BACKOFF_MS));
+      link.state = state;
+      if (state.kind !== "removed") this.store.updateConnection(id, stored(state));
+    } catch (error) {
+      this.log(`connection ${id} state update failed: ${(error as Error).message}`);
+      return Promise.resolve();
+    }
     if (effect === "none") return Promise.resolve();
     clearTimeout(link.timer);
     link.timer = undefined;
@@ -856,20 +886,16 @@ export class Mingle {
       this.log(
         `connection ${id} is offline (${state.code}); trying again in ${Math.round((state.retryAt - Date.now()) / 1000)}s`,
       );
-      link.timer = setTimeout(
-        () =>
-          void this.drive(id, { kind: "timer" }).catch((error) =>
-            this.log(`connection ${id} retry failed: ${(error as Error).message}`),
-          ),
-        Math.max(0, state.retryAt - Date.now()),
-      );
+      link.timer = setTimeout(() => void this.drive(id, { kind: "timer" }), Math.max(0, state.retryAt - Date.now()));
       link.timer.unref?.();
     } else if (effect === "close" && state.kind === "stopped") {
       this.log(`connection ${id} stopped (${state.code}); waiting for the owner`);
     }
     if (effect !== "connect") return Promise.resolve();
     link.gen++;
-    return this.attempt(id, link.gen, credentials);
+    return this.attempt(id, link.gen, credentials).catch((error) =>
+      this.log(`connection ${id} attempt failed unexpectedly: ${(error as Error).message}`),
+    );
   }
 
   private closeLive(id: string): void {
@@ -896,21 +922,19 @@ export class Mingle {
           try {
             this.receive(id, message);
           } catch (error) {
-            this.log(`connection ${id}: dropping an inbound message: ${(error as Error).message}`);
+            this.log(`could not take a message from ${connection.platform}: ${(error as Error).message}`);
           }
         },
         onState: (state) => {
           if (state.kind === "error") reported = state.code;
-          void this.drive(id, { kind: "reported", state }, gen).catch((error) =>
-            this.log(`connection ${id} state update failed: ${(error as Error).message}`),
-          );
+          void this.drive(id, { kind: "reported", state }, gen);
         },
         onMembership: (change) => {
           if (this.links.get(id)?.gen !== gen) return;
           try {
             this.onMembership(id, change);
           } catch (error) {
-            this.log(`connection ${id}: membership update failed: ${(error as Error).message}`);
+            this.log(`could not take a membership change from ${connection.platform}: ${(error as Error).message}`);
           }
         },
       });
