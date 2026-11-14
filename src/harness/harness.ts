@@ -105,7 +105,11 @@ export interface TurnEnd {
 }
 
 export interface HarnessEvents {
-  onTurnStarted(): void;
+  /**
+   * A turn began. `self`: the harness began it on its own, not for input Mingle delivered;
+   * Claude Code does this when a background command it started earlier finishes.
+   */
+  onTurnStarted(self?: boolean): void;
   onTurnEnded(outcome: TurnEnd): void;
   /** Something visible happened inside a turn: reasoning, text, or a tool call. */
   onActivity(kind: "thinking" | "tool", detail?: string): void;
@@ -118,7 +122,12 @@ export interface HarnessSession {
   /** True when this open resumed `resume`; false when a fresh session replaced it. */
   readonly resumed: boolean;
   deliver(text: string, inputId: string): Promise<{ outcome: DeliverOutcome; reason?: string }>;
-  abort(): Promise<void>;
+  /**
+   * Stop the agent's work: the running turn, and the background tasks (commands, subagents) it
+   * left running, where the harness can stop one task (Claude Code, Codex, Qoder). True when
+   * there was something to stop.
+   */
+  abort(): Promise<boolean>;
   dispose(): Promise<void>;
 }
 
@@ -561,13 +570,40 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
         throw error;
       }
 
+      /** A turn is running: one Mingle prompted, or one the harness began itself. */
+      let turn: "prompted" | "self" | undefined;
+      /** Tasks running beside the turns, which an abort of the turn leaves running. */
+      const tasks = new Set<string>();
       session.events((event) => {
+        switch (event.kind) {
+          case "task_started":
+            if (!event.ambient) tasks.add(event.taskId);
+            return;
+          case "task_updated":
+            if (event.status === "completed" || event.status === "failed" || event.status === "stopped")
+              tasks.delete(event.taskId);
+            return;
+          case "task_ended":
+            tasks.delete(event.taskId);
+            return;
+        }
         if (event.agentPath.length > 0) return;
+        // Work with no turn open: the harness began a turn on its own (Claude Code wakes the
+        // agent when a background command ends). OAR reports turn starts for prompts only.
+        if (
+          !turn &&
+          (event.kind === "tool_call_started" || event.kind === "reasoning" || event.kind === "text_delta")
+        ) {
+          turn = "self";
+          events.onTurnStarted(true);
+        }
         switch (event.kind) {
           case "turn_started":
+            turn = "prompted";
             events.onTurnStarted();
             break;
           case "turn_ended": {
+            turn = undefined;
             const outcome = event.outcome as { kind: string; reason?: string; failure?: Failure; resetsAt?: string };
             const resetsAt = outcome.resetsAt ? Date.parse(outcome.resetsAt) : Number.NaN;
             events.onTurnEnded({
@@ -601,7 +637,21 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
             : { outcome: result.landed };
         },
         async abort() {
-          await session.abort();
+          const running = turn;
+          const stopping = [...tasks];
+          const [aborted] = await Promise.all([
+            running ? session.abort() : undefined,
+            ...stopping.map((id) => session.stopTask?.(id).catch(() => undefined)),
+          ]);
+          // A turn begun by the harness itself that it no longer has (it ended between the
+          // last event and the abort, without a turn end): close it here so it cannot stay open.
+          if (running === "self" && aborted?.kind === "rejected" && turn === "self") {
+            turn = undefined;
+            events.onTurnEnded({ kind: "aborted" });
+          }
+          // A task that cannot be stopped on its own still counts: its end can no longer start
+          // work, since the runtime aborts a turn the harness begins by itself after a stop.
+          return Boolean(running) || stopping.length > 0;
         },
         async dispose() {
           await session.dispose();

@@ -123,6 +123,120 @@ describe("message flow", () => {
     expect(reply.chat.platformId).toBe("7");
   });
 
+  /**
+   * Like Claude Code: the turn starts a background command and ends; when the command
+   * finishes, the harness begins a turn of its own and the agent replies to the message.
+   */
+  function backgroundHarness(options: { stopTask: boolean; onCliResult?: (stderr: string) => void }) {
+    const log = { stoppedTasks: 0, selfTurns: 0, aborts: 0 };
+    const harness: Harness = {
+      available: async () => [{ id: "scripted", name: "Scripted" }],
+      open: async (opened, events) => {
+        let turn: "prompted" | "self" | undefined;
+        let task: NodeJS.Timeout | undefined;
+        const env = opened.env as Record<string, string>;
+        let closed = false;
+        const endTurn = (kind: string) => {
+          if (!turn || closed) return;
+          turn = undefined;
+          events.onTurnEnded({ kind });
+        };
+        return {
+          id: "bg-session",
+          resumed: false,
+          deliver: async (text) => {
+            const ids = messageIds(text);
+            turn = "prompted";
+            events.onTurnStarted();
+            events.onActivity("tool", "Bash");
+            if (ids.length > 0) {
+              task = setTimeout(async () => {
+                task = undefined;
+                log.selfTurns++;
+                turn = "self";
+                events.onTurnStarted(true);
+                events.onActivity("tool", "Bash");
+                for (const id of ids) {
+                  const result = await runCli(env, ["message", "reply", id], "TASK-DONE");
+                  options.onCliResult?.(result.stderr);
+                }
+                endTurn("completed");
+              }, 400);
+            }
+            // The turn itself waits for /stop, as the nudge turn did in MING-43.
+            return { outcome: "prompted" };
+          },
+          abort: async () => {
+            log.aborts++;
+            const had = Boolean(turn) || Boolean(task);
+            if (task && options.stopTask) {
+              clearTimeout(task);
+              task = undefined;
+              log.stoppedTasks++;
+            }
+            setTimeout(() => endTurn("aborted"), 10);
+            return had;
+          },
+          dispose: async () => {
+            closed = true;
+            clearTimeout(task);
+          },
+        };
+      },
+    };
+    return { harness, log };
+  }
+
+  it("stops the background work a turn left running, so it does not answer after /stop", async () => {
+    const { harness, log } = backgroundHarness({ stopTask: true });
+    current = await rig(async () => {}, { harnessAdapter: harness });
+    const { channel, mingle } = current;
+    const dm = { platformId: "7", kind: "dm" as const, name: "Zhang San" };
+    const job = channel.receive({ text: "run a 90 second job, then say TASK-DONE", chat: dm });
+    await until(() => mingle.runtime(current?.agentId as string)?.busy);
+    channel.receive({ text: "/stop", chat: dm });
+    await until(() => channel.sent.find((m) => m.text === "Stopped."));
+    await sleep(700);
+    expect(log.stoppedTasks).toBe(1);
+    expect(log.selfTurns).toBe(0);
+    expect(channel.sent.map((m) => m.text)).toEqual(["Stopped."]);
+    // Not nudged back into the work the owner stopped: one delivery, no "not answered yet" turn.
+    const chat = mingle.store.agentChats(current.agentId)[0]?.id as string;
+    await until(() => mingle.store.messageByPlatformId(chat, job.platformId)?.state === "unanswered");
+  });
+
+  it("aborts a turn the harness begins on its own after /stop and refuses its replies", async () => {
+    const refusals: string[] = [];
+    const { harness, log } = backgroundHarness({ stopTask: false, onCliResult: (e) => refusals.push(e) });
+    current = await rig(async () => {}, { harnessAdapter: harness });
+    const { channel, mingle } = current;
+    const dm = { platformId: "7", kind: "dm" as const, name: "Zhang San" };
+    channel.receive({ text: "run a 90 second job, then say TASK-DONE", chat: dm });
+    await until(() => mingle.runtime(current?.agentId as string)?.busy);
+    channel.receive({ text: "/stop", chat: dm });
+    await until(() => channel.sent.find((m) => m.text === "Stopped."));
+    await until(() => refusals.length === 1);
+    expect(log.selfTurns).toBe(1);
+    expect(log.aborts).toBe(2); // The stop, then the turn the finished command began.
+    expect(refusals[0]).toContain("agent_stopped");
+    expect(channel.sent.map((m) => m.text)).toEqual(["Stopped."]);
+    await until(() => !mingle.runtime(current?.agentId as string)?.busy);
+
+    // The next message is work again: it is answered as usual.
+    channel.receive({ text: "now a new question", chat: dm });
+    await until(() => channel.sent.some((m) => m.text === "TASK-DONE"));
+    expect(mingle.runtime(current.agentId)?.halted).toBe(false);
+  });
+
+  it("answers from a background command that finishes on its own when nobody stopped it", async () => {
+    const { harness, log } = backgroundHarness({ stopTask: true });
+    current = await rig(async () => {}, { harnessAdapter: harness });
+    current.channel.receive({ text: "run a job, then say TASK-DONE" });
+    await until(() => current?.channel.sent.some((m) => m.text === "TASK-DONE"));
+    expect(log.selfTurns).toBe(1);
+    expect(log.aborts).toBe(0);
+  });
+
   it("ignores platform redeliveries and messages not addressed to the agent", async () => {
     current = await rig(async (t) => {
       for (const id of messageIds(t.input))
@@ -458,7 +572,7 @@ describe("eager session startup", () => {
     id,
     resumed: false,
     deliver: async () => ({ outcome: "prompted" }),
-    abort: async () => {},
+    abort: async () => false,
     dispose: async () => dispose(),
   });
 

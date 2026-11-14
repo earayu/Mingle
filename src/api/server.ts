@@ -96,8 +96,19 @@ export function createApi(mingle: Mingle): Hono<Env> {
     );
   });
 
+  // After the owner's stop, nothing the stopped work produces reaches a chat (docs/spec.md 4.3).
+  const refuseIfStopped = (agent: Agent) => {
+    if (mingle.runtime(agent.id)?.halted)
+      throw new MingleError(
+        "agent_stopped",
+        "the owner stopped this work with /stop. Do not finish or report on it; wait for the next message",
+        409,
+      );
+  };
+
   app.post("/v1/agent/messages/reply", async (c) => {
     const agent = c.get("agent");
+    refuseIfStopped(agent);
     const body = await c.req.json<{ messageId: string; text: string; files?: string[] }>();
     const original = store.agentMessage(agent.id, body.messageId);
     if (!original) throw notFound("message", body.messageId);
@@ -112,6 +123,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   app.post("/v1/agent/messages/send", async (c) => {
     const agent = c.get("agent");
+    refuseIfStopped(agent);
     const body = await c.req.json<{ chatId: string; text: string; files?: string[] }>();
     const report = await mingle.outbox.send(agent.id, {
       chatId: body.chatId,
