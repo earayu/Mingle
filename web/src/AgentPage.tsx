@@ -10,6 +10,7 @@ import {
   type Reminder,
   type Task,
 } from "./api.ts";
+import { fetchCached, peek, useCached } from "./cache.ts";
 import { errorText, type MessageKey, statusDetailText, useI18n } from "./i18n.ts";
 import { ModelPicker } from "./NewAgent.tsx";
 import { online, useOnline } from "./online.ts";
@@ -54,8 +55,9 @@ export function AgentPage({
   onChanged: () => Promise<void> | void;
 }) {
   const { t } = useI18n();
-  const [activity, setActivity] = useState<Activity[] | null>(null);
-  const [work, setWork] = useState<WorkData | null>(null);
+  // The last activity and work seen for an agent show at once when its page opens again.
+  const [activity, setActivity] = useState<Activity[] | null>(() => peek<Activity[]>(`activity:${agent.id}`) ?? null);
+  const [work, setWork] = useState<WorkData | null>(() => peek<WorkData>(`work:${agent.id}`) ?? null);
   const [activityError, setActivityError] = useState(false);
   const [workError, setWorkError] = useState(false);
   const activityPending = useRef(false);
@@ -74,12 +76,13 @@ export function AgentPage({
   }, [manageRequest]);
 
   // Each resource guards itself: a slow call is not superseded by the next poll, and one
-  // request in flight does not hold back the other resource.
+  // request in flight does not hold back the other resource. `fresh` lets a remount read
+  // again even if a previous mount's read is still resolving; only the latest read caches.
   const refreshActivity = useCallback(async () => {
     if (activityPending.current) return;
     activityPending.current = true;
     try {
-      setActivity(await api.activity(agent.id));
+      setActivity(await fetchCached(`activity:${agent.id}`, () => api.activity(agent.id), true));
       setActivityError(false);
     } catch {
       setActivityError(true);
@@ -91,7 +94,7 @@ export function AgentPage({
     if (workPending.current) return;
     workPending.current = true;
     try {
-      setWork(await api.work(agent.id));
+      setWork(await fetchCached(`work:${agent.id}`, () => api.work(agent.id), true));
       setWorkError(false);
     } catch {
       setWorkError(true);
@@ -104,10 +107,10 @@ export function AgentPage({
     void refreshWork();
   }, [refreshActivity, refreshWork]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset when switching to another agent
+  // Switching to another agent starts from what was last seen for it.
   useEffect(() => {
-    setActivity(null);
-    setWork(null);
+    setActivity(peek<Activity[]>(`activity:${agent.id}`) ?? null);
+    setWork(peek<WorkData>(`work:${agent.id}`) ?? null);
     setActivityError(false);
     setWorkError(false);
     setConfirmDelete(false);
@@ -925,16 +928,9 @@ function RoleEditor({ agent, onSaved }: { agent: AgentView; onSaved: () => void 
 /** Which harness and model drive the agent. A change applies from the next message. */
 function Brain({ agent, onSaved }: { agent: AgentView; onSaved: () => void }) {
   const { t } = useI18n();
-  const [harnesses, setHarnesses] = useState<Harness[] | null>(null);
+  const { value: harnesses } = useCached<Harness[]>("harnesses", api.harnesses, []);
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    api
-      .harnesses()
-      .then(setHarnesses)
-      .catch(() => setHarnesses([]));
-  }, []);
-
   async function save(patch: { harness?: string; model?: string | null }) {
     setState("saving");
     setError(null);

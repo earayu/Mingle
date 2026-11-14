@@ -8,6 +8,7 @@ import {
   type Platform,
   type PlatformInfo,
 } from "./api.ts";
+import { useCached } from "./cache.ts";
 import { errorText, type MessageKey, useI18n } from "./i18n.ts";
 import { PlatformIcon } from "./platforms.tsx";
 import {
@@ -38,13 +39,7 @@ export function ConnectPage({
   onChanged: () => void;
 }) {
   const { t } = useI18n();
-  const [platforms, setPlatforms] = useState<PlatformInfo[] | null>(null);
-  useEffect(() => {
-    api
-      .platforms()
-      .then(setPlatforms)
-      .catch(() => setPlatforms([]));
-  }, []);
+  const { value: platforms } = useCached<PlatformInfo[]>("platforms", api.platforms, []);
 
   const info = platforms?.find((p) => p.platform === platform);
   const back = () =>
@@ -113,7 +108,7 @@ function PlatformGrid({
               : p.onboarding?.kind === "qr"
                 ? t("connect.howQr")
                 : p.onboarding
-                  ? t("connect.howToken")
+                  ? optional(t, `${p.platform}.how`, "connect.howToken")
                   : t("connect.soon");
           return (
             <button
@@ -252,7 +247,11 @@ function CredentialsFlow({
               ) : null}
             </Step>
           ))}
-          <Step n={lines.length + 1} state={connected ? "done" : "now"} title={t("connect.paste")}>
+          <Step
+            n={lines.length + 1}
+            state={connected ? "done" : "now"}
+            title={optional(t, `${info.platform}.form`, "connect.paste")}
+          >
             {fields.map((f, i) => (
               <Field key={f.key} label={t(f.labelKey as MessageKey)}>
                 <Input
@@ -501,6 +500,12 @@ function CodeForm({ sessionId, retry }: { sessionId: string; retry: boolean }) {
       </div>
     </form>
   );
+}
+
+/** A platform's own wording where it has one (iMessage has no bot token), else the shared one. */
+function optional(t: ReturnType<typeof useI18n>["t"], key: string, fallback: MessageKey): string {
+  const text = t(key as MessageKey);
+  return text === key ? t(fallback) : text;
 }
 
 function errorTextFor(t: ReturnType<typeof useI18n>["t"], code: string): string {

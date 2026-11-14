@@ -108,7 +108,8 @@ const INSTALL_MOCK = String.raw`(() => {
   window.fetch = (input, init) => {
     const path = typeof input === "string" ? input : input.url;
     const method = (init && init.method) || "GET";
-    if (method === "GET" && path === "/v1/admin/brains") return Promise.resolve(json(brains(read())));
+    // The console reads the catalog twice: the cached answer, then a fresh probe (?fresh=1).
+    if (method === "GET" && /^\/v1\/admin\/brains(\?fresh=1)?$/.test(path)) return Promise.resolve(json(brains(read())));
     if (method === "GET" && path === "/v1/admin/brains/install-test/install-plan")
       return Promise.resolve(
         json({ kind: "plan", steps: ["echo test-install"], source: "https://example.com/install" }),
@@ -892,46 +893,42 @@ export async function reviewInteractions({
     }
 
     // --- empty agent page: loading, failure, empty, and switching agents mid-flight ---
-    // This fetch mock is installed into the live document only (unlike INSTALL_MOCK, which is
-    // injected into every document), so a reload always brings back the real API.
-    const installEmptyMock = () =>
-      call(() => {
-        const real = window.fetch.bind(window);
-        const state = { mode: "hold", pending: [], calls: [] };
-        window.__emptyReview = state;
-        const reply = (path, mode) =>
-          new Response(
-            JSON.stringify(
-              mode === "fail"
-                ? { error: "http_error" }
-                : path.includes("/activity")
-                  ? []
-                  : { tasks: [], reminders: [] },
-            ),
-            { status: mode === "fail" ? 500 : 200, headers: { "content-type": "application/json" } },
-          );
-        window.fetch = (input, init) => {
-          const path = typeof input === "string" ? input : input.url;
-          const method = init?.method || "GET";
-          if (method === "GET" && /\/v1\/admin\/agents\/[^/]+\/(activity|work)(\?|$)/.test(path)) {
-            state.calls.push(path);
-            if (state.mode === "hold") return new Promise((resolve) => state.pending.push({ path, resolve }));
-            return Promise.resolve(reply(path, state.mode));
-          }
-          return real(input, init);
-        };
-        // Release queued requests whose path contains `part` (all of them without it);
-        // later requests answer immediately in `mode`.
-        state.release = (mode, part) => {
-          state.mode = mode;
-          const rest = [];
-          for (const p of state.pending.splice(0)) {
-            if (part === undefined || p.path.includes(part)) p.resolve(reply(p.path, mode));
-            else rest.push(p);
-          }
-          state.pending = rest;
-        };
-      });
+    // The mock's own state lives on the page (window.__emptyReview); it is installed either
+    // into the live document or into every new document for a cold-load check.
+    const mockEmptyReads = () => {
+      const real = window.fetch.bind(window);
+      const state = { mode: "hold", pending: [], calls: [] };
+      window.__emptyReview = state;
+      const reply = (path, mode) =>
+        new Response(
+          JSON.stringify(
+            mode === "fail" ? { error: "http_error" } : path.includes("/activity") ? [] : { tasks: [], reminders: [] },
+          ),
+          { status: mode === "fail" ? 500 : 200, headers: { "content-type": "application/json" } },
+        );
+      window.fetch = (input, init) => {
+        const path = typeof input === "string" ? input : input.url;
+        const method = init?.method || "GET";
+        if (method === "GET" && /\/v1\/admin\/agents\/[^/]+\/(activity|work)(\?|$)/.test(path)) {
+          state.calls.push(path);
+          if (state.mode === "hold") return new Promise((resolve) => state.pending.push({ path, resolve }));
+          return Promise.resolve(reply(path, state.mode));
+        }
+        return real(input, init);
+      };
+      // Release queued requests whose path contains `part` (all of them without it);
+      // later requests answer immediately in `mode`.
+      state.release = (mode, part) => {
+        state.mode = mode;
+        const rest = [];
+        for (const p of state.pending.splice(0)) {
+          if (part === undefined || p.path.includes(part)) p.resolve(reply(p.path, mode));
+          else rest.push(p);
+        }
+        state.pending = rest;
+      };
+    };
+    const installEmptyMock = () => call(mockEmptyReads);
     const releaseMock = (mode, part) => call((m, p) => window.__emptyReview.release(m, p), mode, part);
     const setMockMode = (mode) =>
       call((m) => {
@@ -975,13 +972,14 @@ export async function reviewInteractions({
       await shot(`${localeName}-${width}-empty`);
 
       // Held responses say "loading", and a slow call is not superseded by the next poll.
-      // Leaving for Settings and coming back remounts the page, so its requests are held.
-      await installEmptyMock();
-      await spaNav("/settings");
-      await until("settings shown", () => !document.querySelector('header [role="radiogroup"]'));
-      await spaNav(`/a/${emptySlug}`);
+      // A cold document has nothing cached, so its first reads are the held ones.
+      const { identifier } = await send("Page.addScriptToEvaluateOnNewDocument", {
+        source: `(${mockEmptyReads.toString()})();`,
+      });
+      await send("Page.reload");
       await until("activity loading", hasText, labels.activityLoading);
       await until("work loading", hasText, labels.workLoading);
+      await send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
       assert(!(await bodyHas(labels.noActivity)), `${tag}: empty card during load`);
       assert(!(await bodyHas(labels.noTasks)), `${tag}: noTasks during load`);
       const held = await mockCalls();
@@ -1035,17 +1033,25 @@ export async function reviewInteractions({
       await until("empty restored", hasText, labels.noActivity);
 
       // Switching agents while requests hang: the previous agent's late failures must not
-      // land on the agent now showing (the page is remounted per agent).
+      // land on the agent now showing. The agent left earlier keeps its (empty) cache, so
+      // coming back shows it at once while its fresh reads are the ones held.
       await setMockMode("hold");
       await spaNav(`/a/${slug}`);
       await until("other agent loading", hasText, labels.activityLoading);
       await until("other requests held", (id) => window.__emptyReview.pending.some((p) => p.path.includes(id)), alexId);
       await spaNav(`/a/${emptySlug}`);
-      await until("loading after switch", hasText, labels.activityLoading);
+      await until("cached empty after switch", hasText, labels.noActivity);
+      assert(!(await bodyHas(labels.activityLoading)), `${tag}: cached activity flashed loading`);
+      await until(
+        "current requests held",
+        (id) => window.__emptyReview.pending.filter((p) => p.path.includes(`/agents/${id}/`)).length === 2,
+        emptyId,
+      );
       assert(!(await bodyHas("@Alex 要带多少水？")), `${tag}: previous agent's activity leaked`);
       assert(!(await bodyHas("比较三条备选路线")), `${tag}: previous agent's task leaked`);
       await releaseMock("fail", `/agents/${alexId}/`);
       await releaseMock("empty", `/agents/${emptyId}/`);
+      await call(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       await until("empty after switch", hasText, labels.noActivity);
       assert(!(await bodyHas(labels.activityFailed)), `${tag}: activity failure leaked across agents`);
       assert(!(await bodyHas(labels.workFailed)), `${tag}: work failure leaked across agents`);

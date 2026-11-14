@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, type BrainStatus } from "./api.ts";
 import { BrainRow } from "./Brains.tsx";
+import { useCached } from "./cache.ts";
 import { type LocalePreference, useI18n } from "./i18n.ts";
 import { type OnlineState, online, useOnline } from "./online.ts";
 import { applyTheme, savedTheme, type Theme } from "./theme.ts";
@@ -191,14 +192,12 @@ function ToggleRow({
 /** Every harness Mingle can drive: what is installed, signed in, and a way to fix the rest. */
 function Brains() {
   const { t } = useI18n();
-  const [brains, setBrains] = useState<BrainStatus[] | null>(null);
-  const load = () => {
-    api
-      .brains()
-      .then(setBrains)
-      .catch(() => setBrains([]));
-  };
-  useEffect(load, []);
+  const { value: brains, reload } = useCached<BrainStatus[]>(
+    "brains",
+    () => api.brains(),
+    [],
+    () => api.brains(true),
+  );
   return (
     <Section title={t("settings.brains")}>
       <p className="-mt-1 px-1 text-small text-ink2">{t("settings.brainsBody")}</p>
@@ -206,7 +205,7 @@ function Brains() {
         <div className="overflow-hidden rounded-card border border-line bg-card">
           <div className="divide-y divide-line">
             {brains.map((b) => (
-              <BrainRow key={b.id} brain={b} onChanged={load} />
+              <BrainRow key={b.id} brain={b} onChanged={() => void reload()} />
             ))}
           </div>
         </div>

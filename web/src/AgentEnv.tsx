@@ -1,5 +1,6 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { type AgentView, api, type EnvVar, type Harness } from "./api.ts";
+import { useCached } from "./cache.ts";
 import { errorText, useI18n } from "./i18n.ts";
 import {
   AlertIcon,
@@ -38,30 +39,12 @@ type Editing = { readonly mode: "add" } | { readonly mode: "replace"; readonly n
  */
 export function AgentEnv({ agent }: { agent: AgentView }) {
   const { t } = useI18n();
-  const [vars, setVars] = useState<EnvVar[] | null>(null);
-  const [harnesses, setHarnesses] = useState<Harness[] | null>(null);
+  const { value: vars, reload: load } = useCached<EnvVar[]>(`env:${agent.id}`, () => api.env(agent.id), []);
+  const { value: harnesses } = useCached<Harness[]>("harnesses", api.harnesses, []);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(
-    () =>
-      api
-        .env(agent.id)
-        .then(setVars)
-        .catch(() => setVars([])),
-    [agent.id],
-  );
-  useEffect(() => {
-    load();
-  }, [load]);
-  useEffect(() => {
-    api
-      .harnesses()
-      .then(setHarnesses)
-      .catch(() => setHarnesses([]));
-  }, []);
 
   const harness = harnesses?.find((h) => h.id === agent.harness);
   const start = (next: Editing) => {

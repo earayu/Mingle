@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { api, type BrainStatus, type InstallPlan, type Job, type SignInState } from "./api.ts";
+import { useCached } from "./cache.ts";
 import { type MessageKey, useI18n } from "./i18n.ts";
 import { Button, HarnessIcon, Input, LinkButton, Problem, StatusDot, Waiting } from "./ui.tsx";
 
@@ -52,13 +53,10 @@ export function InstallBrain({
   onInstall: () => void;
 }) {
   const { t } = useI18n();
-  const [plan, setPlan] = useState<InstallPlan | null>(null);
-  useEffect(() => {
-    api
-      .installPlan(brain.id)
-      .then(setPlan)
-      .catch(() => setPlan({ kind: "unsupported", detail: "" }));
-  }, [brain.id]);
+  const { value: plan } = useCached<InstallPlan>(`install-plan:${brain.id}`, () => api.installPlan(brain.id), {
+    kind: "unsupported",
+    detail: "",
+  });
 
   if (job?.state === "running") return <Waiting>{t("brain.installing", { name: brain.name })}</Waiting>;
   if (job?.state === "done")
@@ -197,24 +195,15 @@ function Commands({ lines }: { lines: string[] }) {
   );
 }
 
-/** Whether an installed harness is signed in, read once when shown. */
+/** Whether an installed harness is signed in: the last known answer at once, re-read when shown. */
 export function useSignIn(brain: BrainStatus | undefined) {
-  const [state, setState] = useState<SignInState | null>(null);
-  const [nonce, setNonce] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce re-reads after a sign-in
-  useEffect(() => {
-    setState(null);
-    if (!brain?.installed) return;
-    let live = true;
-    api
-      .signInState(brain.id)
-      .then((s) => live && setState(s))
-      .catch(() => live && setState({ kind: "unknown" }));
-    return () => {
-      live = false;
-    };
-  }, [brain?.id, brain?.installed, nonce]);
-  return { state, reread: () => setNonce((n) => n + 1) };
+  const id = brain?.installed ? brain.id : null;
+  const { value: state, reload } = useCached<SignInState>(
+    id === null ? null : `sign-in:${id}`,
+    () => api.signInState(id ?? ""),
+    { kind: "unknown" },
+  );
+  return { state, reread: () => void reload() };
 }
 
 /** One harness as a settings row: installed or not, signed in or not, and what to do about it. */
@@ -228,6 +217,10 @@ export function BrainRow({ brain, onChanged }: { brain: BrainStatus; onChanged: 
   const [startInstall, setStartInstall] = useState<(() => Promise<Job>) | null>(() =>
     resumeId ? () => api.job(resumeId) : null,
   );
+  // A row drawn from the cached catalog learns of a running install only when the fresh one arrives.
+  useEffect(() => {
+    if (resumeId) setStartInstall((current) => current ?? (() => api.job(resumeId)));
+  }, [resumeId]);
   const installJob = useJob(startInstall, (job) => job.state === "done" && onChanged(), brain.installJob);
   const installing = installJob?.state === "running";
   const expanded = open || installing || installJob?.state === "failed";

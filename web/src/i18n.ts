@@ -121,6 +121,11 @@ const en = {
   "telegram.steps":
     "Open @BotFather in Telegram and send /newbot.\nName the bot after the agent. BotFather replies with a token.",
   "telegram.setup": "Open @BotFather",
+  "imessage.how": "Uses an Apple ID of the agent's own",
+  "imessage.form": "Who owns this agent",
+  "imessage.owner": "Your phone number (with country code) or Apple ID email",
+  "imessage.steps":
+    "Give the agent its own Apple ID, and sign this Mac's Messages app in to it (Messages → Settings → iMessage). Do not use your own Apple ID: the agent would speak as you.\nIn System Settings → Privacy & Security → Full Disk Access, turn on Mingle (or the terminal running it), so it can read new messages.\nEnter your own number or email below. When you connect, macOS asks whether Mingle may control Messages: allow it. The agent then messages you to say hello.",
   "slack.setup": "Create the app on Slack",
   "slack.steps":
     "Create the app. Its name, permissions and Socket Mode are filled in.\nInstall it to your workspace, then copy the Bot User OAuth Token (xoxb-) from OAuth & Permissions.\nUnder Basic Information → App-Level Tokens, generate a token with connections:write and copy it (xapp-).",
@@ -197,6 +202,10 @@ const en = {
   "error.offline": "Mingle is not running. Start it with `mingle start`.",
   "error.onboarding_invalid_credentials": "The chat app did not accept these credentials. Check them and try again.",
   "error.onboarding_network": "Could not reach the chat app. Check the network and try again.",
+  "error.onboarding_permission_missing":
+    "macOS has not given Mingle the access it needs. Turn on Full Disk Access for Mingle, allow it to control Messages (System Settings → Privacy & Security → Automation), then try again.",
+  "error.onboarding_owner_account":
+    "This Mac's Messages is signed in with your own Apple ID. Sign it in to an Apple ID just for the agent, then try again.",
   "error.bot_in_use": "This bot is already connected to another agent.",
   "error.harness_unavailable": "That harness is not installed on this computer.",
   "error.harness_prompt_unsupported":
@@ -216,6 +225,7 @@ const en = {
   "platform.slack": "Slack",
   "platform.discord": "Discord",
   "platform.telegram": "Telegram",
+  "platform.imessage": "iMessage",
   "sidebar.agents": "Agents",
   "list.separator": ", ",
   "welcome.title": "Bring your agent into the chats you already use",
@@ -533,6 +543,11 @@ const zh: Record<MessageKey, string> = {
   "telegram.steps":
     "在 Telegram 里打开 @BotFather，发送 /newbot。\n用 Agent 的名字给机器人命名，BotFather 会回复一个 token。",
   "telegram.setup": "打开 @BotFather",
+  "imessage.how": "用 Agent 自己的 Apple ID",
+  "imessage.form": "谁是这个 Agent 的主人",
+  "imessage.owner": "你自己的手机号（带国家码）或 Apple ID 邮箱",
+  "imessage.steps":
+    "给 Agent 准备一个专用的 Apple ID，在这台 Mac 的「信息」App 里登录它（信息 → 设置 → iMessage）。不要用你自己的 Apple ID，否则 Agent 会以你的身份说话。\n在系统设置 → 隐私与安全性 → 完全磁盘访问权限里打开 Mingle（或运行它的终端），让它能读到新消息。\n在下面填你自己的手机号或邮箱。点连接时 macOS 会问是否允许 Mingle 控制「信息」，选允许。连上后 Agent 会给你发一条问候。",
   "slack.setup": "在 Slack 上创建应用",
   "slack.steps":
     "创建应用，名称、权限和 Socket Mode 都已填好。\n把应用安装到工作区，在 OAuth & Permissions 里复制 Bot User OAuth Token（xoxb-）。\n在 Basic Information → App-Level Tokens 里生成一个带 connections:write 的 token 并复制（xapp-）。",
@@ -605,6 +620,10 @@ const zh: Record<MessageKey, string> = {
   "error.offline": "Mingle 没有在运行。用 `mingle start` 启动。",
   "error.onboarding_invalid_credentials": "聊天软件没有接受这些凭据，请检查后重试。",
   "error.onboarding_network": "连不上聊天软件，请检查网络后重试。",
+  "error.onboarding_permission_missing":
+    "macOS 还没有给 Mingle 所需的权限。请为 Mingle 打开完全磁盘访问权限，并允许它控制「信息」（系统设置 → 隐私与安全性 → 自动化），然后重试。",
+  "error.onboarding_owner_account":
+    "这台 Mac 的「信息」登录的是你自己的 Apple ID。请改用给 Agent 专用的 Apple ID 登录，然后重试。",
   "error.bot_in_use": "这个机器人已经接入了另一个 Agent。",
   "error.harness_unavailable": "这台电脑上没有安装这个 harness。",
   "error.harness_prompt_unsupported": "这个大脑暂时无法接收 Agent 的角色和操作指南，请选择其他大脑。",
@@ -621,6 +640,7 @@ const zh: Record<MessageKey, string> = {
   "platform.slack": "Slack",
   "platform.discord": "Discord",
   "platform.telegram": "Telegram",
+  "platform.imessage": "iMessage",
   "sidebar.agents": "Agent",
   "list.separator": "、",
   "welcome.title": "把你的 Agent 请进常用的聊天软件",

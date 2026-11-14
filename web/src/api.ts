@@ -46,7 +46,16 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export type AgentStatus = "offline" | "idle" | "thinking" | "working" | "error" | "paused";
-export type Platform = "wechat" | "wecom" | "feishu" | "dingtalk" | "qq" | "slack" | "discord" | "telegram";
+export type Platform =
+  | "wechat"
+  | "wecom"
+  | "feishu"
+  | "dingtalk"
+  | "qq"
+  | "slack"
+  | "discord"
+  | "telegram"
+  | "imessage";
 
 export interface ConnectionView {
   id: string;
@@ -195,7 +204,8 @@ export interface Reminder {
 export const api = {
   status: () => call<{ version: string; agents: AgentView[] }>("GET", "/v1/admin/status"),
   harnesses: () => call<Harness[]>("GET", "/v1/admin/harnesses"),
-  brains: () => call<BrainStatus[]>("GET", "/v1/admin/brains"),
+  /** The last catalog Mingle found at once; `fresh` probes every harness again, a second or more. */
+  brains: (fresh = false) => call<BrainStatus[]>("GET", `/v1/admin/brains${fresh ? "?fresh=1" : ""}`),
   signInState: (harness: string) => call<SignInState>("GET", `/v1/admin/brains/${harness}/sign-in`),
   installPlan: (harness: string) => call<InstallPlan>("GET", `/v1/admin/brains/${harness}/install-plan`),
   install: (harness: string) => call<Job>("POST", `/v1/admin/brains/${harness}/install`),

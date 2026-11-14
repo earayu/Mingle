@@ -324,7 +324,8 @@ export function createApi(mingle: Mingle): Hono<Env> {
   app.get("/v1/admin/harnesses/:id/models", async (c) => c.json(await mingle.harnessModels(c.req.param("id"))));
   /** Every harness OAR knows, installed or not: the console offers to install or sign in the rest. */
   app.get("/v1/admin/brains", async (c) => {
-    const catalog = (await mingle.options.harness.catalog?.()) ?? [];
+    // `?fresh=1` probes again; without it the last probe answers at once.
+    const catalog = await mingle.brainCatalog(c.req.query("fresh") === "1");
     return c.json(
       catalog.map((brain) => {
         const installJob = mingle.brains.activeInstall(brain.id);
@@ -353,18 +354,22 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   /** Every first-batch platform, with how to connect it, or null when it is not built yet. */
   app.get("/v1/admin/platforms", (c) => {
-    const all: Platform[] = ["wechat", "wecom", "feishu", "dingtalk", "qq", "slack", "discord", "telegram"];
+    const all: Platform[] = ["wechat", "wecom", "feishu", "dingtalk", "qq", "slack", "discord", "telegram", "imessage"];
+    // Channels that exist only on some systems (iMessage on macOS) are left out elsewhere, not shown as "soon".
+    const local: readonly Platform[] = ["imessage"];
     return c.json(
-      all.map((platform) => {
-        let onboarding: OnboardingMethod | null = null;
-        let manualFields: readonly CredentialField[] = [];
-        try {
-          const channel = mingle.channel(platform);
-          onboarding = channel.onboarding;
-          manualFields = channel.manualFields ?? [];
-        } catch {}
-        return { platform, onboarding, manualFields };
-      }),
+      all
+        .filter((platform) => !local.includes(platform) || mingle.hasChannel(platform))
+        .map((platform) => {
+          let onboarding: OnboardingMethod | null = null;
+          let manualFields: readonly CredentialField[] = [];
+          try {
+            const channel = mingle.channel(platform);
+            onboarding = channel.onboarding;
+            manualFields = channel.manualFields ?? [];
+          } catch {}
+          return { platform, onboarding, manualFields };
+        }),
     );
   });
 

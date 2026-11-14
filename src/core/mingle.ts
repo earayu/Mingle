@@ -12,7 +12,7 @@ import type {
   OnboardingFailure,
   Platform,
 } from "../channels/channel.ts";
-import type { Harness, HarnessInfo } from "../harness/harness.ts";
+import type { Harness, HarnessInfo, HarnessStatus } from "../harness/harness.ts";
 import type { SecretStore } from "../platform/secrets.ts";
 import { type Agent, type Connection, Store } from "../store/store.ts";
 import { Brains } from "./brains.ts";
@@ -111,8 +111,15 @@ export class Mingle {
     this.store = new Store(options.paths.db);
     this.replies = new LiveReplies((line) => this.log(line));
     this.outbox = new Outbox(this.store, (id) => this.live.get(id), options.retryDelaysMs, this.replies);
-    // A new install or sign-in can change which models a harness offers.
-    this.brains = new Brains(options.harness, () => this.modelCache.clear());
+    // A new install or sign-in can change which harnesses are usable and which models they offer.
+    this.brains = new Brains(options.harness, () => {
+      this.modelCache.clear();
+      // Drop the answers and any probe that started before the change, so none of it is kept.
+      this.harnessList = undefined;
+      this.harnessProbe = undefined;
+      this.catalogList = undefined;
+      this.catalogProbe = undefined;
+    });
   }
 
   get cliPath(): string {
@@ -124,8 +131,12 @@ export class Mingle {
   async start(apiUrl: string): Promise<void> {
     this.apiUrl = apiUrl;
     this.writeCliWrapper();
-    // Warm the harness list so the console's first look at it does not wait on the probe.
-    void this.probeHarnesses().catch(() => {});
+    // Warm the harness list and the catalog so the console's first look at either does not
+    // wait on the probe. One after the other: each starts every harness's executable.
+    void this.probeHarnesses()
+      .catch(() => {})
+      .then(() => this.probeCatalog())
+      .catch(() => {});
     for (const agent of this.store.agents()) {
       // A paused agent stays paused across restarts: no session, no token, until the owner resumes it.
       if (agent.status === "paused") this.paused.add(agent.id);
@@ -207,21 +218,57 @@ export class Mingle {
     return this.probeHarnesses();
   }
 
-  private harnessList?: { value?: readonly HarnessInfo[]; at: number };
+  private harnessList?: { value?: readonly HarnessInfo[]; at: number } | undefined;
   private harnessProbe?: Promise<readonly HarnessInfo[]> | undefined;
 
-  /** One probe at a time; callers arriving meanwhile share it. */
+  /** One probe at a time; callers arriving meanwhile share it. A dropped probe keeps nothing. */
   private probeHarnesses(): Promise<readonly HarnessInfo[]> {
-    this.harnessProbe ??= this.options.harness
+    if (this.harnessProbe) return this.harnessProbe;
+    const probe: Promise<readonly HarnessInfo[]> = this.options.harness
       .available()
       .then((value) => {
-        this.harnessList = { value, at: Date.now() };
+        if (this.harnessProbe === probe) this.harnessList = { value, at: Date.now() };
         return value;
       })
       .finally(() => {
-        this.harnessProbe = undefined;
+        if (this.harnessProbe === probe) this.harnessProbe = undefined;
       });
-    return this.harnessProbe;
+    this.harnessProbe = probe;
+    return probe;
+  }
+
+  /**
+   * Every harness, installed or not, for Settings and the new-agent page. Finding out probes
+   * them all, like `availableHarnesses`, so it is cached the same way. The console reads the
+   * cached answer to open at once, then a `fresh` one to catch installs made outside Mingle.
+   */
+  async brainCatalog(fresh = false): Promise<readonly HarnessStatus[]> {
+    const cached = this.catalogList;
+    if (!fresh && cached) {
+      if (Date.now() - cached.at > 60_000) void this.probeCatalog().catch(() => {});
+      return cached.value;
+    }
+    return this.probeCatalog();
+  }
+
+  private catalogList?: { value: readonly HarnessStatus[]; at: number } | undefined;
+  private catalogProbe?: Promise<readonly HarnessStatus[]> | undefined;
+
+  private probeCatalog(): Promise<readonly HarnessStatus[]> {
+    const catalog = this.options.harness.catalog;
+    if (!catalog) return Promise.resolve([]);
+    if (this.catalogProbe) return this.catalogProbe;
+    const probe: Promise<readonly HarnessStatus[]> = catalog
+      .call(this.options.harness)
+      .then((value) => {
+        if (this.catalogProbe === probe) this.catalogList = { value, at: Date.now() };
+        return value;
+      })
+      .finally(() => {
+        if (this.catalogProbe === probe) this.catalogProbe = undefined;
+      });
+    this.catalogProbe = probe;
+    return probe;
   }
 
   /**
@@ -454,6 +501,10 @@ export class Mingle {
   }
 
   // ------------------------------------------------------------- connections
+
+  hasChannel(platform: Platform): boolean {
+    return Boolean(this.options.channels[platform]);
+  }
 
   channel(platform: Platform): Channel {
     const channel = this.options.channels[platform];
