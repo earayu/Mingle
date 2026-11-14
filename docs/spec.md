@@ -284,8 +284,12 @@ stateDiagram-v2
 | 恢复 | 重新打开会话，开始接收新消息，补发暂停期间到点的提醒 | 暂停卡片和 Agent 设置 → 运行、`mingle agent resume` | 本次新增 |
 | 删除 | 断开机器人，删除凭据和环境变量，保留文件夹 | Agent 设置 → 文件夹，原地确认、`mingle agent delete` | 已有 |
 | 修改角色、大脑、环境变量 | 下一条消息起生效，不打断正在做的事 | Agent 设置 | 已有 |
+| 重置会话 | 中止正在做的事，丢下当前 harness 会话，开一个新会话，Agent 从 `ROLE.md` 和 `MEMORY.md` 重新开始。主目录、消息记录、任务、提醒、连接都保留。用于会话卡住、上下文太乱或一再出错 | Agent 设置 → 运行，原地确认、`mingle agent reset` | 新增（MING-61） |
+| 复制诊断信息 | 一段纯文本：时间、Mingle/Node/系统版本、Agent ID、状态和失败类别、大脑及版本、模型、会话 ID、`MEMORY.md` 大小、各连接的平台和状态、最近 7 天各状态的消息数、未完成任务和提醒数。不含消息内容、联系人名字、凭据和环境变量的值 | Agent 设置 → 运行、`mingle agent diagnostics` | 新增（MING-61） |
 
-暂不做，等有需求再加：重置会话（让 Agent 从 `MEMORY.md` 重新开始，用于会话坏掉或上下文太乱；目前换大脑或会话损坏时 Mingle 已会自动新建）、复制 Agent、导出/导入、定时暂停（例如夜间免打扰）、只暂停某一个聊天软件（目前可以移除那个机器人）、IM 里的 `/pause` 命令（IM 里仍只有 `/stop`，4.7）。
+**排查顺序（借鉴 Raft 的恢复梯子）**：Agent 不回复时，先看"需要你处理"和状态；能叫停就叫停；仍不行再重置会话（重启 Mingle 等同于重开同一会话）；还不行就复制诊断信息贴给帮忙的人。重置不可撤销（旧会话不会再被恢复），所以在原地确认；Agent 正在工作时说明里多一句"重置会中止这件事"。暂停中的 Agent 重置只清掉会话 ID，恢复时开新会话。
+
+暂不做，等有需求再加：复制 Agent、导出/导入、定时暂停（例如夜间免打扰）、只暂停某一个聊天软件（目前可以移除那个机器人）、IM 里的 `/pause` 命令（IM 里仍只有 `/stop`，4.7）。
 
 **暂停的语义**
 
@@ -301,7 +305,7 @@ stateDiagram-v2
 - **重启**：暂停状态存在 `agents.status = 'paused'`，Mingle 重启后不为它打开会话。
 - **桌面应用**：菜单栏里它的那一行显示"已暂停"，不算在线，不计入"N 个 Agent 在线"，也不为它保持唤醒。
 
-**接口**：`POST /v1/admin/agents/:id/pause`、`POST /v1/admin/agents/:id/resume`，返回 `{ changed }`，已经是目标状态时为 `false`，重复调用没有副作用。CLI：`mingle agent pause <agent>`、`mingle agent resume <agent>`。
+**接口**：`POST /v1/admin/agents/:id/pause`、`POST /v1/admin/agents/:id/resume`，返回 `{ changed }`，已经是目标状态时为 `false`，重复调用没有副作用。CLI：`mingle agent pause <agent>`、`mingle agent resume <agent>`。重置：`POST /v1/admin/agents/:id/reset`，返回 `{ ok: true }`；诊断：`GET /v1/admin/agents/:id/diagnostics`，返回 `{ text }`。
 
 **界面**（视觉见 `DESIGN.md`）
 

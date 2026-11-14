@@ -564,6 +564,15 @@ export function createApi(mingle: Mingle): Hono<Env> {
   });
 
   app.post("/v1/admin/agents/:id/stop", async (c) => c.json({ stopped: await mingle.stopAgent(c.req.param("id")) }));
+  /** Start over in a new harness session; home, memory and messages stay (docs/spec.md 4.11). */
+  app.post("/v1/admin/agents/:id/reset", async (c) => {
+    await mingle.resetSession(c.req.param("id"));
+    return c.json({ ok: true });
+  });
+  /** Plain text for someone helping: versions, brain, session, status. No message text or secrets. */
+  app.get("/v1/admin/agents/:id/diagnostics", async (c) =>
+    c.json({ text: await mingle.diagnostics(c.req.param("id")) }),
+  );
   /** Pause and resume (docs/spec.md 4.11). Both are idempotent: `changed` is false when it already was. */
   app.post("/v1/admin/agents/:id/pause", async (c) => c.json({ changed: await mingle.pauseAgent(c.req.param("id")) }));
   app.post("/v1/admin/agents/:id/resume", async (c) =>

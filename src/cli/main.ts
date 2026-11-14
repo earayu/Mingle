@@ -464,6 +464,18 @@ async function adminCommand(group: string, action: string | undefined, args: str
       );
       return true;
     }
+    case "agent reset": {
+      const id = need(args[0], "agent_required", "usage: mingle agent reset <agent>");
+      await adminClient()("POST", `/v1/admin/agents/${id}/reset`);
+      print({ ok: true }, () => "reset; it starts a new session from ROLE.md and MEMORY.md");
+      return true;
+    }
+    case "agent diagnostics": {
+      const id = need(args[0], "agent_required", "usage: mingle agent diagnostics <agent>");
+      const result = await adminClient()<{ text: string }>("GET", `/v1/admin/agents/${id}/diagnostics`);
+      print(result, () => result.text.trimEnd());
+      return true;
+    }
     case "agent delete": {
       const id = need(args[0], "agent_required", "usage: mingle agent delete <agent> [--remove-home]");
       await adminClient()("DELETE", `/v1/admin/agents/${id}${flags["remove-home"] ? "?removeHome=1" : ""}`);
@@ -635,6 +647,8 @@ For the owner:
   mingle agent stop <agent>                stop what it is doing now
   mingle agent pause <agent>               stop it and take no messages until resumed
   mingle agent resume <agent>              take messages again
+  mingle agent reset <agent>               start it over in a new session; memory and files stay
+  mingle agent diagnostics <agent>         versions, brain, session and status, to share when asking for help
   mingle agent delete <agent> [--remove-home]
   mingle connect <agent> telegram          bot token on standard input
   mingle disconnect <connection-id>

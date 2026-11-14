@@ -60,3 +60,45 @@ describe("memory hint", () => {
     expect(current.mingle.store.memoryHint(current.agentId)).toBeUndefined();
   });
 });
+
+describe("reset session and diagnostics", () => {
+  it("starts a new session and keeps the messages", async () => {
+    const inputs: string[] = [];
+    current = await rig(answering(inputs));
+    const { mingle, channel, agentId } = current;
+    channel.receive({ text: "the secret word is pumpkin" });
+    await until(() => channel.sent.length === 1 && !mingle.runtime(agentId)?.busy);
+    const before = mingle.store.agent(agentId)?.sessionId;
+    expect(before).toBeTruthy();
+
+    const reset = await current.admin("POST", `/v1/admin/agents/${agentId}/reset`);
+    expect(reset.status).toBe(200);
+    const after = mingle.store.agent(agentId)?.sessionId;
+    expect(after).toBeTruthy();
+    expect(after).not.toBe(before);
+
+    // It still answers, in the new session, and the old message is still on record.
+    channel.receive({ text: "still there?" });
+    await until(() => channel.sent.length === 2);
+    expect(mingle.store.agent(agentId)?.sessionId).toBe(after);
+    expect(mingle.store.search(agentId, "pumpkin")).toHaveLength(1);
+  });
+
+  it("describes the agent without message text", async () => {
+    const inputs: string[] = [];
+    current = await rig(answering(inputs));
+    const { mingle, channel, agentId } = current;
+    channel.receive({ text: "the secret word is pumpkin" });
+    await until(() => channel.sent.length === 1 && !mingle.runtime(agentId)?.busy);
+    const { status, json } = await current.admin("GET", `/v1/admin/agents/${agentId}/diagnostics`);
+    expect(status).toBe(200);
+    const text = (json as { text: string }).text;
+    expect(text).toMatch(/^Mingle diagnostic info\n/);
+    expect(text).toContain(`agent: ${agentId} · status idle`);
+    expect(text).toContain(`session: ${mingle.store.agent(agentId)?.sessionId}`);
+    expect(text).toMatch(/telegram \w+ · connected/);
+    expect(text).toContain("replied 1");
+    expect(text).not.toContain("pumpkin");
+    expect(text).not.toContain("Alex");
+  });
+});

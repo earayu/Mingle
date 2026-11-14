@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { arch, release } from "node:os";
 import { join } from "node:path";
 import type {
   Channel,
@@ -15,11 +16,12 @@ import type {
 import type { Harness, HarnessInfo, HarnessStatus } from "../harness/harness.ts";
 import type { SecretStore } from "../platform/secrets.ts";
 import { type Agent, type Connection, Store } from "../store/store.ts";
+import { VERSION } from "../version.ts";
 import { Brains } from "./brains.ts";
 import { checkEnvName, checkEnvValue, decodeEnvValue, encodeEnvValue, envRef } from "./env.ts";
 import { MingleError, notFound } from "./errors.ts";
 import { formatReminder } from "./format.ts";
-import { createHome, writeRole } from "./home.ts";
+import { createHome, memorySize, writeRole } from "./home.ts";
 import { slugify } from "./ids.ts";
 import { BACKOFF_MS, type LinkEvent, type LinkState, step, stored } from "./link.ts";
 import { LiveReplies, pausedNote, stopNote } from "./live.ts";
@@ -405,6 +407,50 @@ export class Mingle {
   async stopAgent(idOrSlug: string): Promise<boolean> {
     const agent = this.agent(idOrSlug);
     return (await this.runtimes.get(agent.id)?.stop()) ?? false;
+  }
+
+  /**
+   * Start the agent over in a new harness session (docs/spec.md 4.11), for a session that is
+   * stuck or too muddled to recover. A paused agent opens the new session when resumed.
+   */
+  async resetSession(idOrSlug: string): Promise<void> {
+    const agent = this.agent(idOrSlug);
+    const runtime = this.runtimes.get(agent.id);
+    if (runtime) await runtime.reset();
+    else this.store.setSessionId(agent.id, null);
+    this.log(`${agent.name}: session reset`);
+  }
+
+  /**
+   * What someone helping needs to see why an agent misbehaves, as plain text to paste anywhere:
+   * versions, brain, session, status, bots and message counts. Never message text, names of the
+   * people it talks to, credentials or variable values.
+   */
+  async diagnostics(idOrSlug: string): Promise<string> {
+    const agent = this.agent(idOrSlug);
+    const harnesses = await this.availableHarnesses().catch(() => [] as readonly HarnessInfo[]);
+    const harness = harnesses.find((h) => h.id === agent.harness);
+    const now = Date.now();
+    const counts = this.store.inboundCounts(agent.id, now - 7 * 86_400_000);
+    const states = ["received", "delivered", "waiting", "replied", "unanswered", "failed", "ignored"];
+    const lines = [
+      "Mingle diagnostic info",
+      `time: ${new Date(now).toISOString()}`,
+      `mingle: ${VERSION} · node ${process.version} · ${process.platform} ${arch()} ${release()}`,
+      `agent: ${agent.id} · status ${agent.status}${agent.statusFailure ? ` (${agent.statusFailure})` : ""}`,
+      ...(agent.statusDetail ? [`detail: ${agent.statusDetail.replaceAll("\n", " ").slice(0, 300)}`] : []),
+      `brain: ${agent.harness}${harness?.version ? ` ${harness.version}` : ""}${harness ? "" : " (not found on this computer)"} · model ${agent.model ?? "default"}`,
+      `session: ${agent.sessionId ?? "none"}`,
+      `memory: MEMORY.md ${memorySize(this.homeDir(agent))} bytes`,
+      "chat apps:",
+      ...this.store.connections(agent.id).map((n) => {
+        const state = this.isLive(n.id) ? n.state : n.state === "connected" ? "reconnecting" : n.state;
+        return `  ${n.platform} ${n.id} · ${state}${n.stateDetail ? ` (${n.stateDetail})` : ""}${n.ownerId ? "" : " · no owner"}`;
+      }),
+      `messages, last 7 days: ${states.map((k) => `${k} ${counts[k] ?? 0}`).join(" · ")}`,
+      `tasks open: ${this.store.tasks(agent.id, false).length} · reminders: ${this.store.reminders(agent.id).length}`,
+    ];
+    return `${lines.join("\n")}\n`;
   }
 
   isPaused(agentId: string): boolean {

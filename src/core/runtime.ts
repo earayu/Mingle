@@ -152,6 +152,17 @@ export class AgentRuntime {
   }
 
   /**
+   * Start over in a new harness session (docs/spec.md 4.11): the work in hand is stopped, the
+   * conversation is left behind, and the agent comes back from ROLE.md and MEMORY.md. Its home,
+   * messages, tasks and reminders stay.
+   */
+  async reset(): Promise<void> {
+    if (this.running) await this.stop().catch(() => false);
+    this.deps.store.setSessionId(this.agentId, null);
+    await this.restart();
+  }
+
+  /**
    * The agent's variables changed. They reach the harness when its process starts, so reopen
    * (resuming the same conversation) now if idle, or after the current turn: never mid-work.
    */

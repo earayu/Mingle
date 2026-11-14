@@ -635,6 +635,17 @@ export class Store {
     return rows.map(toMessage).filter((m) => !wanted || wanted.has(m.id));
   }
 
+  /** How many of this agent's inbound messages since `since` are in each state, for diagnostics. */
+  inboundCounts(agentId: string, since: number): Record<string, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT m.state, count(*) AS n FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
+         WHERE n.agent_id = ? AND m.direction = 'in' AND m.triggers = 1 AND m.created_at >= ? GROUP BY m.state`,
+      )
+      .all(agentId, since) as Row[];
+    return Object.fromEntries(rows.map((r) => [String(r.state), Number(r.n)]));
+  }
+
   /** Inbound messages received but never handed to the agent (for example, the process stopped first). */
   undelivered(agentId: string): Message[] {
     const rows = this.db
