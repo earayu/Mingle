@@ -38,7 +38,6 @@ export function formatMessage(
     const name = contactName(opts.contact) ?? (message.senderName !== message.senderId ? message.senderName : null);
     if (name) parts.push(`from=${quote(name)}`);
     if (opts.contact) parts.push(`user=${opts.contact.id}`);
-    else if (!name) parts.push(`from=${quote(message.senderId || "unknown")}`);
     if (opts.ownerId && message.senderId === opts.ownerId) parts.push("owner");
   }
   if (message.replyTo) parts.push(`reply_to=${message.replyTo}`);

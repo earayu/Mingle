@@ -528,7 +528,14 @@ export class Store {
   }
 
   setOutboundResult(id: string, state: OutboundState, platformId: string | null): void {
-    this.db.prepare("UPDATE messages SET state = ?, platform_id = ? WHERE id = ?").run(state, platformId, id);
+    try {
+      this.db.prepare("UPDATE messages SET state = ?, platform_id = ? WHERE id = ?").run(state, platformId, id);
+    } catch (error) {
+      // A platform that reports the same message id twice hits the unique index; keep the
+      // record with the outcome but without the colliding id.
+      if (platformId === null || !isUniqueViolation(error)) throw error;
+      this.db.prepare("UPDATE messages SET state = ?, platform_id = NULL WHERE id = ?").run(state, id);
+    }
   }
 
   /**
@@ -542,18 +549,21 @@ export class Store {
     // `hold` sets when to try again and counts the wait; leaving `waiting` clears the time; the
     // owner's retry starts the count over.
     const stmt = this.db.prepare(
-      `UPDATE messages SET state = ?, input_id = coalesce(?, input_id), nudged = CASE WHEN ? THEN 0 ELSE nudged END,
+      `UPDATE messages SET state = ?, input_id = coalesce(?, input_id),
+         nudged = CASE WHEN ? THEN 0 ELSE nudged END,
          retry_at = CASE WHEN ? THEN ? ELSE NULL END,
          holds = CASE WHEN ? THEN holds + 1 WHEN ? THEN 0 ELSE holds END
        WHERE id = ? AND direction = 'in' AND state IN (${rule.from.map(() => "?").join(", ")})`,
     );
     const hold = event === "hold" ? 1 : 0;
+    // `retry` and `resume` both put the message back as received, so both earn a fresh nudge.
+    const renudge = event === "retry" || event === "resume" ? 1 : 0;
     const moved: string[] = [];
     for (const id of ids) {
       const result = stmt.run(
         rule.to,
         inputId ?? null,
-        event === "retry" ? 1 : 0,
+        renudge,
         hold,
         retryAt ?? null,
         hold,
@@ -1032,4 +1042,10 @@ function toReminder(r: Row): Reminder {
     lastFiredAt: r.last_fired_at === null || r.last_fired_at === undefined ? null : Number(r.last_fired_at),
     createdAt: Number(r.created_at),
   };
+}
+
+/** SQLITE_CONSTRAINT (19) or its extended codes, e.g. UNIQUE (2067/1555). */
+function isUniqueViolation(error: unknown): boolean {
+  const errcode = (error as { errcode?: number }).errcode;
+  return errcode === 19 || (typeof errcode === "number" && (errcode & 0xff) === 19);
 }

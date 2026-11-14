@@ -114,6 +114,12 @@ describe("message header contacts", () => {
     expect(formatMessage(message, chat, "wechat", { contact: named })).toContain('from="Mei" user=u7k2 time=');
     expect(formatMessage(message, chat, "wechat", { contact: { ...named, alias: null } })).toContain('from="Mei W."');
   });
+
+  it("writes no from= with a platform ID when there is neither a contact nor a name", () => {
+    const text = formatMessage(message, chat, "wechat");
+    expect(text.split("\n")[0]).not.toContain("from=");
+    expect(text.split("\n")[0]).not.toContain("o9cq@im.wechat");
+  });
 });
 
 describe("formatReminder", () => {
