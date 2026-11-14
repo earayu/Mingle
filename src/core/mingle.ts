@@ -15,7 +15,7 @@ import type {
 } from "../channels/channel.ts";
 import type { Harness, HarnessInfo, HarnessStatus } from "../harness/harness.ts";
 import type { SecretStore } from "../platform/secrets.ts";
-import { type Agent, type Connection, type Message, Store } from "../store/store.ts";
+import { type Agent, type Connection, type Message, type Reminder, Store } from "../store/store.ts";
 import { VERSION } from "../version.ts";
 import { Brains } from "./brains.ts";
 import { checkEnvName, checkEnvValue, decodeEnvValue, encodeEnvValue, envRef } from "./env.ts";
@@ -139,19 +139,36 @@ export class Mingle {
     // Warm the harness list and the catalog so the console's first look at either does not
     // wait on the probe. One after the other: each starts every harness's executable.
     void this.probeHarnesses()
-      .catch(() => {})
+      .catch((error) => this.log(`harness probe failed: ${(error as Error).message}`))
       .then(() => this.probeCatalog())
-      .catch(() => {});
+      .catch((error) => this.log(`harness catalog probe failed: ${(error as Error).message}`));
     for (const agent of this.store.agents()) {
       // A paused agent stays paused across restarts: no session, no token, until the owner resumes it.
       if (agent.status === "paused") this.paused.add(agent.id);
       else this.addRuntime(agent).start();
     }
-    await Promise.all(this.store.connections().map((c) => this.reconnect(c.id)));
+    await Promise.all(
+      this.store
+        .connections()
+        .map((c) =>
+          this.reconnect(c.id).catch((error) =>
+            this.log(`connection ${c.id} could not be restored at start: ${(error as Error).message}`),
+          ),
+        ),
+    );
     const tick = this.options.reminderTickMs ?? 10_000;
     this.reminderTimer = setInterval(() => {
-      this.fireReminders();
-      this.resumeWaiting();
+      // One bad reminder or a store hiccup must not kill the tick, or the ones after it.
+      try {
+        this.fireReminders();
+      } catch (error) {
+        this.log(`reminder tick failed: ${(error as Error).message}`);
+      }
+      try {
+        this.resumeWaiting();
+      } catch (error) {
+        this.log(`waiting-messages tick failed: ${(error as Error).message}`);
+      }
     }, tick);
     // Timers do not run while the computer sleeps: a tick that comes far later than due means it
     // slept, and its connections are likely dead without knowing it yet (docs/spec.md 7.1).
@@ -161,7 +178,10 @@ export class Mingle {
       const now = Date.now();
       const slept = now - last - every;
       last = now;
-      if (slept > 60_000) void this.resume(`the computer slept for ${Math.round(slept / 60_000)} min`);
+      if (slept > 60_000)
+        void this.resume(`the computer slept for ${Math.round(slept / 60_000)} min`).catch((error) =>
+          this.log(`resume after sleep failed: ${(error as Error).message}`),
+        );
     }, every);
   }
 
@@ -709,6 +729,7 @@ export class Mingle {
         }
       } catch (error) {
         set({ kind: "failed", code: error instanceof MingleError ? error.code : "unknown" });
+        this.log(`onboarding ${platform} for ${agent.name} failed: ${(error as Error).message}`);
       }
     })();
     // Forget finished sessions after a while.
@@ -782,7 +803,9 @@ export class Mingle {
   async removeConnection(connectionId: string): Promise<void> {
     const connection = this.store.connection(connectionId);
     if (!connection) return;
-    this.drive(connectionId, { kind: "remove" });
+    void this.drive(connectionId, { kind: "remove" }).catch((error) =>
+      this.log(`connection ${connectionId} could not be removed cleanly: ${(error as Error).message}`),
+    );
     this.links.delete(connectionId);
     if (connection.secretRef) await this.options.secrets.delete(connection.secretRef);
     this.store.deleteConnection(connectionId);
@@ -833,7 +856,13 @@ export class Mingle {
       this.log(
         `connection ${id} is offline (${state.code}); trying again in ${Math.round((state.retryAt - Date.now()) / 1000)}s`,
       );
-      link.timer = setTimeout(() => void this.drive(id, { kind: "timer" }), Math.max(0, state.retryAt - Date.now()));
+      link.timer = setTimeout(
+        () =>
+          void this.drive(id, { kind: "timer" }).catch((error) =>
+            this.log(`connection ${id} retry failed: ${(error as Error).message}`),
+          ),
+        Math.max(0, state.retryAt - Date.now()),
+      );
       link.timer.unref?.();
     } else if (effect === "close" && state.kind === "stopped") {
       this.log(`connection ${id} stopped (${state.code}); waiting for the owner`);
@@ -863,14 +892,26 @@ export class Mingle {
       }
       live = await this.channel(connection.platform).connect(credentials, {
         onMessage: (message) => {
-          if (this.links.get(id)?.gen === gen) this.receive(id, message);
+          if (this.links.get(id)?.gen !== gen) return;
+          try {
+            this.receive(id, message);
+          } catch (error) {
+            this.log(`connection ${id}: dropping an inbound message: ${(error as Error).message}`);
+          }
         },
         onState: (state) => {
           if (state.kind === "error") reported = state.code;
-          void this.drive(id, { kind: "reported", state }, gen);
+          void this.drive(id, { kind: "reported", state }, gen).catch((error) =>
+            this.log(`connection ${id} state update failed: ${(error as Error).message}`),
+          );
         },
         onMembership: (change) => {
-          if (this.links.get(id)?.gen === gen) this.onMembership(id, change);
+          if (this.links.get(id)?.gen !== gen) return;
+          try {
+            this.onMembership(id, change);
+          } catch (error) {
+            this.log(`connection ${id}: membership update failed: ${(error as Error).message}`);
+          }
         },
       });
     } catch (error) {
@@ -906,6 +947,7 @@ export class Mingle {
     try {
       return JSON.parse(raw) as Credentials;
     } catch {
+      this.log(`connection ${connection.id}: stored credentials could not be read`);
       return undefined;
     }
   }
@@ -1108,20 +1150,34 @@ export class Mingle {
 
   fireReminders(now = Date.now()): void {
     for (const reminder of this.store.dueReminders(now)) {
-      let next: number | null = null;
-      if (reminder.rule !== "once") {
-        try {
-          next = nextFire(reminder.rule, now);
-        } catch {
-          next = null;
-        }
+      try {
+        this.fireReminder(reminder, now);
+      } catch (error) {
+        this.log(`reminder ${reminder.id} failed to fire: ${(error as Error).message}`);
       }
-      this.store.markReminderFired(reminder.id, now, next);
-      const source = reminder.sourceMessageId ? this.store.message(reminder.sourceMessageId) : undefined;
-      const agentName = this.store.agent(reminder.agentId)?.name;
-      const quoted = source && renderMessage(this.store, source, agentName ? { agentName } : {});
-      this.runtimes.get(reminder.agentId)?.enqueueText(formatReminder(reminder, now, quoted || undefined));
     }
+  }
+
+  private fireReminder(reminder: Reminder, now: number): void {
+    let next: number | null = null;
+    if (reminder.rule !== "once") {
+      try {
+        next = nextFire(reminder.rule, now);
+      } catch {
+        next = null;
+      }
+    }
+    this.store.markReminderFired(reminder.id, now, next);
+    const source = reminder.sourceMessageId ? this.store.message(reminder.sourceMessageId) : undefined;
+    const agentName = this.store.agent(reminder.agentId)?.name;
+    const quoted = source && renderMessage(this.store, source, agentName ? { agentName } : {});
+    const runtime = this.runtimes.get(reminder.agentId);
+    if (!runtime) {
+      // A paused or deleted agent has no runtime: the reminder fired but goes nowhere.
+      this.log(`reminder ${reminder.id} fired but agent ${reminder.agentId} has no runtime`);
+      return;
+    }
+    runtime.enqueueText(formatReminder(reminder, now, quoted || undefined));
   }
 
   // --------------------------------------------------------------------- cli
