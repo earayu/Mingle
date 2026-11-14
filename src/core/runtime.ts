@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Failure, failureOf, type Harness, type HarnessSession } from "../harness/harness.ts";
 import type { Agent, AgentStatus, Store } from "../store/store.ts";
 import { formatMessage } from "./format.ts";
-import { memoryHint, memoryHintDue, memorySize, readRole } from "./home.ts";
+import { MEMORY_LIMIT, memoryHint, memoryHintDue, memorySize, readRole } from "./home.ts";
 import { renderManual } from "./manual.ts";
 
 export interface RuntimeDeps {
@@ -24,6 +24,13 @@ export interface RuntimeDeps {
     outcome: "unanswered" | "failed" | "waiting",
     why?: FailureInfo,
   ) => void;
+  /**
+   * This agent hit a usage limit and now waits until `until`. Mingle holds the other agents
+   * on the same sign-in too: the limit belongs to the account, not to one agent (docs/spec.md 4.3).
+   */
+  readonly onLimit?: (until: number, why: FailureInfo) => void;
+  /** A turn that began at `startedAt` completed: its sign-in works again. */
+  readonly onTurnCompleted?: (startedAt: number) => void;
   /** Wait before delivering to an idle agent, so a burst of messages becomes one input. */
   readonly coalesceMs?: number;
   readonly log?: (line: string) => void;
@@ -45,6 +52,12 @@ export const QUOTA_WAIT_MS = 3_600_000;
 const QUOTA_MARGIN_MS = 15_000;
 /** A usage limit that keeps coming back this many times is no longer waited for. */
 const MAX_QUOTA_HOLDS = 200;
+/**
+ * Waits for a usage limit whose reset the harness did not report: longer each time, then hourly,
+ * for about a day in all (Raft does the same rather than failing at once). The last entry repeats.
+ */
+export const QUOTA_UNKNOWN_RETRY_MS: readonly number[] = [5 * 60_000, 15 * 60_000, 30 * 60_000, 3_600_000];
+const MAX_QUOTA_UNKNOWN_HOLDS = 24;
 
 /**
  * When to deliver a message again after `why`, or undefined when it should fail and wait for the
@@ -55,8 +68,12 @@ const MAX_QUOTA_HOLDS = 200;
 export function holdUntil(why: FailureInfo, holds: number, now: number): number | undefined {
   switch (why.failure) {
     case "quota":
-      if (!why.resetsAt || why.resetsAt <= now || holds >= MAX_QUOTA_HOLDS) return undefined;
-      return Math.min(why.resetsAt + QUOTA_MARGIN_MS, now + QUOTA_WAIT_MS);
+      if (why.resetsAt && why.resetsAt > now) {
+        return holds >= MAX_QUOTA_HOLDS ? undefined : Math.min(why.resetsAt + QUOTA_MARGIN_MS, now + QUOTA_WAIT_MS);
+      }
+      // No (future) reset reported: still a limit that passes, so wait, longer each time.
+      if (holds >= MAX_QUOTA_UNKNOWN_HOLDS) return undefined;
+      return now + (QUOTA_UNKNOWN_RETRY_MS[holds] ?? (QUOTA_UNKNOWN_RETRY_MS.at(-1) as number));
     case "rate_limited":
     case "overloaded":
     case "provider": {
@@ -99,7 +116,9 @@ export class AgentRuntime {
    * The harness's usage limit is used up until then: new messages wait for it instead of being
    * delivered only to fail again. Cleared when the owner asks to retry.
    */
-  private blocked: { until: number; why: FailureInfo } | undefined;
+  private blocked: { until: number; why: FailureInfo; since: number } | undefined;
+  /** When the turn now running began, so a completed turn can say whether it postdates a limit. */
+  private turnStartedAt = 0;
   private unblockTimer: NodeJS.Timeout | undefined;
 
   private readonly agentId: string;
@@ -125,8 +144,9 @@ export class AgentRuntime {
   start(after?: Promise<void>): void {
     // A provider-wide quota wait survives a restart (docs/spec.md 4.3); restore it before opening.
     const wait = this.deps.store.quotaWait(this.agentId);
-    if (wait && wait.until > Date.now()) this.block(wait.until, { failure: "quota", resetsAt: wait.resetsAt });
-    else if (wait) this.deps.store.setQuotaWait(this.agentId);
+    if (wait && wait.until > Date.now()) {
+      this.block(wait.until, { failure: "quota", ...(wait.resetsAt ? { resetsAt: wait.resetsAt } : {}) }, false);
+    } else if (wait) this.deps.store.setQuotaWait(this.agentId);
     this.setStatus("idle");
     // Open the session now, not on the first message: startup problems (login,
     // a refused option) surface before anyone chats. No input is delivered here.
@@ -361,16 +381,45 @@ export class AgentRuntime {
       if (held.length > 0) this.deps.onSettled?.(held, "waiting", { ...why, retryAt: at });
     }
     // A usage limit holds for everything after it too, until the reset.
-    if (why.failure === "quota" && waits.size > 0) this.block(Math.max(...waits.keys()), why);
+    if (why.failure === "quota" && waits.size > 0) this.block(Math.max(...waits.keys()), why, true);
     const failed = this.deps.store.moveInbound(failing, "fail");
     if (failed.length > 0) this.deps.onSettled?.(failed, "failed", why);
   }
 
-  private block(until: number, why: FailureInfo): void {
+  /** The usage-limit wait in force, if any, for agents added later on the same sign-in. */
+  get limit(): { until: number; why: FailureInfo } | undefined {
+    return this.blocked && this.blocked.until > Date.now()
+      ? { until: this.blocked.until, why: this.blocked.why }
+      : undefined;
+  }
+
+  /**
+   * Another agent on the same sign-in hit its usage limit: wait it out too, rather than deliver
+   * only to fail the same way. A later wait already in place is kept.
+   */
+  holdFor(until: number, why: FailureInfo): void {
+    if (this.disposed || until <= Date.now() || (this.blocked && this.blocked.until >= until)) return;
+    this.block(until, why, false);
+  }
+
+  /**
+   * A turn on the same sign-in that began after this wait did complete: the limit is over.
+   * True when a wait was ended. Waiting messages are Mingle's to deliver again.
+   */
+  release(turnStartedAt: number): boolean {
+    if (!this.blocked || this.blocked.since >= turnStartedAt) return false;
+    this.unblock();
+    if (this.pending.length > 0) this.flushSoon();
+    return true;
+  }
+
+  /** `announce`: this agent's own failure, which Mingle passes on to the agents sharing its sign-in. */
+  private block(until: number, why: FailureInfo, announce: boolean): void {
     this.unblock(false);
-    this.blocked = { until, why };
+    this.blocked = { until, why, since: Date.now() };
     // Persisted, so the hold still applies after Mingle or the session is recreated.
-    this.deps.store.setQuotaWait(this.agentId, { until, resetsAt: why.resetsAt ?? until });
+    this.deps.store.setQuotaWait(this.agentId, { until, resetsAt: why.resetsAt ?? null });
+    if (announce) this.deps.onLimit?.(until, why);
     // Reminders and notes held back meanwhile go out once the limit should have reset.
     this.unblockTimer = setTimeout(
       () => {
@@ -435,6 +484,7 @@ export class AgentRuntime {
             void this.session?.abort().catch(() => {});
           }
           this.running = true;
+          this.turnStartedAt = Date.now();
           this.setStatus("thinking");
           this.deps.onActivity?.("thinking");
         },
@@ -449,6 +499,8 @@ export class AgentRuntime {
           } else {
             this.setStatus("idle");
           }
+          // The sign-in answered: any usage-limit wait on it is over, for every agent sharing it.
+          if (outcome.kind === "completed") this.deps.onTurnCompleted?.(this.turnStartedAt);
           this.afterTurn(outcome.kind === "completed");
         },
         onActivity: (kind, detail) => {
@@ -507,7 +559,14 @@ export class AgentRuntime {
   private checkMemory(): void {
     const size = memorySize(this.deps.homeDir);
     const now = Date.now();
-    if (!memoryHintDue(size, this.deps.store.memoryHint(this.agentId), now)) return;
+    const last = this.deps.store.memoryHint(this.agentId);
+    // Trimmed back under the limit: the hint has done its job, so growing past it again is news
+    // and is told at once, not a day after the last hint.
+    if (last && size <= MEMORY_LIMIT) {
+      this.deps.store.setMemoryHint(this.agentId, null, null);
+      return;
+    }
+    if (!memoryHintDue(size, last, now)) return;
     this.deps.store.setMemoryHint(this.agentId, now, size);
     this.deps.log?.(`${this.agentId}: MEMORY.md is ${size} bytes; asked the agent to trim it`);
     this.pending.push({ kind: "text", text: memoryHint(size) });

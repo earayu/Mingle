@@ -51,6 +51,16 @@ describe("memory hint", () => {
     writeFileSync(join(home, "MEMORY.md"), "x".repeat(Math.ceil((MEMORY_LIMIT + 4096) * 1.3)));
     channel.receive({ text: "third" });
     await until(() => inputs.filter((i) => i.startsWith("[mingle] Your MEMORY.md")).length === 2);
+
+    // Trimmed under the limit: forgotten, so growing past it again within the day is told at once.
+    await until(() => !mingle.runtime(agentId)?.busy);
+    writeFileSync(join(home, "MEMORY.md"), "short\n");
+    channel.receive({ text: "fourth" });
+    await until(() => mingle.store.memoryHint(agentId) === undefined);
+    await until(() => !mingle.runtime(agentId)?.busy);
+    writeFileSync(join(home, "MEMORY.md"), "x".repeat(MEMORY_LIMIT + 1024));
+    channel.receive({ text: "fifth" });
+    await until(() => inputs.filter((i) => i.startsWith("[mingle] Your MEMORY.md")).length === 3);
   });
 
   it("stays quiet while MEMORY.md is within the limit", async () => {
@@ -103,6 +113,8 @@ describe("reset session and diagnostics", () => {
     expect(text).toContain(`session: ${mingle.store.agent(agentId)?.sessionId}`);
     expect(text).toMatch(/telegram \w+ · connected/);
     expect(text).toContain("replied 1");
+    expect(text).toContain("sign-in: this computer's\n");
+    expect(text).toMatch(/last message in: \d{4}-\d\d-\d\dT[\d:.]+Z · last reply out: \d{4}-/);
     expect(text).not.toContain("pumpkin");
     expect(text).not.toContain("Alex");
   });
@@ -151,7 +163,11 @@ describe("waiting out a passing failure", () => {
     // A usage limit waits until just past its reset, an hour at most at a time; without a reset time it fails.
     expect(holdUntil({ failure: "quota", resetsAt: now + 600_000 }, 0, now)).toBe(now + 615_000);
     expect(holdUntil({ failure: "quota", resetsAt: now + 5 * 3_600_000 }, 7, now)).toBe(now + 3_600_000);
-    expect(holdUntil({ failure: "quota" }, 0, now)).toBeUndefined();
+    // Without a reset time it still waits, longer each time, for about a day.
+    expect(holdUntil({ failure: "quota" }, 0, now)).toBe(now + 5 * 60_000);
+    expect(holdUntil({ failure: "quota", resetsAt: now - 1 }, 2, now)).toBe(now + 30 * 60_000);
+    expect(holdUntil({ failure: "quota" }, 10, now)).toBe(now + 3_600_000);
+    expect(holdUntil({ failure: "quota" }, 24, now)).toBeUndefined();
   });
 
   it("tells the person it will try again, and answers once the provider is back", async () => {
@@ -505,5 +521,36 @@ describe("CR regression", () => {
     expect(result.status).toBe(200);
     const text = (result.json as { text: string }).text;
     expect(text).not.toContain("synthetic-adapter-secret");
+  });
+});
+
+describe("a usage limit shared by a sign-in", () => {
+  it("holds the other agents on the same sign-in, and ends when a later turn there completes", async () => {
+    const state = { fails: 1 };
+    const inputs: string[] = [];
+    const resetsAt = Date.now() + 30 * 60_000;
+    current = await rig(answeringUnless(state, inputs), { wrap: flaky(state, "quota", () => resetsAt) });
+    const { mingle, channel, agentId } = current;
+    const peer = mingle.createAgent({ name: "Bea", role: "", harness: "scripted", model: null });
+    const own = mingle.createAgent({ name: "Cy", role: "", harness: "scripted", model: null });
+    // Cy signs in with a key of its own: not the computer's sign-in, so not its limit.
+    await mingle.setEnv(own.id, "ANTHROPIC_API_KEY", "sk-test");
+
+    channel.receive({ text: "first" });
+    await until(() => mingle.store.waiting(agentId).length === 1);
+    expect(mingle.runtime(peer.id)?.limit?.until).toBe(resetsAt + 15_000);
+    expect(mingle.store.quotaWait(peer.id)).toEqual({ until: resetsAt + 15_000, resetsAt });
+    expect(mingle.runtime(own.id)?.limit).toBeUndefined();
+    // An agent added while the limit lasts waits too.
+    const late = mingle.createAgent({ name: "Dee", role: "", harness: "scripted", model: null });
+    expect(mingle.runtime(late.id)?.limit?.until).toBe(resetsAt + 15_000);
+
+    // The owner tries Alex again and it works: the account answers, so every wait on it ends.
+    await until(() => !mingle.runtime(agentId)?.busy);
+    await current.admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, {});
+    await until(() => mingle.store.waiting(agentId).length === 0 && channel.sent.length >= 2);
+    await until(() => mingle.runtime(peer.id)?.limit === undefined);
+    expect(mingle.store.quotaWait(peer.id)).toBeUndefined();
+    expect(mingle.runtime(late.id)?.limit).toBeUndefined();
   });
 });

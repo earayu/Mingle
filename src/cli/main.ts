@@ -200,12 +200,18 @@ async function agentCommand(group: string, action: string | undefined, args: str
         "GET",
         `/v1/agent/messages/search?${q}`,
       );
-      // Each hit is a window around the match; the last line says how to open one.
+      // Each hit is a window around the match; the closing lines say whether that was all of them
+      // and how to open one (docs/spec.md 5.3).
       const first = messages[0];
+      const limit = Math.min(100, Math.max(1, Number(flags.limit ?? 20) || 20));
+      const more =
+        messages.length >= limit
+          ? `\nThese are only the newest ${limit}; older matches may exist. Add words, narrow with --in <chat-id>, or raise --limit (up to 100).`
+          : "";
       print(messages, () =>
         first
-          ? `${messages.map((m) => m.text).join("\n\n")}\n\n${messages.length} match${messages.length === 1 ? "" : "es"}, newest first. "…" marks cut text. Read around one: "$MINGLE_CLI" message read ${first.chat} --around ${first.id}`
-          : "no matches",
+          ? `${messages.map((m) => m.text).join("\n\n")}\n\n${messages.length} match${messages.length === 1 ? "" : "es"} containing every word, newest first. <match> marks the hit, "…" marks cut text.${more}\nRead around one before relying on it: "$MINGLE_CLI" message read ${first.chat} --around ${first.id}`
+          : "no matches: no message you have seen contains every one of these words. Try fewer or other words, or the language the chat uses.",
       );
       return true;
     }

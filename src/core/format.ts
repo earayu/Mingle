@@ -1,5 +1,6 @@
 import type { Platform } from "../channels/channel.ts";
 import { type Chat, type Contact, contactName, type Message, type Reminder } from "../store/store.ts";
+import { searchTerms } from "./terms.ts";
 
 /** ISO 8601 in local time with offset, minute precision: 2026-11-11T14:02+08:00. */
 export function localTime(ms: number): string {
@@ -39,27 +40,42 @@ export function formatMessage(
   return `[${parts.join(" ")}]\n${message.body}`;
 }
 
-/** Characters of context kept on each side of a search match. */
-const EXCERPT_RADIUS = 80;
+/** Characters of context kept before and after a search match: more after, where the answer to it tends to be. */
+const EXCERPT_BEFORE = 80;
+const EXCERPT_AFTER = 120;
 
 /**
- * The part of `body` around the first match of `query`, for search results: enough to judge
- * whether the hit matters, not the whole message. A cut side is marked with "…", so the agent
+ * The part of `body` around the match of `query`, for search results: enough to judge whether
+ * the hit matters, not the whole message. The whole query is looked for first, then each of its
+ * words. The match is wrapped in <match></match>, and a cut side is marked with "…", so the agent
  * knows it is reading a window, not the full text. Short bodies come back whole.
  */
-export function excerpt(body: string, query: string, radius = EXCERPT_RADIUS): string {
-  const chars = [...body];
-  const needle = [...query];
-  if (chars.length <= needle.length + 2 * radius) return body;
+export function excerpt(body: string, query: string, before = EXCERPT_BEFORE, after = EXCERPT_AFTER): string {
   const hay = body.toLowerCase();
-  const at = hay.indexOf(query.toLowerCase());
-  // Indexes into the string are UTF-16; turn the match position into a character position.
+  let at = -1;
+  let length = 0;
+  for (const term of [query.trim(), ...searchTerms(query)]) {
+    if (!term) continue;
+    at = hay.indexOf(term.toLowerCase());
+    if (at >= 0) {
+      length = term.length;
+      break;
+    }
+  }
+  // Positions in characters, not UTF-16 units, so a window never splits one.
+  const chars = [...body];
   const start = at < 0 ? 0 : [...body.slice(0, at)].length;
+  const size = at < 0 ? 0 : [...body.slice(at, at + length)].length;
+  const width = size + before + after;
   // A window of the same width wherever the match is: near either end it slides inward.
-  const width = needle.length + 2 * radius;
-  const from = Math.max(0, Math.min(start - radius, chars.length - width));
+  const from = Math.max(0, Math.min(start - before, chars.length - width));
   const to = Math.min(chars.length, from + width);
-  return `${from > 0 ? "…" : ""}${chars.slice(from, to).join("").trim()}${to < chars.length ? "…" : ""}`;
+  const text = (a: number, b: number) => chars.slice(a, b).join("");
+  const window =
+    size > 0
+      ? `${text(from, start)}<match>${text(start, start + size)}</match>${text(start + size, to)}`
+      : text(from, to);
+  return `${from > 0 ? "…" : ""}${window}${to < chars.length ? "…" : ""}`;
 }
 
 export function formatReminder(reminder: Reminder, at: number): string {

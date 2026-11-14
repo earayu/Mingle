@@ -10,29 +10,36 @@ import { excerpt, formatMessage } from "../src/core/format.ts";
 import { split } from "../src/core/outbox.ts";
 import { nextFire, parseDuration } from "../src/core/schedule.ts";
 import { applyShellEnvironment } from "../src/platform/shell-env.ts";
+import { Store } from "../src/store/store.ts";
 import { type LocalePreference, localePreference, resolveLocale } from "../web/src/locale.ts";
 import { applyTheme, savedTheme } from "../web/src/theme.ts";
 
 describe("excerpt", () => {
-  it("keeps short messages whole", () => {
-    expect(excerpt("the ridge route is open", "ridge")).toBe("the ridge route is open");
+  it("keeps short messages whole, with the match marked", () => {
+    expect(excerpt("the Ridge route is open", "ridge")).toBe("the <match>Ridge</match> route is open");
+    expect(excerpt("nothing here", "ridge")).toBe("nothing here");
   });
 
-  it("cuts a long message to a window around the match, marking each cut side", () => {
+  it("cuts a long message to a window around the match, more after it than before", () => {
     const body = `${"a".repeat(200)} Ridge route ${"b".repeat(200)}`;
-    const text = excerpt(body, "ridge", 10);
-    expect(text).toBe(`…${"a".repeat(9)} Ridge route ${"b".repeat(3)}…`);
+    expect(excerpt(body, "ridge", 10, 20)).toBe(`…${"a".repeat(9)} <match>Ridge</match> route ${"b".repeat(13)}…`);
+  });
+
+  it("finds a word of the query when the whole query is not there", () => {
+    // The first word of the query that the message contains.
+    expect(excerpt("is the ridge open on saturday?", "saturday ridge")).toBe(
+      "is the ridge open on <match>saturday</match>?",
+    );
   });
 
   it("slides the window inward near either end", () => {
-    const body = `ridge ${"x".repeat(100)}`;
-    expect(excerpt(body, "ridge", 10)).toBe(`ridge ${"x".repeat(19)}…`);
-    expect(excerpt(`${"x".repeat(100)} ridge`, "ridge", 10)).toBe(`…${"x".repeat(19)} ridge`);
+    expect(excerpt(`ridge ${"x".repeat(100)}`, "ridge", 10, 10)).toBe(`<match>ridge</match> ${"x".repeat(19)}…`);
+    expect(excerpt(`${"x".repeat(100)} ridge`, "ridge", 10, 10)).toBe(`…${"x".repeat(19)} <match>ridge</match>`);
   });
 
   it("counts characters, not UTF-16 units", () => {
     const body = `${"山".repeat(50)}徒步路线${"水".repeat(50)}`;
-    expect(excerpt(body, "徒步", 5)).toBe(`…${"山".repeat(5)}徒步路线${"水".repeat(3)}…`);
+    expect(excerpt(body, "徒步", 5, 5)).toBe(`…${"山".repeat(5)}<match>徒步</match>路线${"水".repeat(3)}…`);
   });
 });
 
@@ -380,5 +387,41 @@ describe("package smoke", () => {
     } finally {
       rmSync(work, { recursive: true, force: true });
     }
+  });
+});
+
+describe("message search", () => {
+  it("finds messages with every word, short words included, and treats % and _ literally", () => {
+    const store = new Store(":memory:");
+    const agent = store.createAgent({ name: "Alex", slug: "alex", harness: "scripted" });
+    const connection = store.createConnection({ agentId: agent.id, platform: "telegram", secretRef: "s1" });
+    const chatId = store.upsertChat({ connectionId: connection.id, platformId: "1", kind: "group" }).id;
+    let seq = 0;
+    const add = (body: string) =>
+      store.insertInbound({
+        chatId,
+        platformId: `p${++seq}`,
+        senderId: "u1",
+        senderName: "Zhang San",
+        body,
+        attachments: [],
+        replyTo: null,
+        triggers: true,
+        createdAt: 1_000 + seq,
+      });
+    add("周六去香山徒步，天气不错");
+    add("周日下雨，徒步取消");
+    add("ridge route is open on saturday");
+    add("discount 50% off");
+    const bodies = (q: string) => store.search(agent.id, q).map((m) => m.body);
+    expect(bodies("徒步 天气")).toEqual(["周六去香山徒步，天气不错"]);
+    expect(bodies("徒步")).toEqual(["周日下雨，徒步取消", "周六去香山徒步，天气不错"]);
+    expect(bodies("saturday ridge")).toEqual(["ridge route is open on saturday"]);
+    expect(bodies('"route is open"')).toEqual(["ridge route is open on saturday"]);
+    expect(bodies('"open route"')).toEqual([]);
+    expect(bodies("0%")).toEqual(["discount 50% off"]);
+    expect(bodies("%")).toEqual(["discount 50% off"]);
+    expect(bodies("_")).toEqual([]);
+    store.close();
   });
 });
