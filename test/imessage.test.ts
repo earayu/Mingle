@@ -294,10 +294,14 @@ describe("imessage channel", () => {
     expect(await collect(channel.onboard({ owner: OWNER }, signal))).toEqual([
       { kind: "failed", code: "permission_missing" },
     ]);
+  });
 
-    scripts.fail(undefined);
+  // Windows chmod does not implement POSIX read permissions.
+  it.skipIf(process.platform === "win32")("reports an unreadable Messages database during onboarding", async () => {
+    messages.add(DM, { guid: "old-out", text: "hi" });
+    const channel = imessageChannel({ dbPath: messages.path, runScript: fakeScripts(messages).run });
     chmodSync(messages.path, 0o000);
-    expect(await collect(channel.onboard({ owner: OWNER }, signal))).toEqual([
+    expect(await collect(channel.onboard({ owner: OWNER }, new AbortController().signal))).toEqual([
       { kind: "failed", code: "permission_missing" },
     ]);
   });
@@ -382,22 +386,26 @@ describe("imessage channel", () => {
     expect(readFileSync(to, "utf8")).toBe("image bytes");
   });
 
-  it("reconnects after the database goes away, and catches up on what arrived meanwhile", async () => {
-    const rec = recorder();
-    live = await imessageChannel({ dbPath: messages.path, runScript: fakeScripts(messages).run, pollMs: 20 }).connect(
-      { owner: OWNER, handle: ME, name: "Alex", since: "0" },
-      rec.events,
-    );
-    const away = join(dir, "away.db");
-    renameSync(messages.path, away);
-    await until(() => rec.states.some((s) => s.kind === "reconnecting"));
-    messages.add(DM, { guid: "during", from: OWNER, text: "are you there?" });
-    renameSync(away, messages.path);
-    await until(() => rec.states.at(-1)?.kind === "connected", 5000);
-    await until(() => rec.messages.some((m) => m.platformId === "during"));
-  });
+  // Windows locks open SQLite files; these exercise the macOS adapter's POSIX replacement/reopen behavior.
+  it.skipIf(process.platform === "win32")(
+    "reconnects after the database goes away, and catches up on what arrived meanwhile",
+    async () => {
+      const rec = recorder();
+      live = await imessageChannel({ dbPath: messages.path, runScript: fakeScripts(messages).run, pollMs: 20 }).connect(
+        { owner: OWNER, handle: ME, name: "Alex", since: "0" },
+        rec.events,
+      );
+      const away = join(dir, "away.db");
+      renameSync(messages.path, away);
+      await until(() => rec.states.some((s) => s.kind === "reconnecting"));
+      messages.add(DM, { guid: "during", from: OWNER, text: "are you there?" });
+      renameSync(away, messages.path);
+      await until(() => rec.states.at(-1)?.kind === "connected", 5000);
+      await until(() => rec.messages.some((m) => m.platformId === "during"));
+    },
+  );
 
-  it("stops and asks the person when read access is taken away", async () => {
+  it.skipIf(process.platform === "win32")("stops and asks the person when read access is taken away", async () => {
     const rec = recorder();
     live = await imessageChannel({ dbPath: messages.path, runScript: fakeScripts(messages).run, pollMs: 20 }).connect(
       { owner: OWNER, handle: ME, name: "Alex", since: "0" },
