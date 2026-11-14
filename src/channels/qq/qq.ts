@@ -102,6 +102,7 @@ export function qqChannel(options: QqOptions = {}): Channel {
   return {
     platform: "qq",
     onboarding: { kind: "qr" },
+    manualSetupUrl: "https://q.qq.com/qqbot/",
     manualFields: [
       { key: "appId", labelKey: "qq.appId", secret: false },
       { key: "appSecret", labelKey: "qq.appSecret", secret: true },

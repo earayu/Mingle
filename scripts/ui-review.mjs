@@ -315,6 +315,8 @@ try {
     ["connect-slack", `/a/${long.slug}/connect/slack`],
     ["connect-discord", `/a/${long.slug}/connect/discord`],
     ["connect-telegram", `/a/${alex.slug}/connect/telegram`],
+    // Live checks of this Mac's own permissions; read-only, they never make macOS ask anything.
+    ...(process.platform === "darwin" ? [["connect-imessage", `/a/${alex.slug}/connect/imessage`]] : []),
     ["onboard-idle", `/a/${idleAgent.slug}`],
     ["onboard-busy", `/a/${busyAgent.slug}`],
     ["onboard-offline", `/a/${offAgent.slug}`],
@@ -406,6 +408,12 @@ try {
       assert.ok(dom.includes("Later message 30"), "completed agent activity did not render");
       assert.ok(!dom.includes(zh ? "上手" : "Getting started"), "answered agent still shows onboarding");
       assert.ok(!dom.includes(zh ? "正在回复" : "got it and is answering"), "answered agent shows replying");
+    },
+    "connect-imessage": (dom, zh) => {
+      assert.ok(dom.includes(zh ? "完全磁盘访问权限" : "Full Disk Access"), "iMessage setup checks did not render");
+    },
+    "connect-telegram": (dom) => {
+      assert.ok(/_\d{3}_bot</.test(dom), "Telegram guide has no username to copy");
     },
     connect: (dom, zh) =>
       checkPlatformCounts(dom, zh, [

@@ -220,6 +220,7 @@ export function dingtalkChannel(options: DingtalkOptions = {}): Channel {
   return {
     platform: "dingtalk",
     onboarding: { kind: "qr", desktopLink: true },
+    manualSetupUrl: "https://open-dev.dingtalk.com/",
     manualFields: [
       { key: "clientId", labelKey: "dingtalk.clientId", secret: false },
       { key: "clientSecret", labelKey: "dingtalk.clientSecret", secret: true },

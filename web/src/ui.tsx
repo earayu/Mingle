@@ -520,6 +520,55 @@ export function AgentStatusText({ status, detail }: { status: AgentStatus; detai
   );
 }
 
+/** Copy text, falling back to a hidden text area where the clipboard API is not offered (some webviews). */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.append(area);
+    area.select();
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      area.remove();
+    }
+  }
+}
+
+/**
+ * Text the person types somewhere else (a name, a command), copied with one click.
+ * Sits inline in a sentence, so the instruction and the exact words read as one.
+ */
+export function Copyable({ value }: { value: string }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  return (
+    <button
+      type="button"
+      onClick={async () => setCopied(await copyText(value))}
+      title={copied ? t("copy.done") : t("copy.action")}
+      aria-label={`${copied ? t("copy.done") : t("copy.action")}: ${value}`}
+      className="mx-0.5 inline-flex max-w-full items-center gap-1 rounded-small border border-line2 bg-bg2 px-1.5 align-[-2px] font-mono text-[0.9em] leading-[1.45] font-normal text-ink transition-colors duration-[120ms] hover:border-accent hover:bg-accent-tint"
+    >
+      <span className="selectable truncate">{value}</span>
+      {copied ? <CheckIcon className="text-green" /> : <CopyIcon className="text-ink3" />}
+    </button>
+  );
+}
+
 // ------------------------------------------------------------------ icons
 // Line icons, 1.5 stroke, drawn on a 16 grid.
 
@@ -562,6 +611,12 @@ export const UpdateIcon = (p: { className?: string }) => (
 export const CheckIcon = (p: { className?: string }) => (
   <Icon {...p} size={14}>
     <path d="M3.5 8.5 6.5 11.5 12.5 4.5" strokeWidth="2" />
+  </Icon>
+);
+export const CopyIcon = (p: { className?: string }) => (
+  <Icon {...p} size={13}>
+    <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+    <path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5" />
   </Icon>
 );
 export const PauseIcon = (p: { className?: string }) => (

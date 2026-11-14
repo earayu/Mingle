@@ -105,6 +105,7 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
   return {
     platform: "feishu",
     onboarding: { kind: "qr", desktopLink: true },
+    manualSetupUrl: "https://open.feishu.cn/app",
     manualFields: [
       { key: "appId", labelKey: "feishu.appId", secret: false },
       { key: "appSecret", labelKey: "feishu.appSecret", secret: true },

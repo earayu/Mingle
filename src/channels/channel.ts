@@ -53,6 +53,30 @@ export interface CredentialField {
   readonly secret: boolean;
 }
 
+/**
+ * Something on this computer the person sets up before a channel can connect (iMessage: macOS
+ * permissions), checked live while the connect screen is open. Checks never prompt the person.
+ */
+export interface SetupCheck {
+  readonly id: string;
+  /**
+   * ok: done. missing: not done yet. denied: refused before, so only System Settings can change it.
+   * unknown: cannot tell until an earlier check passes.
+   */
+  readonly state: "ok" | "missing" | "denied" | "unknown";
+}
+
+export interface ChannelSetup {
+  check(): Promise<{
+    readonly checks: readonly SetupCheck[];
+    /** The app macOS grants the permissions to, as the person sees it in System Settings ("Mingle", "Terminal"). */
+    readonly app?: string;
+  }>;
+  /** One step the person asked for from the console: open a settings pane, or ask for a permission now. */
+  act(action: string): Promise<void>;
+  readonly actions: readonly string[];
+}
+
 export type OnboardingEvent =
   | { readonly kind: "qr_ready"; readonly qrContent: string; readonly expiresAt: number }
   | { readonly kind: "scanned" }
@@ -223,6 +247,10 @@ export interface Channel {
   readonly onboarding: OnboardingMethod;
   /** For QR platforms: fields for binding an existing app by hand instead of scanning. */
   readonly manualFields?: readonly CredentialField[];
+  /** Where to create the app for `manualFields` on the platform's developer site. */
+  readonly manualSetupUrl?: string;
+  /** Local prerequisites the console checks live before connecting. */
+  readonly setup?: ChannelSetup;
   /** Where the owner adds a connected bot to a server or group, for platforms where that is a separate step. */
   inviteUrl?(bot: BotIdentity): string;
 

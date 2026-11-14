@@ -12,6 +12,7 @@ import type {
 } from "../src/channels/channel.ts";
 import {
   AGENT_MARK,
+  countActiveAccounts,
   decodeAttributedBody,
   imessageChannel,
   parseAccounts,
@@ -251,6 +252,120 @@ describe("imessage channel", () => {
     expect(await collect(channel.onboard(undefined, new AbortController().signal))).toEqual([
       { kind: "failed", code: "permission_missing" },
     ]);
+  });
+
+  describe("setup checks", () => {
+    const APP = "io.github.earayu.mingle";
+    /** The user's privacy database, with only the table and columns the checks read. */
+    const tcc = (rows: [client: string, authValue: number][]) => {
+      const path = join(dir, "TCC.db");
+      rmSync(path, { force: true });
+      const db = new DatabaseSync(path);
+      db.exec(
+        "CREATE TABLE access (service TEXT, client TEXT, client_type INTEGER, auth_value INTEGER, indirect_object_identifier TEXT)",
+      );
+      for (const [client, value] of rows) {
+        db.prepare("INSERT INTO access VALUES ('kTCCServiceAppleEvents', ?, 0, ?, 'com.apple.MobileSMS')").run(
+          client,
+          value,
+        );
+      }
+      db.close();
+      return path;
+    };
+    const setupOf = (opts: { accounts?: number; tccPath?: string; scripts?: ReturnType<typeof fakeScripts> } = {}) => {
+      const opened: (readonly string[])[] = [];
+      const scripts = opts.scripts ?? fakeScripts(messages);
+      const channel = imessageChannel({
+        dbPath: messages.path,
+        runScript: scripts.run,
+        setup: {
+          activeAccounts: async () => opts.accounts,
+          tccPath: opts.tccPath ?? join(dir, "missing-TCC.db"),
+          bundleId: APP,
+          appPath: async () => "/Applications/Mingle.app",
+          open: async (args) => {
+            opened.push(args);
+          },
+        },
+      });
+      if (!channel.setup) throw new Error("iMessage has setup checks");
+      return { setup: channel.setup, opened, scripts };
+    };
+    const states = async (setup: { check(): Promise<{ checks: readonly { id: string; state: string }[] }> }) =>
+      Object.fromEntries((await setup.check()).checks.map((c) => [c.id, c.state]));
+
+    it("ticks off what this Mac already has, in the order the person does it", async () => {
+      const { setup } = setupOf({ accounts: 1, tccPath: tcc([[APP, 2]]) });
+      const result = await setup.check();
+      expect(result.app).toBe("Mingle");
+      expect(result.checks).toEqual([
+        { id: "signed_in", state: "ok" },
+        { id: "full_disk_access", state: "ok" },
+        { id: "automation", state: "ok" },
+      ]);
+    });
+
+    it("tells a missing sign-in apart from preferences it cannot read", async () => {
+      expect((await states(setupOf({ accounts: 0 }).setup)).signed_in).toBe("missing");
+      expect((await states(setupOf({}).setup)).signed_in).toBe("unknown");
+    });
+
+    it("reads permission to control Messages for this app only, never by asking", async () => {
+      const { setup, scripts } = setupOf({ accounts: 1, tccPath: tcc([["com.apple.Terminal", 2]]) });
+      expect((await states(setup)).automation).toBe("missing");
+      expect((await states(setupOf({ accounts: 1, tccPath: tcc([[APP, 0]]) }).setup)).automation).toBe("denied");
+      // Checking never runs AppleScript, so macOS never shows a prompt the person did not ask for.
+      expect(scripts.calls).toEqual([]);
+    });
+
+    it("asks macOS for control of Messages only when the person clicks Allow", async () => {
+      const { setup, scripts } = setupOf({ accounts: 0 });
+      expect(await states(setup)).toMatchObject({ signed_in: "missing", automation: "missing" });
+      await setup.act("allow_automation");
+      expect(scripts.calls).toHaveLength(1);
+      // Controlling Messages worked and it listed an iMessage account: both are known now.
+      expect(await states(setup)).toMatchObject({ signed_in: "ok", automation: "ok" });
+    });
+
+    it("keeps a refused permission as not done", async () => {
+      const scripts = fakeScripts(messages);
+      scripts.fail(new ScriptError("execution error: Not authorized to send Apple events to Messages. (-1743)"));
+      const { setup } = setupOf({ accounts: 1, scripts });
+      await setup.act("allow_automation");
+      expect((await states(setup)).automation).toBe("missing");
+    });
+
+    it.skipIf(process.platform === "win32")(
+      "waits on Full Disk Access before it can tell about Automation",
+      async () => {
+        chmodSync(messages.path, 0o000);
+        expect(await states(setupOf({ accounts: 1 }).setup)).toEqual({
+          signed_in: "ok",
+          full_disk_access: "missing",
+          automation: "unknown",
+        });
+      },
+    );
+
+    it("opens the right System Settings pane, Messages, or the app in Finder", async () => {
+      const { setup, opened } = setupOf({ accounts: 1 });
+      for (const action of ["open_messages", "open_full_disk_access", "open_automation", "reveal_app"]) {
+        await setup.act(action);
+      }
+      expect(opened).toEqual([
+        ["-a", "Messages"],
+        ["x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"],
+        ["x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"],
+        ["-R", "/Applications/Mingle.app"],
+      ]);
+    });
+
+    it("counts the accounts `defaults read` prints", () => {
+      expect(countActiveAccounts('(\n    "51883BEE-E35B-4CED-9692-6B6EAC928BF3"\n)\n')).toBe(1);
+      expect(countActiveAccounts('(\n    "A",\n    "B"\n)')).toBe(2);
+      expect(countActiveAccounts("(\n)\n")).toBe(0);
+    });
   });
 
   it("hears the owner in the self-chat only, never other people's chats", async () => {

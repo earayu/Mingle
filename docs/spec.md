@@ -505,7 +505,7 @@ MSG
 
 接口定义在 [`src/channels/channel.ts`](../src/channels/channel.ts)，分三部分：
 
-- **接入（onboarding）**：启动扫码或校验凭据，报告进度。
+- **接入（onboarding）**：启动扫码或校验凭据，报告进度。需要先在本机做好的事（iMessage 的 macOS 权限）由可选的 `setup` 提供：`check()` 每次读一遍当前状态（`ok` / `missing` / `denied` / `unknown`），绝不触发系统弹窗；`act(action)` 只执行固定列表里的动作（打开某个系统设置面板，或在用户点击后请求权限）。控制台通过 `GET /v1/admin/platforms/:platform/setup` 每 2 秒轮询，`POST …/setup/:action` 执行动作。
 - **连接（lifecycle）**：连接、断线重连、状态上报。
 - **消息（messaging）**：收消息事件；发送、回复、上传文件、表情回执、显示"正在输入"。
 
@@ -589,6 +589,11 @@ stateDiagram-v2
 
 **只做 A。** A 能在一台登录了自己 Apple ID 的 Mac 上完整实测，行为面窄，出问题只影响用户自己。B 需要第二个 Apple ID 加一个单独的 macOS 用户或一台 Mac，没有测试环境，按原则 3 不开放；A 和 B 共用收发和重连，以后有环境时只需补"别人私聊"和"群里 @"两块。
 
+- **接入前检查**（MING-68）：连接页是一份实时清单，每 2 秒重读，做完的步骤自己打勾，每一步旁边是能直接带用户过去的按钮。三项检查都不需要任何权限、也不会让 macOS 弹窗：
+  1. 「信息」已登录 iMessage：读 `defaults read com.apple.imservice.ids.iMessage ActiveAccounts`，非空即已登录；键或域不存在算未登录，读不出来算未知（未知不挡连接，连接时的 AppleScript 会再确认）。按钮"打开「信息」"。2026-11-15 在已登录的 Mac 上实测为一个账号；退出登录后该键是否清空待验证。
+  2. 完全磁盘访问权限：尝试打开 `chat.db`，EPERM/EACCES 即缺少。按钮打开系统设置的对应面板（`x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles`），以及"在访达中显示"那个 App，方便拖进列表。
+  3. 允许控制「信息」：有了完全磁盘访问权限后读用户的 `TCC.db`（`kTCCServiceAppleEvents`、目标 `com.apple.MobileSMS`），按负责本进程的 App（环境变量 `__CFBundleIdentifier`：桌面应用是 `io.github.earayu.mingle`，终端里运行时是终端）匹配：`auth_value = 2` 已允许，`0` 已拒绝，没有记录则未问过。未问过时显示"允许"按钮，用户点了才运行读账号的 AppleScript，macOS 此时弹窗；拒绝过则引导到"自动化"面板。
+  权限给的是哪个 App 就写哪个 App 的名字（"Mingle"、"iTerm"），由 bundle id 经 Spotlight 找到 App 路径得出；不在任何 App 里运行时是 Node.js 可执行文件本身。
 - **接入**：不用填任何东西。点连接时 Mingle 读一次 `chat.db`（没有完全磁盘访问权限 → `permission_missing`），再用 AppleScript 读「信息」里的 iMessage 账号（触发 macOS 的"允许控制「信息」"提示，被拒也是 `permission_missing`；没登录 → `not_signed_in`）。这个账号就是 owner。账号的所有地址（Apple ID 邮箱和手机号）都算自聊：iPhone 给自己发消息可能落在手机号那个对话里。接入成功后 Agent 在自聊里发一条问候。
 - **只读自聊**：只看 `chat.style = 45` 且对方是本账号某个地址的对话，跳过点回应（`associated_message_type ≠ 0`）和系统行（`item_type ≠ 0`）。别人的私聊和群消息不读、不存、不回。正文在新版 macOS 上只放在 `attributedBody`（typedstream 格式的 NSAttributedString），从中取出文本。`date` 是 2001 年起的纳秒数，超出 JS 数字的精确范围，在 SQL 里先换成毫秒。
 - **不读回自己的话**：自聊里 owner 和 Agent 的消息都是"我发的"。Agent 发出的每条消息末尾带一个看不见的标记（U+200B U+2060），读到带标记的一律跳过；另外记住最近 10 分钟发出的文本，标记万一丢了也能认出来，每条只抵消一次，owner 之后说同样的话仍然算数。Agent 发的文件按文件名记住，同样跳过。
