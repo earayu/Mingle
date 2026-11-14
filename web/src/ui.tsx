@@ -2,6 +2,7 @@ import {
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
+  type Ref,
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
   useEffect,
@@ -23,7 +24,11 @@ export function Button({
   small = false,
   className = "",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; small?: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: Variant;
+  small?: boolean;
+  ref?: Ref<HTMLButtonElement>;
+}) {
   const look: Record<Variant, string> = {
     default: "border border-line2 bg-card text-ink enabled:hover:bg-bg3",
     primary: "border border-transparent bg-accent-btn text-white enabled:hover:brightness-110",
