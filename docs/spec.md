@@ -792,6 +792,8 @@ docs/             文档
 | Mingle 端到端，OpenCode 1.19.5 | 通过（2026-11-13，`MINGLE_E2E=opencode MINGLE_E2E_DEEP= pnpm vitest run test/e2e.test.ts`）。真实 OpenCode 在收到消息前开启会话，读取注入的指南后通过 CLI 引用回复 PONG；聊天通道为测试替身，未发送真实 IM 消息。OpenCode 2.x 的指令注入仍不受 OAR 0.97.0 支持，Mingle 在选择和打开会话前拦截 |
 | 跨平台构建与 v0.1.0 发布 | 通过（2026-11-13）。CI 在 macOS、Ubuntu、Windows 上跑完整测试，桌面壳能交叉编译到六个目标。发布流水线一次产出：macOS 的 DMG（两种芯片）、Windows 的 NSIS 安装包（x64、ARM64）、Linux 的 deb、rpm 和 tar.gz，以及六个平台的更新清单。下载的 Apple 芯片 DMG 经 `spctl` 判定为 "Notarized Developer ID"，公证票据已装订，`codesign --verify --deep --strict` 通过，内置的 Mingle 报告版本 0.1.0 |
 | macOS 安装覆盖与自动更新 | 通过（2026-11-14，MING-49，macOS 14.5 arm64，0.1.6 → 0.1.7）。先用旧版创建隔离的测试 Agent、未配置凭据的连接及 ROLE.md / MEMORY.md；新版 DMG 覆盖安装后，原生应用能启动，控制台能加载，版本、Agent、连接标识与文件内容均核对通过。另用未改动的旧版正式应用从公开 Latest 后台下载更新，应用退出后由更新助手替换，再启动报告 0.1.7，原有测试数据仍在。两条路径的安装结果均通过 codesign 和 Gatekeeper 检查；自动更新后的可执行文件与新 DMG 内文件哈希一致。本轮使用受控退出后重新启动，没有点击“重启以更新”按钮，也未记录下载走增量还是全量；未验证真实 IM 凭据、连接收发或 Windows / Linux 桌面自动更新 |
+| v0.1.8 安装包与增量更新包 | 通过（2026-11-14，MING-49，macOS arm64，0.1.7 → 0.1.8）。[发布流水线](https://github.com/earayu/Mingle/actions/runs/43574973116)的四个平台构建、三项安装包 smoke、上传与全部产物校验通过，主分支三系统 CI 通过。下载的 arm64 DMG 与 SHA256SUMS 一致，DMG 签名、公证票据和应用的 codesign / Gatekeeper 检查通过；内置 CLI 启动报告 0.1.8。先用旧版内置 CLI 启动隔离的合成 Agent、无凭据连接及 ROLE.md / MEMORY.md，再用新版启动同一数据目录，标识、配置和文件内容均保留，控制台及静态资源可加载。发布后从公开 Latest 获取 0.1.7 → 0.1.8 的 1,271,525 字节增量包，以应用内相同的 mygo 0.9.0 更新代码校验 Ed25519 签名并重建应用；重建结果通过 codesign / Gatekeeper，可执行文件与 DMG 版本一致，同一数据目录的验收通过。此轮没有运行原生应用的自动下载、退出替换和界面重启流程：本机真实 Mingle 正在运行，验收保留它及用户数据，仅运行隔离副本的内置 CLI；不把增量包重建等同于完整自动更新实测。 |
+| v0.1.8 官网发布 | 通过（2026-11-14，MING-49）。[v0.1.8](https://github.com/earayu/Mingle/releases/tag/v0.1.8) 于北京时间 17:05 发布为 Latest（完成验收后，比计划晚约 28 分钟）；[官网部署](https://github.com/earayu/Mingle/actions/runs/43578862834)通过。英文首页、中文首页和 llms.txt 返回 200，两个页面的八种安装包链接均指向 v0.1.8，逐个跟随下载重定向均返回 200。iMessage 真实账号端到端仍待验证（12.2），发布说明已注明。 |
 
 **2026-11-14（UTC+8），MING-38 真机回归。** 源码启动 Mingle 0.1.4（`c4829f7`），macOS 14.5，Node 24.15.0，OAR 0.97.0，Claude Code 2.1.322，飞书 SDK 1.76.0。Agent 为 `Smoke`，模型选「默认」（`model: null`），实际模型未单独记录。本机原生客户端已安装，但本轮没有可用的 Pinky 工具，macOS 辅助功能自动化未启用；飞书收发使用已登录的官方网页版（Chrome 154），未验证原生桌面客户端的呈现。以下编号对应 MING-38 的十项用例，不代表八个平台全部通过。
 
@@ -829,7 +831,7 @@ docs/             文档
 | Discord 端到端 | Gateway 收发、resume、引用回复、表情、实时编辑、文件上传、邀请链接（假定应用 ID 等于机器人用户 ID，新建应用都是这样） | 已登录的 Developer Portal、bot token 和测试服务器管理权限；2026-11-14 官方后台要求登录 |
 | iMessage 端到端 | 用 Agent 专用 Apple ID 跑通私聊、群聊 @、主动私聊、断线重连（`docs/im-smoke.md`）；实测：真实 `chat.db` 的列和 `attributedBody` 解析、AppleScript `chat id` 的格式（`iMessage;-;…` 与 `any;-;…`）、发文件是否受「信息」沙盒限制、`participant` 主动私聊、@ 提及在 `attributedBody` 里的样子 | 一台登录了专用 Apple ID 的 Mac、完全磁盘访问权限和自动化授权、另一个 Apple ID 的设备发消息；2026-11-14 开发机上 Mingle 没有完全磁盘访问权限，AppleScript 等待授权弹窗，未能实测 |
 | Windows、Linux 实机 | 安装、托盘（左键开窗、右键菜单、首次关窗提示）、开机自启、保持唤醒、自动更新；凭据走 DPAPI、Secret Service；Codex 在 PowerShell 里按指南调用 `mingle` | 一台 Windows 和一台 Linux 桌面机 |
-| 自动更新未覆盖路径 | 更早正式版（含 0.1.0）的升级、确认实际使用增量包、界面“重启以更新”按钮；0.1.6 → 0.1.7 的 macOS 下载、验签、退出替换和数据保留已通过（12.1） | 保留旧版的隔离安装和可操作原生窗口的测试环境 |
+| 自动更新未覆盖路径 | 更早正式版（含 0.1.0）的升级、原生更新器实际选择增量包、界面“重启以更新”按钮；0.1.6 → 0.1.7 的 macOS 下载、验签、退出替换和数据保留已通过；0.1.7 → 0.1.8 的签名增量包重建与旧数据启动已通过，但该次原生自动更新流程未测（12.1） | 保留旧版的隔离安装和可操作原生窗口的测试环境 |
 | 离线补推 | 其余七个平台断开期间的消息是否补推、补推多久；飞书更长断连和其他条件 | 各平台已接入的机器人；飞书本次约 5 分钟后恢复的观察见 12.1，不外推为保证 |
 
 ## 13. 未决问题
