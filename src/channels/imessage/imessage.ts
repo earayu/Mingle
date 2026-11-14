@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { closeSync, openSync, statSync } from "node:fs";
-import { copyFile } from "node:fs/promises";
+import { copyFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
   BotIdentity,
@@ -10,24 +11,24 @@ import type {
   Channel,
   ChannelConnection,
   ChannelEvents,
-  ChatRef,
-  Credentials,
   InboundAttachment,
   InboundMessage,
-  OnboardingContext,
-  OnboardingEvent,
   OutboundMessage,
   Sender,
   SendResult,
 } from "../channel.ts";
 
 /**
- * iMessage through the Messages app on this Mac (docs/spec.md 6.6). A personal-account channel:
- * the Mac's Messages must be signed in to an Apple ID that belongs to the agent, not the owner's own.
+ * iMessage through the Messages app on this Mac, signed in to the owner's own Apple ID
+ * (docs/spec.md 6.6). The owner talks to the agent in their chat with themselves; nothing
+ * anyone else sends is read.
  *
  * Receiving: poll the local Messages database (`~/Library/Messages/chat.db`, read-only; needs Full
  * Disk Access). Sending: AppleScript to Messages (macOS asks once for permission to control it).
- * Nothing leaves the Mac except through Messages itself.
+ *
+ * In the self-chat everything is "from me", the owner's words and the agent's alike. The agent's
+ * messages end with an invisible marker and are remembered when sent, so they are never read back
+ * as the owner's.
  */
 
 /** Runs an AppleScript with arguments and resolves with its output. */
@@ -63,13 +64,16 @@ const CAPABILITIES: Capabilities = {
   maxTextLength: 8000,
 };
 
-/** Seconds between 1970-01-01 and 2001-01-01, the epoch Messages counts from. */
+/** Milliseconds between 1970-01-01 and 2001-01-01, the epoch Messages counts from. */
 const APPLE_EPOCH_MS = 978_307_200_000;
 /** On connect, messages this recent are delivered again; the core drops the ones it already has. */
 const BACKFILL_MS = 10 * 60_000;
-
-/** Group chats have style 43 in chat.db; direct chats 45. */
-const STYLE_GROUP = 43;
+/** Ends every message the agent sends: zero width space + word joiner. Invisible, survives Messages. */
+export const AGENT_MARK = "​⁠";
+/** What the agent sent is remembered this long, in case a marker is ever lost. */
+const ECHO_MS = 10 * 60_000;
+/** The same words seen as sent and as received within this window are one message (the phone's copy). */
+const TWIN_MS = 60_000;
 
 export function imessageChannel(options: IMessageOptions = {}): Channel {
   const dbPath = options.dbPath ?? join(homedir(), "Library", "Messages", "chat.db");
@@ -80,22 +84,14 @@ export function imessageChannel(options: IMessageOptions = {}): Channel {
 
   return {
     platform: "imessage",
-    onboarding: {
-      kind: "credentials",
-      fields: [{ key: "owner", labelKey: "imessage.owner", secret: false }],
-    },
+    onboarding: { kind: "credentials", fields: [] },
 
-    async *onboard(input: Credentials | undefined, _signal, context?: OnboardingContext) {
-      const owner = normalizeHandle(input?.owner ?? "");
-      if (!owner) {
-        yield { kind: "failed", code: "invalid_credentials" } satisfies OnboardingEvent;
-        return;
-      }
-      let account: string | undefined;
+    async *onboard() {
+      let fromDb: string[];
       try {
         const db = openDb(dbPath);
         try {
-          account = accountHandle(db);
+          fromDb = callerIds(db);
         } finally {
           db.close();
         }
@@ -104,38 +100,32 @@ export function imessageChannel(options: IMessageOptions = {}): Channel {
         return;
       }
       // Asks macOS for permission to control Messages now, while the person is at the console.
-      let description: string;
+      let accounts: string[];
       try {
-        description = (await runScript(ACCOUNT_SCRIPT, [], 60_000)).trim();
+        accounts = parseAccounts(await runScript(ACCOUNT_SCRIPT, [], 60_000));
       } catch (error) {
         yield { kind: "failed", code: isAutomationDenied(error) ? "permission_missing" : "unknown" };
         return;
       }
-      if (!description) {
-        // Messages is not signed in to iMessage.
-        yield { kind: "failed", code: "invalid_credentials" };
+      const handle = accounts[0];
+      if (!handle) {
+        yield { kind: "failed", code: "not_signed_in" };
         return;
       }
-      if (sameHandle(owner, account) || sameHandle(owner, description)) {
-        // The owner's own Apple ID: the agent would speak as the owner (docs/spec.md 1.4).
-        yield { kind: "failed", code: "owner_account" };
-        return;
-      }
-      const handle = account ?? normalizeHandle(description) ?? "imessage";
-      const name = context?.agentName?.trim() || handle;
+      const handles = [...new Set([...accounts, ...fromDb])];
       yield {
         kind: "succeeded",
-        credentials: { owner, handle, name, since: String(now()) },
+        credentials: { handle, handles: handles.join(","), since: String(now()) },
         bot: { id: handle, name: handle },
-        ownerId: owner,
+        ownerId: handle,
       };
     },
 
-    async connect(credentials: Credentials, events: ChannelEvents): Promise<ChannelConnection> {
+    async connect(credentials, events: ChannelEvents): Promise<ChannelConnection> {
       const handle = credentials.handle ?? "";
-      const agentName = credentials.name ?? "";
       const since = Number(credentials.since ?? 0);
       const bot: BotIdentity = { id: handle, name: handle };
+      const owner: Sender = { id: handle, name: handle, isBot: false };
       let db: DatabaseSync;
       try {
         db = openDb(dbPath);
@@ -144,6 +134,10 @@ export function imessageChannel(options: IMessageOptions = {}): Channel {
         if (isPermissionError(error)) events.onState({ kind: "error", code: "permission_missing" });
         throw error;
       }
+      // Every address of this account: the Apple ID email and the phone number reach the same person.
+      const handles = new Set(
+        [handle, ...(credentials.handles ?? "").split(","), ...callerIds(db)].filter(Boolean).map(lower),
+      );
       let lastRowId = startRow(db, Math.max(since, now() - BACKFILL_MS));
       // An open handle keeps reading a file that was moved or replaced; watch the path itself.
       let inode = statSync(dbPath).ino;
@@ -151,11 +145,50 @@ export function imessageChannel(options: IMessageOptions = {}): Channel {
       let failures = 0;
       let timer: NodeJS.Timeout | undefined;
 
+      /** Text the agent sent, and the files it is sending, so their rows are not taken for the owner's. */
+      const sentTexts: { text: string; at: number }[] = [];
+      const sendingFiles = new Map<string, number>();
+      /** Recent owner messages, to drop the second copy when the phone's message shows up twice. */
+      const seen: { text: string; fromMe: boolean; at: number }[] = [];
+
+      const isAgents = (row: SelfRow, text: string, files: readonly AttachmentRow[]): boolean => {
+        const t = now();
+        prune(sentTexts, t - ECHO_MS);
+        const marked = text.endsWith(AGENT_MARK);
+        // Each sent text explains one row, so the owner can still say the same words later.
+        const words = (marked ? text.slice(0, -AGENT_MARK.length) : text).trim();
+        const i = row.fromMe && words ? sentTexts.findIndex((s) => s.text === words) : -1;
+        if (i >= 0) sentTexts.splice(i, 1);
+        if (marked || i >= 0) return true;
+        if (row.fromMe && !text.replace(/￼/g, "").trim() && files.length > 0) {
+          for (const [name, until] of sendingFiles) if (until < t) sendingFiles.delete(name);
+          return files.every((f) => f.name && sendingFiles.has(f.name));
+        }
+        return false;
+      };
+
+      const isTwin = (row: SelfRow, text: string): boolean => {
+        const at = fromAppleDate(row.date);
+        prune(seen, now() - 5 * TWIN_MS);
+        if (!text) return false;
+        // Each copy pairs with one other, so saying the same thing again still counts.
+        const i = seen.findIndex((s) => s.text === text && s.fromMe !== row.fromMe && Math.abs(s.at - at) < TWIN_MS);
+        if (i >= 0) {
+          seen.splice(i, 1);
+          return true;
+        }
+        seen.push({ text, fromMe: row.fromMe, at });
+        return false;
+      };
+
       const read = () => {
-        const rows = newMessages(db, lastRowId);
-        for (const row of rows) {
+        for (const row of selfMessages(db, lastRowId, handles)) {
           lastRowId = Math.max(lastRowId, row.rowid);
-          const inbound = toInbound(row, attachmentsOf(db, row.rowid), { handle, name: agentName });
+          const raw = rowText(row);
+          const files = attachmentsOf(db, row.rowid);
+          if (isAgents(row, raw, files)) continue;
+          if (isTwin(row, raw)) continue;
+          const inbound = toInbound(row, raw, files, owner);
           if (inbound) events.onMessage(inbound);
         }
       };
@@ -219,8 +252,16 @@ export function imessageChannel(options: IMessageOptions = {}): Channel {
         }
       };
 
+      /** Mark and remember a text before it goes out, so the poller never mistakes it for the owner. */
+      const outgoing = (markdown: string): string => {
+        const text = plain(markdown).trim();
+        sentTexts.push({ text, at: now() });
+        return `${text}${AGENT_MARK}`;
+      };
+
       return {
         bot,
+        ownerOnly: true,
         capabilities: () => CAPABILITIES,
 
         async send(message: OutboundMessage): Promise<SendResult> {
@@ -228,12 +269,13 @@ export function imessageChannel(options: IMessageOptions = {}): Channel {
           const before = maxRow();
           const degraded: ("quote_dropped" | "markdown_flattened")[] = [];
           if (message.replyTo) degraded.push("quote_dropped");
-          const text = plain(message.text);
-          if (text !== message.text) degraded.push("markdown_flattened");
+          if (plain(message.text) !== message.text) degraded.push("markdown_flattened");
           try {
-            if (text) await runScript(SEND_TEXT_SCRIPT, [text, chatGuid], 30_000);
+            if (message.text.trim()) await runScript(SEND_TEXT_SCRIPT, [outgoing(message.text), chatGuid], 30_000);
             for (const file of message.files ?? []) {
-              await runScript(SEND_FILE_SCRIPT, [file.path, chatGuid], 120_000);
+              const name = file.name ?? basename(file.path);
+              sendingFiles.set(name, now() + ECHO_MS);
+              await runScript(SEND_FILE_SCRIPT, [await stage(dbPath, file.path, name), chatGuid], 120_000);
             }
           } catch (error) {
             return sendFailure(error);
@@ -255,19 +297,11 @@ export function imessageChannel(options: IMessageOptions = {}): Channel {
         },
 
         async messageUser(userId: string, text: string) {
-          await runScript(SEND_TO_HANDLE_SCRIPT, [plain(text), userId], 30_000);
+          await runScript(SEND_TO_HANDLE_SCRIPT, [outgoing(text), userId], 30_000);
         },
 
-        async listMembers(chat: ChatRef): Promise<readonly Sender[]> {
-          const rows = db
-            .prepare(
-              `SELECT h.id AS id FROM chat c
-               JOIN chat_handle_join chj ON chj.chat_id = c.ROWID
-               JOIN handle h ON h.ROWID = chj.handle_id
-               WHERE c.guid = ?`,
-            )
-            .all(chat.platformId) as { id: string }[];
-          return rows.map((r) => ({ id: r.id, name: r.id, isBot: false }));
+        async listMembers() {
+          return [owner];
         },
 
         async close() {
@@ -284,22 +318,18 @@ export function imessageChannel(options: IMessageOptions = {}): Channel {
 
 // ---------------------------------------------------------------- database
 
-export interface MessageRow {
+export interface SelfRow {
   rowid: number;
   guid: string;
   text: string | null;
   attributedBody: Uint8Array | null;
   /** Milliseconds since 2001-01-01. Messages stores nanoseconds, too large for a JS number; SQL converts. */
   date: number;
-  replyTo: string | null;
-  sender: string | null;
+  fromMe: boolean;
   chatGuid: string;
-  chatStyle: number;
-  chatName: string | null;
-  chatIdentifier: string | null;
 }
 
-interface AttachmentRow {
+export interface AttachmentRow {
   filename: string | null;
   mime: string | null;
   name: string | null;
@@ -333,24 +363,24 @@ function startRow(db: DatabaseSync, fromMs: number): number {
   return row.n;
 }
 
-/** Messages other people sent since `afterRow`. Tapbacks, edits and group events are skipped. */
-function newMessages(db: DatabaseSync, afterRow: number): MessageRow[] {
-  return db
+/** New messages in this account's chats with itself. Tapbacks, edits and system rows are skipped. */
+function selfMessages(db: DatabaseSync, afterRow: number, handles: ReadonlySet<string>): SelfRow[] {
+  const list = [...handles];
+  if (list.length === 0) return [];
+  const rows = db
     .prepare(
       `SELECT m.ROWID AS rowid, m.guid AS guid, m.text AS text, m.attributedBody AS attributedBody,
               CASE WHEN m.date > 1000000000000 THEN m.date / 1000000 ELSE m.date * 1000 END AS date,
-              m.thread_originator_guid AS replyTo, h.id AS sender,
-              c.guid AS chatGuid, c.style AS chatStyle, c.display_name AS chatName,
-              c.chat_identifier AS chatIdentifier
+              m.is_from_me AS fromMe, c.guid AS chatGuid
        FROM message m
        JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
        JOIN chat c ON c.ROWID = cmj.chat_id
-       LEFT JOIN handle h ON h.ROWID = m.handle_id
-       WHERE m.ROWID > ? AND m.is_from_me = 0
+       WHERE m.ROWID > ? AND c.style = 45 AND lower(c.chat_identifier) IN (${list.map(() => "?").join(",")})
          AND IFNULL(m.associated_message_type, 0) = 0 AND IFNULL(m.item_type, 0) = 0
        ORDER BY m.ROWID LIMIT 200`,
     )
-    .all(afterRow) as unknown as MessageRow[];
+    .all(afterRow, ...list) as unknown as (Omit<SelfRow, "fromMe"> & { fromMe: number })[];
+  return rows.map((r) => ({ ...r, fromMe: r.fromMe === 1 }));
 }
 
 function attachmentsOf(db: DatabaseSync, rowid: number): AttachmentRow[] {
@@ -363,37 +393,32 @@ function attachmentsOf(db: DatabaseSync, rowid: number): AttachmentRow[] {
     .all(rowid) as unknown as AttachmentRow[];
 }
 
-/** The handle this Mac's iMessage account sends from, as recorded on its own messages. */
-function accountHandle(db: DatabaseSync): string | undefined {
-  const row = db
-    .prepare("SELECT account FROM message WHERE is_from_me = 1 AND account LIKE '_:%' ORDER BY ROWID DESC LIMIT 1")
-    .get() as { account: string } | undefined;
-  // `E:name@icloud.com` or `p:+15551234567`.
-  return row ? normalizeHandle(row.account.slice(2)) : undefined;
+/** The addresses this account has sent from (its phone number, often). */
+function callerIds(db: DatabaseSync): string[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT destination_caller_id AS id FROM message
+       WHERE is_from_me = 1 AND service = 'iMessage' AND destination_caller_id IS NOT NULL`,
+    )
+    .all() as { id: string }[];
+  return rows.map((r) => r.id).filter((id) => id.length > 0);
 }
 
 // ----------------------------------------------------------------- mapping
 
-/** Map one chat.db row to Mingle's inbound shape. Exported for tests. */
+function rowText(row: SelfRow): string {
+  return row.text ?? (row.attributedBody ? decodeAttributedBody(row.attributedBody) : undefined) ?? "";
+}
+
+/** Map one self-chat row to Mingle's inbound shape: always the owner, always addressed. Exported for tests. */
 export function toInbound(
-  row: MessageRow,
+  row: SelfRow,
+  raw: string,
   attachments: readonly AttachmentRow[],
-  me: { handle: string; name: string },
+  owner: Sender,
 ): InboundMessage | undefined {
-  if (!row.sender) return undefined;
-  const raw = row.text ?? (row.attributedBody ? decodeAttributedBody(row.attributedBody) : "") ?? "";
   // U+FFFC marks where an attachment sits in the text.
-  let text = raw.replace(/￼/g, "").trim();
-  const group = row.chatStyle === STYLE_GROUP;
-
-  let addressed = !group;
-  if (group) {
-    const mentionedByAttribute = row.attributedBody ? mentionsHandle(row.attributedBody, me.handle) : false;
-    const byName = me.name ? stripName(text, me.name) : undefined;
-    if (byName !== undefined) text = byName;
-    addressed = mentionedByAttribute || byName !== undefined;
-  }
-
+  const text = raw.replace(/￼/g, "").trim();
   const files: InboundAttachment[] = [];
   for (const a of attachments) {
     if (!a.filename) continue;
@@ -405,44 +430,20 @@ export function toInbound(
     });
   }
   if (!text && files.length === 0) return undefined;
-
-  const name = row.chatName?.trim() || (group ? undefined : row.sender);
   return {
     platformId: row.guid,
-    chat: { platformId: row.chatGuid, kind: group ? "group" : "dm", ...(name ? { name } : {}) },
-    sender: { id: row.sender, name: row.sender, isBot: false },
+    chat: { platformId: row.chatGuid, kind: "dm", name: owner.name },
+    sender: owner,
     text,
     attachments: files,
-    ...(row.replyTo ? { replyTo: row.replyTo } : {}),
-    addressedToBot: addressed,
+    addressedToBot: true,
     sentAt: fromAppleDate(row.date),
   };
 }
 
 /**
- * When `text` addresses the agent by name ("@Alex …", "Alex, …", "… @Alex"), the text without it.
- * iMessage mentions show the contact's name, so this covers mentions of an agent saved as a contact.
- */
-export function stripName(text: string, name: string): string | undefined {
-  const n = escapeRegExp(name.trim());
-  if (!n) return undefined;
-  const mention = new RegExp(`(^|\\s)@${n}(?=$|[\\s,，:：.!?！？])`, "iu");
-  if (mention.test(text)) return tidy(text.replace(mention, "$1"));
-  const leading = new RegExp(`^${n}(?:[\\s,，:：]+|$)`, "iu");
-  if (leading.test(text)) return tidy(text.replace(leading, ""));
-  return undefined;
-}
-
-function tidy(text: string): string {
-  return text
-    .replace(/^[\s,，:：]+/, "")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
-}
-
-/**
  * The plain text inside an `attributedBody` (an NSAttributedString in Apple's typedstream format).
- * Recent macOS versions often leave `text` empty and keep only this. Exported for tests.
+ * Recent macOS versions leave `text` empty and keep only this. Exported for tests.
  */
 export function decodeAttributedBody(blob: Uint8Array): string | undefined {
   const buf = Buffer.from(blob);
@@ -463,13 +464,6 @@ export function decodeAttributedBody(blob: Uint8Array): string | undefined {
   }
   if (i + length > buf.length) return undefined;
   return buf.subarray(i, i + length).toString("utf8");
-}
-
-/** Whether a confirmed @-mention in the message points at `handle`. */
-function mentionsHandle(blob: Uint8Array, handle: string): boolean {
-  if (!handle) return false;
-  const buf = Buffer.from(blob);
-  return buf.includes("__kIMMentionConfirmedMention") && buf.includes(handle);
 }
 
 function fromAppleDate(ms: number): number {
@@ -498,16 +492,26 @@ const SEND_TO_HANDLE_SCRIPT = `on run argv
   end tell
 end run`;
 
-/** The signed-in iMessage account, or nothing when there is none. */
+/** The signed-in iMessage accounts' descriptions ("E:name@icloud.com"), one per line. */
 const ACCOUNT_SCRIPT = `tell application "Messages"
-  set found to (every account whose service type = iMessage)
-  if found is {} then return ""
-  try
-    return description of item 1 of found
-  on error
-    return "iMessage"
-  end try
+  set out to ""
+  repeat with a in (every account whose service type = iMessage)
+    try
+      set out to out & (description of a) & linefeed
+    end try
+  end repeat
+  return out
 end tell`;
+
+/** "E:name@icloud.com" / "P:+8613800000000" lines → handles. */
+export function parseAccounts(output: string): string[] {
+  const handles = output
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^[EPep]:/, ""))
+    .filter((h) => /@|^\+?\d{5,}$/.test(h))
+    .map(lower);
+  return [...new Set(handles)];
+}
 
 function osascript(script: string, args: readonly string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -518,6 +522,18 @@ function osascript(script: string, args: readonly string[], timeoutMs: number): 
       } else resolve(String(stdout));
     });
   });
+}
+
+/**
+ * Messages only sends files from its own attachments folder: from anywhere else it posts an empty
+ * bubble and reports success (seen on macOS 14.5). Copy the file there first; Messages keeps it.
+ */
+async function stage(dbPath: string, path: string, name: string): Promise<string> {
+  const dir = join(dirname(dbPath), "Attachments", "mingle", randomUUID());
+  await mkdir(dir, { recursive: true });
+  const staged = join(dir, name.replace(/[/\\]/g, "_"));
+  await copyFile(path, staged);
+  return staged;
 }
 
 function sendFailure(error: unknown): SendResult {
@@ -543,19 +559,6 @@ function isPermissionError(error: unknown): boolean {
 
 // ------------------------------------------------------------------- helpers
 
-/** A phone number (with country code) or an email address, as Messages records it; else undefined. */
-export function normalizeHandle(value: string): string | undefined {
-  const v = value.trim();
-  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return v.toLowerCase();
-  const digits = v.replace(/[\s\-().]/g, "");
-  if (/^\+\d{6,15}$/.test(digits)) return digits;
-  return undefined;
-}
-
-function sameHandle(a: string, b: string | undefined): boolean {
-  return Boolean(b) && a.toLowerCase() === normalizeHandle(b ?? "")?.toLowerCase();
-}
-
 /** Mingle's progress and answers use light Markdown; Messages shows plain text. */
 export function plain(markdown: string): string {
   return markdown
@@ -567,12 +570,16 @@ export function plain(markdown: string): string {
     .replace(/^#{1,6}\s+/gm, "");
 }
 
-function expandHome(path: string): string {
-  return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
+function prune<T extends { at: number }>(list: T[], before: number): void {
+  while (list.length && (list[0]?.at ?? 0) < before) list.shift();
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function lower(s: string): string {
+  return s.trim().toLowerCase();
+}
+
+function expandHome(path: string): string {
+  return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 }
 
 function sleep(ms: number): Promise<void> {

@@ -4,7 +4,7 @@
 
 ## 项目
 
-Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claude Code、Codex 等 harness 驱动，以机器人身份加入微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram，或用 Agent 自己的个人账号接入 iMessage。本地运行，没有服务端。不预设公司或工作场景。
+Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claude Code、Codex 等 harness 驱动，以机器人身份加入微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram，也能在 Mac 的 iMessage 里通过自聊和 owner 对话。本地运行，没有服务端。不预设公司或工作场景。
 
 注意区分两个"agent"：读本文件的你是开发 Mingle 的 coding agent；文档里的 Agent 指 Mingle 的产品对象。
 
@@ -12,7 +12,7 @@ Mingle 让用户在本机创建长期存在的 Agent 伙伴，由本机的 Claud
 
 ## 当前状态
 
-M3 进行中，进度见 `docs/spec.md` 11.1–11.3。已实现：存储、Agent 运行时、本地 API、`mingle` CLI、控制台（`web/`）、全部八个平台的适配器和文件收发、iMessage 个人账号适配器（只在 macOS 上注册）、macOS 桌面应用（`desktop/`）。
+M3 进行中，进度见 `docs/spec.md` 11.1–11.3。已实现：存储、Agent 运行时、本地 API、`mingle` CLI、控制台（`web/`）、全部八个平台的适配器和文件收发、iMessage 自聊适配器（只在 macOS 上注册）、macOS 桌面应用（`desktop/`）。
 
 代码地图：
 
@@ -33,7 +33,7 @@ M3 进行中，进度见 `docs/spec.md` 11.1–11.3。已实现：存储、Agent
 
 1. **没有服务端。** 不引入任何云端组件、账号、遥测或对外上报。本地 HTTP 服务只监听 `127.0.0.1`。
 2. **Agent 是一等对象。** 不向 IM 用户暴露 harness 会话，不加 `/new`、`/switch` 这类会话命令。
-3. **优先官方机器人通道；个人账号必须属于 Agent。** 平台有能用的机器人通道就用它。没有时可以在本机用个人账号接入，但账号必须是 Agent 专用的（专用 Apple ID、专用号码），不能让 Agent 以 owner 本人的身份说话；不使用云端桥接。身份和安全边界见 `docs/spec.md` 6.6。
+3. **优先官方机器人通道；个人账号只在本机。** 平台有能用的机器人通道就用它。没有时可以在本机用个人账号接入，不使用云端桥接。不为个人账号另造权限和审批，体验与机器人通道一致；只开放能在真机上验证的形态。见 `docs/spec.md` 6.6。
 4. **不自己实现 agent 循环。** 模型调用和工具执行交给 harness，通过 OAR 接入。
 5. **密钥不落库、不进日志、不出现在 API 响应里。** IM 凭据只存系统 Keychain。
 
