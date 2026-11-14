@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -610,6 +610,8 @@ async function start(flags: Flags): Promise<void> {
   writeFileSync(paths.runtime, JSON.stringify({ url: server.url, adminToken: mingle.adminToken, pid: process.pid }), {
     mode: 0o600,
   });
+  // `mode` only applies when the file is created; a leftover from a crash keeps its old permissions.
+  chmodSync(paths.runtime, 0o600);
   log(`Mingle ${VERSION} listening on ${server.url}, data in ${paths.home}`);
   if (hasConsole) {
     const url = consoleUrl(server.url, mingle.adminToken);

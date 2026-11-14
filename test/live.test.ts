@@ -279,6 +279,16 @@ describe("retrying messages", () => {
     await sleep(400);
     expect(turns).toHaveLength(before);
     expect((await admin("POST", "/v1/admin/agents/a_nope/messages/retry", {})).status).toBe(404);
+    // A malformed ids field is a client error, not a crash.
+    expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: 5 })).status).toBe(400);
+    expect((await admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: [5] })).status).toBe(400);
+    // A body that is not JSON at all is a client error too, on endpoints that parse one.
+    const bad = await fetch(`${current.url}/v1/admin/agents`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${current.mingle.adminToken}`, "content-type": "application/json" },
+      body: "{not json",
+    });
+    expect(bad.status).toBe(400);
   });
 });
 
