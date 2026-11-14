@@ -12,7 +12,7 @@
 
 **把你的 Agent 伙伴请进你已经在用的 IM。本地运行，没有服务器。**
 
-用户在自己的电脑上创建 Agent：有名字、头像、角色、记忆和自己的主目录，由本机已安装的 Claude Code、Codex 等 harness 驱动。Agent 以机器人身份出现在微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram 的群聊和私聊里，也可以用它自己的个人账号出现在 iMessage 里（6.6），可以被 @、接任务、主动回报。
+用户在自己的电脑上创建 Agent：有名字、头像、角色、记忆和自己的主目录，由本机已安装的 Claude Code、Codex 等 harness 驱动。Agent 以机器人身份出现在微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram 的群聊和私聊里，也可以在 Mac 上的 iMessage 里，在你给自己发消息的对话中和你聊（6.6），可以被 @、接任务、主动回报。
 
 Mingle 不预设使用场景。同一个 Agent 可以是私聊里的个人助理、朋友群里的成员、社区里的答疑者，也可以是工作群里的协作者。角色由用户写的一段描述决定。
 
@@ -44,7 +44,7 @@ Mingle 不预设使用场景。同一个 Agent 可以是私聊里的个人助理
 - 自建聊天界面或频道系统。
 - 任何云端组件、账号体系、多设备同步。
 - 自己实现 agent 循环或模型调用，这是 harness 的事。
-- 让 Agent 冒用 owner 本人的账号说话。接入原则见 6.6：优先官方机器人通道；没有合适的机器人通道时，允许在本机用**个人账号**接入，但这个账号必须属于 Agent 自己（专用 Apple ID、专用手机号），聊天对象看到的是 Agent，而不是 owner。
+- 未经用户选择就用个人账号替用户说话。接入原则见 6.6：优先官方机器人通道；没有合适的机器人通道时，允许在本机用个人账号接入，怎么用由用户决定，Mingle 不加额外的限制。
 - 云端桥接（Beeper 这类托管收件箱）。个人账号的连接也只在用户本机建立。
 - 跨群记忆隔离。已决定接受这个风险，见 8.3。
 
@@ -196,7 +196,7 @@ Raft 的做法更重。从它的源码和 agent 提示词看：忙碌时只给 a
 ### 4.7 权限
 
 - **谁能使唤 Agent**：所在群里的所有人和所有私聊对象。私聊白名单放在后续版本。
-- **owner**：接入一个机器人后，第一个给它发私聊的人成为它在该 IM 上的 owner（已实现）。个人账号渠道（6.6）谁都能私聊，先到先得会让陌生人成为 owner，所以 owner 在接入时由人在控制台填写。owner 可以用 `/stop` 中止当前工作，在冲突时拥有最终决定权，消息头里带 `owner` 标记。owner 按连接算：同一个 Agent 在同一平台上接了两个机器人（例如两个人各扫一次微信），就有两个 owner，Agent 靠 `user=` 区分（4.2）。`/stop` 是 IM 里唯一的命令。
+- **owner**：接入一个机器人后，第一个给它发私聊的人成为它在该 IM 上的 owner（已实现）。iMessage（6.6）用的是 owner 自己的账号，owner 就是这个账号本身。owner 可以用 `/stop` 中止当前工作，在冲突时拥有最终决定权，消息头里带 `owner` 标记。owner 按连接算：同一个 Agent 在同一平台上接了两个机器人（例如两个人各扫一次微信），就有两个 owner，Agent 靠 `user=` 区分（4.2）。`/stop` 是 IM 里唯一的命令。
 - **Agent 能做什么**：自主执行，不逐次审批，因为它需要无人值守地工作。这也是 OAR 的默认行为：它关闭了各 harness 的交互式审批和沙箱。也就是说 Agent 能做的事等同于用户本人在终端里能做的事，控制台在创建 Agent 时明确提示。它还能读到 owner 给它设的环境变量（4.9），因此也可能在回复里说出这些值。受限模式和把审批转发到 owner 私聊放在后续版本。
 
 ### 4.8 状态
@@ -487,29 +487,18 @@ stateDiagram-v2
 
 ### 6.6 个人账号接入
 
-**原则（2026-11-14，MING-50 / MING-52）。** Agent 不一定要是机器人身份，只要功能和体验做到同样的标准。接入时：
+**原则（2026-11-14，MING-50 / MING-52）。** Agent 不一定要是机器人身份，只要功能和体验做到同样的标准。
 
-1. **优先官方机器人通道。** 一个平台有能用的机器人通道（只走出站连接，6.1），就不用个人账号。个人微信继续走 iLink，QQ 继续走官方机器人。
+1. **优先官方机器人通道。** 一个平台有能用的机器人通道（只走出站连接，6.1），就用它。个人微信继续走 iLink，QQ 继续走官方机器人。
 2. **没有合适的机器人通道时，允许在本机用个人账号接入。** 连接只在用户电脑上建立，不经过任何 Mingle 服务器或托管桥接，"没有服务端"不变。
-3. **账号属于 Agent，不属于 owner。** 给 Agent 准备专用的 Apple ID 或手机号，把账号名字和头像设成 Agent 的。聊天对象看到的就是 Agent，不会误以为在和 owner 本人说话。Mingle 能识别时拒绝用 owner 自己的账号接入（iMessage 接入时，Mac 登录的就是 owner 填的号码或邮箱，返回 `owner_account`）。
-
-**身份与安全边界。**
-
-| 问题 | 规则 |
-|---|---|
-| 谁是 owner | 接入时在控制台填 owner 自己的号码或邮箱，不用"第一个私聊的人"（4.7）。接入成功后 Agent 主动私聊 owner 问候，顺便验证能主动发消息 |
-| 消息前要不要加标识 | 专用账号不加：联系人本身就是 Agent。如果以后支持"代 owner 本人说话"，每条消息前必须带 Agent 的名字（如 `[Alex]`） |
-| 危险发送要不要确认 | 专用账号与机器人通道一样自主执行（4.7）。"代 owner 本人说话"本版不做；要做必须先有审批转发：Agent 写草稿，连同它做过什么（读了哪个文件、查了什么）一起发到 owner 私聊，owner 批准、修改或拒绝后才发出（参考 Hachi 的 Hand off → 草稿 → Send） |
-| 群聊 | 个人账号能看到群里所有消息，但和机器人一样，只有 @ 或点名的消息交给 Agent（4.2） |
-| 封号和条款 | 非官方客户端的封号风险由用户承担，接入页写明；用专用号码，不拿主力号冒险。Mingle 不群发，不主动联系陌生人 |
-| 凭据 | 与 8.3 相同：会话密钥只放系统凭据存储。iMessage 没有密钥，登录态归系统「信息」App 管 |
+3. **简单、一致，选择交给用户。** 不为个人账号另造一套权限和审批；体验尽量和机器人通道一致。只做能在真机上验证的形态，测不到的不放出去。
 
 **各平台的本机个人账号方案。** 下表来自各项目的公开文档和社区经验，除 iMessage 外都没有在本机实测，稳定性和封号风险是定性判断。
 
 | 平台 | 本机接入方式 | 稳定性 | 封号风险 | 群聊 | 主动发消息 | 协议与许可 | 结论 |
 |---|---|---|---|---|---|---|---|
-| iMessage | 系统「信息」App：轮询读 `~/Library/Messages/chat.db`（需要完全磁盘访问权限），用 AppleScript 发送（需要允许控制「信息」）。Agent 专用 Apple ID | 高：系统自带客户端，不碰协议；macOS 大版本升级可能改 `chat.db` 结构 | 低：用的是 Apple 自己的客户端；给陌生人大量发消息会被标成垃圾信息 | 能，@ 提及或点名 | 能，已有聊天或任意号码 / 邮箱 | 只用公开的 AppleScript 字典和本机文件，不引入第三方代码 | **首个落地**（本节下文）。限制：一个 macOS 用户只能登录一个 iMessage 账号，专用 Apple ID 要占用一台 Mac 或一个 macOS 用户 |
-| WhatsApp | Baileys（多设备协议，WebSocket），扫码绑定为"关联设备"。Agent 专用号码 | 中：逆向协议，WhatsApp 改协议时会断，要跟进库的更新 | 中到高：违反 WhatsApp 条款；新号、高频、群发更容易被封 | 能 | 能 | Baileys 为 MIT；WhatsApp 条款禁止非官方客户端 | 第二个候选：Node 原生，扫码体验和现有 QR 流程一致 |
+| iMessage | 系统「信息」App：轮询读 `~/Library/Messages/chat.db`（需要完全磁盘访问权限），用 AppleScript 发送（需要允许控制「信息」） | 高：系统自带客户端，不碰协议；macOS 大版本升级可能改 `chat.db` 结构 | 低：用的是 Apple 自己的客户端，且只在自聊里发 | 不做（见下） | 能，在自聊里 | 只用公开的 AppleScript 字典和本机文件，不引入第三方代码 | **首个落地**，自聊形态 |
+| WhatsApp | Baileys（多设备协议，WebSocket），扫码绑定为"关联设备" | 中：逆向协议，WhatsApp 改协议时会断，要跟进库的更新 | 中到高：违反 WhatsApp 条款；新号、高频、群发更容易被封 | 能 | 能 | Baileys 为 MIT；WhatsApp 条款禁止非官方客户端 | 第二个候选：Node 原生，扫码体验和现有 QR 流程一致 |
 | Signal | signal-cli 以独立进程运行（JSON-RPC），注册专用号码或关联为副设备 | 中高：基于官方 libsignal，服务端变动时要升级 | 低到中：条款不鼓励自动化，但少见封号 | 能 | 能 | signal-cli 为 GPL-3.0，作为独立进程调用、不链接；需要 Java 运行时或原生构建 | 可做，难点在分发 signal-cli |
 | 个人微信 | 已有腾讯 iLink 官方机器人（6.1）。个人号方案：PC 微信 hook、iPad 协议（wechaty 各 puppet） | 低：个人号方案经常失效 | 高：腾讯严查 | iLink 以私聊为主（待实测） | iLink 能回复，主动发待实测 | 个人号方案多为闭源或付费 token | 保持 iLink，不做个人号 |
 | QQ 个人号 | 已有 QQ 官方机器人（6.1）。个人号方案：NapCat、LLOneBot（注入 QQNT 客户端，OneBot 协议） | 中 | 高 | 能 | 能 | 注入客户端；部分项目限制商用和再分发 | 保持官方机器人 |
@@ -520,15 +509,18 @@ stateDiagram-v2
 
 建议顺序：iMessage（已做）→ WhatsApp（Baileys）→ Signal。Messenger、Instagram、X、LinkedIn 等 Matrix 渠道上线后，靠用户自己的桥接覆盖，Mingle 不分发 AGPL 桥接。
 
-**iMessage 的实现**（`src/channels/imessage/`，只在 macOS 上注册）：
+**iMessage：自聊形态**（`src/channels/imessage/`，只在 macOS 上注册）
 
-- **接入**：控制台填 owner 的手机号（带国家码）或 Apple ID 邮箱。Mingle 先读一次 `chat.db`，没有完全磁盘访问权限时返回 `permission_missing`；再用 AppleScript 读「信息」里的 iMessage 账号，这一步触发 macOS 的"允许控制「信息」"提示，被拒也是 `permission_missing`；没登录 iMessage 时返回 `invalid_credentials`。账号句柄优先取 `chat.db` 里本机发出的消息的 `account` 字段。凭据里只有 owner、账号句柄、Agent 名字和接入时间，没有密钥。
-- **收消息**：只读打开 `chat.db`，每秒查一次新行，跳过自己发的、点回应（tapback，`associated_message_type ≠ 0`）和群事件（`item_type ≠ 0`）。新版 macOS 常把正文只放在 `attributedBody`（typedstream 格式的 NSAttributedString），从中取出文本。`date` 是 2001 年起的纳秒数，超出 JS 数字的精确范围，在 SQL 里先换成毫秒。连上时补投最近 10 分钟（不早于接入时间）的消息，核心按消息 id 去重，所以 Mingle 没运行时收到的消息也会回复。
-- **群聊**：`chat.style = 43` 是群。iMessage 的 @ 提及显示联系人名字，`attributedBody` 里带 `__kIMMentionConfirmedMention` 和被提及的句柄；此外以 `@名字` 或"名字，……"开头的消息也算点名。
-- **发消息**：AppleScript `send … to chat id <chat.guid>`，文件用 `POSIX file`；主动私聊用 `participant`。发出后在 `chat.db` 里找到这条消息的 guid 作为 id，找不到时记一个本地 id。能力降级：不能引用回复（`quote_dropped`）、不能点回应、没有"正在输入"、Markdown 转纯文本。
-- **断线重连**：每次轮询检查数据库文件是否还是原来那个；读失败或文件被替换时上报 `reconnecting` 并退避重开，重开后从上次读到的行继续，不丢中间的消息。权限被收回时上报 `permission_missing`，停下等用户（6.4）。
+在 Mac 上接 iMessage 有两种形态：A，Mac 的「信息」登录 owner 自己的 Apple ID，owner 在"给自己发消息"的对话里和 Agent 聊；B，给 Agent 一个专用 Apple ID，它是一个独立联系人，和机器人一样能被别人私聊、拉进群。同类产品里 Claude Code 官方 iMessage 插件默认就是 A（只认自聊），OpenClaw 两种都支持并建议 B 用单独的 macOS 用户（调研见 MING-52）。
 
-待真机验证的点列在 12.2。
+**只做 A。** A 能在一台登录了自己 Apple ID 的 Mac 上完整实测，行为面窄，出问题只影响用户自己。B 需要第二个 Apple ID 加一个单独的 macOS 用户或一台 Mac，没有测试环境，按原则 3 不开放；A 和 B 共用收发和重连，以后有环境时只需补"别人私聊"和"群里 @"两块。
+
+- **接入**：不用填任何东西。点连接时 Mingle 读一次 `chat.db`（没有完全磁盘访问权限 → `permission_missing`），再用 AppleScript 读「信息」里的 iMessage 账号（触发 macOS 的"允许控制「信息」"提示，被拒也是 `permission_missing`；没登录 → `not_signed_in`）。这个账号就是 owner。账号的所有地址（Apple ID 邮箱和手机号）都算自聊：iPhone 给自己发消息可能落在手机号那个对话里。接入成功后 Agent 在自聊里发一条问候。
+- **只读自聊**：只看 `chat.style = 45` 且对方是本账号某个地址的对话，跳过点回应（`associated_message_type ≠ 0`）和系统行（`item_type ≠ 0`）。别人的私聊和群消息不读、不存、不回。正文在新版 macOS 上只放在 `attributedBody`（typedstream 格式的 NSAttributedString），从中取出文本。`date` 是 2001 年起的纳秒数，超出 JS 数字的精确范围，在 SQL 里先换成毫秒。
+- **不读回自己的话**：自聊里 owner 和 Agent 的消息都是"我发的"。Agent 发出的每条消息末尾带一个看不见的标记（U+200B U+2060），读到带标记的一律跳过；另外记住最近 10 分钟发出的文本，标记万一丢了也能认出来，每条只抵消一次，owner 之后说同样的话仍然算数。Agent 发的文件按文件名记住，同样跳过。
+- **去重**：同一条消息若同时以"发出"和"收到"出现在 60 秒内，只算一次；每份副本只配对一次，owner 连发两句一样的话仍是两条。
+- **发消息**：AppleScript `send … to chat id <chat.guid>`；主动私聊 owner 用 `participant`。文件要先复制到 `~/Library/Messages/Attachments/mingle/` 下再发：实测「信息」只从自己的附件目录发文件，放在别处时会发出一个空气泡且不报错。发出后在 `chat.db` 里找到这条消息的 guid 作为 id。能力降级：不能引用回复（`quote_dropped`）、不能点回应、没有"正在输入"、Markdown 转纯文本。
+- **补投和断线重连**：连上时补投最近 10 分钟（不早于接入时间）的自聊消息，核心按消息 id 去重，所以 Mingle 没运行时发的消息也会回复。每次轮询检查数据库文件是否还是原来那个；读失败或文件被替换时上报 `reconnecting` 并退避重开，从上次读到的行继续。权限被收回时上报 `permission_missing`，停下等用户（6.4）。
 
 ## 7. 整体架构
 
@@ -674,7 +666,7 @@ macOS、Windows、Linux 都发桌面应用，每个系统都有 x64 和 ARM64 �
 
 | 能力 | macOS | Windows | Linux |
 |---|---|---|---|
-| IM 凭据 | 钥匙串（`/usr/bin/security`） | DPAPI 按当前用户加密后存文件（Credential Manager 底层用的也是它），通过 PowerShell 调用，不需要原生模块 | Secret Service（`secret-tool`：GNOME Keyring、KWallet）；没有时（如无界面的服务器）退回 0600 文件 |
+| IM 凭据 | 钥匙串（`/usr/bin/security`）。写入走 `security -i` 的 stdin，凭据不进 argv；值按 base64 存（`-w` 会把非 ASCII 打印成十六进制），超过一行命令长度的拆成多条；写完读回比对。不能用 `add-generic-password -w` 的密码提示，它只保留前 128 个字符 | DPAPI 按当前用户加密后存文件（Credential Manager 底层用的也是它），通过 PowerShell 调用，不需要原生模块 | Secret Service（`secret-tool`：GNOME Keyring、KWallet）；没有时（如无界面的服务器）退回 0600 文件 |
 | Agent 调用的 `mingle` 命令 | sh 脚本 | `mingle.cmd` | sh 脚本 |
 | 桌面应用停止 Mingle | 关闭它的标准输入（三个系统相同；Windows 没有 SIGTERM，而且应用崩溃时 Mingle 也会跟着退出） | 同左 | 同左 |
 | 应用的环境 | 从登录 shell 读取完整环境，找得到 Homebrew、npm 装的 harness 和 shell 里配的 API Key | 系统给应用的就是用户环境 | 从登录 shell 读取完整环境 |
@@ -780,7 +772,7 @@ docs/             文档
 | 全部 OAR harness | 完成（2026-11-13）：OAR 的 12 个 harness 都列出，已装的可直接选。设置里有完整列表：没装的可以一键安装（运行官方安装命令，先给人看要跑什么），没登录的可以用 harness 自己的登录流程登录（链接或设备码，需要时在控制台里输入回填）。Cursor 的 SDK 是 Cursor 自己的包，Mingle 不随包分发，按需用 npm 装到数据目录的 `vendor/`。不接受追加系统提示的 harness（Kimi、DeepSeek Harness、CodeBuddy、Cursor）改为在新会话第一条消息里带上操作指南；不接受环境变量的（Cursor）在指南里写明调用 CLI 的完整命令。实测：Claude Code、Codex、OpenCode、Kimi 端到端回复；DeepSeek Harness 和 Cursor 在控制台里装好，分别需要 DeepSeek API key 和 Cursor 登录才能回复；Grok 这台机器上 OAR 的 ACP 初始化超时（直接跑 `grok -p` 正常），待查 |
 | 每个 Agent 的环境变量（MING-39） | 完成（2026-11-14）：见 4.9。值只存凭据存储，API 只写不读；打开会话时并进 harness 的 `env`，改动从下一条消息起生效，Agent 工作中不打断；Cursor 不传、不进提示词。测试覆盖凭据存储替身、保留名、`MINGLE_*` 不被覆盖、工作中改动、Cursor 路径和日志；用 OAR 的脚本化运行时端到端验证了 Agent 在 shell 里 `echo $FOO` 拿到值 |
 | Agent 暂停与恢复（MING-46） | 完成（2026-11-14）：见 4.11。功能清单从产品角度梳理了创建、叫停、暂停、恢复、删除；新增暂停/恢复的 API、CLI、控制台和菜单栏状态。测试覆盖暂停时中止当前轮、旧 token 失效、暂停期间消息忽略且每个聊天只说明一次、重试被拒、提醒顺延到恢复、重启后保持暂停、删除已暂停的 Agent；控制台用 `pnpm ui:review` 截图并点击走过暂停和恢复 |
-| 个人账号接入（MING-52） | 原则和身份边界见 1.4、4.7、6.6；各平台评估见 6.6。iMessage 适配器完成：接入、收发、群聊点名、主动私聊、断线重连，测试用临时 `chat.db` 和替身 AppleScript 覆盖。真机冒烟待完成（12.2） |
+| 个人账号接入（MING-52） | 完成（2026-11-14）：原则见 1.4、6.6，各平台评估见 6.6。iMessage 自聊形态在真机上跑通（12.1）；专用 Apple ID 形态没有测试环境，不开放 |
 | 多微信号与通讯录（MING-55） | 完成（2026-11-14）：见 4.2、6.1。`contacts` 表和迁移 006，消息头带 `user=`，`mingle contact list / name`，控制台连接行给 owner 起名、动态按名字显示；请求微信二维码时带上本机已有的 token。测试覆盖迁移补建、名字优先级、两个 owner 在同一平台时不显示"你"、Agent 用 CLI 起名后消息头和动态更新、`local_token_list` 和 `already_connected`。手机端提示待实测（12.2） |
 | 更多 harness、审批转发 | 未开始 |
 
@@ -833,6 +825,22 @@ docs/             文档
 
 本轮真实消息核对后，`node scripts/im-smoke-check.mjs --minutes 60` 输出 `Smoke: all inbound messages answered`（退出码 0）。它只作遗漏检查，不替代客户端证据，也不覆盖 `/stop` 后迟到回复等语义问题。截图已裁掉其他聊天、遮住 owner 名称，随 MING-38/MING-43 交付；凭据、授权码和二维码未写入本记录。测试机器人和专用群保留，测试进程已关闭。
 
+**2026-11-14，MING-52 iMessage 自聊真机测试。** 源码启动 Mingle 0.1.7，macOS 14.5，Node 24.15.0，Claude Code 2.1.322；「信息」登录 owner 自己的 Apple ID，Mingle 有完全磁盘访问权限和控制「信息」的授权。owner 的消息一部分从这台 Mac 用 AppleScript 发到自聊（与 iPhone 同步过来的一样是"我发的"），一部分由 owner 在 iPhone 上发。
+
+| 用例 | 结果 |
+|---|---|
+| 接入 | 通过。不填任何东西，连接为 `connected`，owner 是本账号；Agent 在自聊里发出问候，没有被读回 |
+| 私聊 | 通过。`Reply with exactly: PONG` → `PONG`；连发两个问题分别回复 `2` 和 `Saturday` |
+| iPhone 发的消息 | 通过。owner 在 iPhone 上发的一条落在手机号的自聊里（"发出"），另一条落在邮箱的自聊里（"收到"），各回复一次，没有重复 |
+| 不读回自己 | 通过。全程没有一条 Agent 的消息被当成 owner 的再次交给 Agent，没有循环 |
+| 收文件 | 通过。owner 发的 txt 文件被下载，Agent 读出内容 `MINGLE-FILE-OK` |
+| 发文件 | 第一次失败：从 Agent 主目录直接发，「信息」发出空气泡且不报错。改为先复制到 `~/Library/Messages/Attachments/mingle/` 后通过，收到 `smoke-result.txt`（传输完成），且没有被读回 |
+| 主动发消息 | 通过。让 Agent 设 1 分钟后的提醒，到点在自聊里收到 `REMINDER-PONG` |
+| 断线补回复 | 通过。停掉 Mingle 后发 `OFFLINE-PONG` 用例，重新启动后约 3 秒交给 harness 并回复 |
+| 收尾检查 | `node scripts/im-smoke-check.mjs --minutes 60` 输出 `all inbound messages answered`；日志无错误 |
+
+未在真机上做：收回完全磁盘访问权限（会影响这台机器上的其他工作，由测试覆盖）、退出「信息」App 后的行为。
+
 ### 12.2 仍待验证
 
 | 项 | 要确认的事 | 需要 |
@@ -850,7 +858,7 @@ docs/             文档
 | Slack 端到端 | 预填建应用链接能否打开（该链接格式不在 Slack 官方文档里）、Socket Mode 收发、线程回复、`markdown` 块渲染、文件上传 | 已登录且可安装应用的工作区、Bot/App-level token；2026-11-14 官方应用页要求登录 |
 | Telegram 端到端 | 长轮询收发、引用回复、表情回执 | 可用的 Telegram 登录和测试 bot token；2026-11-14 网页版停在登录页 |
 | Discord 端到端 | Gateway 收发、resume、引用回复、表情、实时编辑、文件上传、邀请链接（假定应用 ID 等于机器人用户 ID，新建应用都是这样） | 已登录的 Developer Portal、bot token 和测试服务器管理权限；2026-11-14 官方后台要求登录 |
-| iMessage 端到端 | 用 Agent 专用 Apple ID 跑通私聊、群聊 @、主动私聊、断线重连（`docs/im-smoke.md`）；实测：真实 `chat.db` 的列和 `attributedBody` 解析、AppleScript `chat id` 的格式（`iMessage;-;…` 与 `any;-;…`）、发文件是否受「信息」沙盒限制、`participant` 主动私聊、@ 提及在 `attributedBody` 里的样子 | 一台登录了专用 Apple ID 的 Mac、完全磁盘访问权限和自动化授权、另一个 Apple ID 的设备发消息；2026-11-14 开发机上 Mingle 没有完全磁盘访问权限，AppleScript 等待授权弹窗，未能实测 |
+| iMessage 专用 Apple ID 形态 | 别人私聊、群聊 @ | 第二个 Apple ID 和一个单独的 macOS 用户或一台 Mac；开放前必须真机跑通 |
 | Windows、Linux 实机 | 安装、托盘（左键开窗、右键菜单、首次关窗提示）、开机自启、保持唤醒、自动更新；凭据走 DPAPI、Secret Service；Codex 在 PowerShell 里按指南调用 `mingle` | 一台 Windows 和一台 Linux 桌面机 |
 | 自动更新未覆盖路径 | 更早正式版（含 0.1.0）的升级、原生更新器实际选择增量包、界面“重启以更新”按钮；0.1.6 → 0.1.7 的 macOS 下载、验签、退出替换和数据保留已通过；0.1.7 → 0.1.8 的签名增量包重建与旧数据启动已通过，但该次原生自动更新流程未测（12.1） | 保留旧版的隔离安装和可操作原生窗口的测试环境 |
 | 离线补推 | 其余七个平台断开期间的消息是否补推、补推多久；飞书更长断连和其他条件 | 各平台已接入的机器人；飞书本次约 5 分钟后恢复的观察见 12.1，不外推为保证 |

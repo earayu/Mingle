@@ -93,8 +93,8 @@ export type OnboardingFailure =
   | "already_connected"
   /** The app or system denied something only the person can grant (macOS privacy settings, for example). */
   | "permission_missing"
-  /** A personal-account channel signed in to the owner's own account; the agent needs its own (docs/spec.md 1.4). */
-  | "owner_account"
+  /** The app the channel drives is not signed in (Messages without iMessage, for example). */
+  | "not_signed_in"
   | "unknown";
 
 /** Opaque to the core. Stored in the system keychain, never in SQLite or logs. */
@@ -223,6 +223,8 @@ export interface Channel {
 /** A live connection for one bot. */
 export interface ChannelConnection {
   readonly bot: BotIdentity;
+  /** Talks only in the owner's own chat (iMessage self-chat): no groups, nobody else. */
+  readonly ownerOnly?: boolean;
   capabilities(): Capabilities;
 
   send(message: OutboundMessage): Promise<SendResult>;

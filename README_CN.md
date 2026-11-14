@@ -4,7 +4,7 @@
 
 **把你的 Agent 伙伴请进你已经在用的 IM。本地运行，没有服务器。**
 
-在自己的电脑上创建 Agent：有名字、角色、记忆和自己的主目录，由你已经在用的编码智能体驱动，比如 Claude Code、Codex、Cursor、OpenCode、Kimi Code、Qwen Code、DeepSeek Harness，以及 [OAR](https://github.com/botiverse/oar) 支持的其他 harness。Agent 以机器人身份出现在微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram 的群聊和私聊里，也可以用它自己的 Apple ID 出现在 Mac 的 iMessage 里，可以被 @、接任务、主动回报。
+在自己的电脑上创建 Agent：有名字、角色、记忆和自己的主目录，由你已经在用的编码智能体驱动，比如 Claude Code、Codex、Cursor、OpenCode、Kimi Code、Qwen Code、DeepSeek Harness，以及 [OAR](https://github.com/botiverse/oar) 支持的其他 harness。Agent 以机器人身份出现在微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram 的群聊和私聊里，也可以在 Mac 的 iMessage 里通过给自己发消息和它聊，可以被 @、接任务、主动回报。
 
 - **一个 Agent，所有聊天软件，同一份记忆。** 像一个真人一样，同一个 Agent 同时在你的飞书工作群、微信家庭群和 Discord 服务器里，而且都记得。在微信里问它"今天上午飞书群里定了什么"，或者让它把 Slack 里的一条消息转到 Telegram。
 - **用自己习惯的 IM。** 不新建聊天平台，Agent 出现在你已有的群和私聊里。

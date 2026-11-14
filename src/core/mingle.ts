@@ -632,9 +632,13 @@ export class Mingle {
     const agent = connection && this.store.agent(connection.agentId);
     if (!live?.messageUser || !agent || connection.state !== "connected") return;
     const chinese = ["wechat", "wecom", "feishu", "dingtalk", "qq"].includes(connection.platform);
-    const text = chinese
-      ? `你好，我是 ${agent.name}。直接在这里给我发消息，或者把我拉进群里 @ 我。`
-      : `Hi, I'm ${agent.name}. Message me here, or add me to a group and @ me.`;
+    const text = live.ownerOnly
+      ? chinese
+        ? `你好，我是 ${agent.name}。直接在这里给我发消息。`
+        : `Hi, I'm ${agent.name}. Message me here.`
+      : chinese
+        ? `你好，我是 ${agent.name}。直接在这里给我发消息，或者把我拉进群里 @ 我。`
+        : `Hi, I'm ${agent.name}. Message me here, or add me to a group and @ me.`;
     await live.messageUser(ownerId, text).catch((error) => this.log(`greeting failed: ${(error as Error).message}`));
   }
 

@@ -9,35 +9,87 @@ export interface SecretStore {
 }
 
 const SERVICE = "app.mingle";
+const SECURITY = "/usr/bin/security";
 
-function security(args: string[], stdin?: string): Promise<{ code: number; stdout: string }> {
-  return new Promise((resolve) => {
-    const child = execFile("/usr/bin/security", args, (error, stdout) => {
-      resolve({ code: error ? Number((error as { code?: number }).code ?? 1) : 0, stdout });
-    });
-    if (stdin !== undefined) child.stdin?.end(stdin);
-  });
-}
+/** Base64 characters per Keychain item: `security -i` reads at most 4095 characters per command line. */
+const CHUNK = 3000;
 
-/** macOS Keychain through /usr/bin/security. The secret goes in on stdin, so it never appears in argv. */
-export function keychainSecrets(): SecretStore {
-  return {
+/**
+ * macOS Keychain through /usr/bin/security.
+ *
+ * Writes go through `security -i`, which reads its commands from stdin, so a secret never
+ * appears in argv. The plain `add-generic-password -w` prompt is not usable: it keeps only the
+ * first 128 characters, which silently cut every bot's credentials until Mingle restarted and
+ * read them back. `find-generic-password -w` prints anything that is not printable ASCII as
+ * hex, so values are stored base64-encoded (`b64:`), and values longer than one command line
+ * are split over `<ref>#1..n` with `parts:<n>` under `<ref>`. Every write is read back and
+ * compared, so a value that would not survive a restart fails now instead.
+ */
+export function keychainSecrets(run = runWith, service = SERVICE): SecretStore {
+  const quote = (ref: string) => {
+    if (/["\\\n\r]/.test(ref)) throw new Error("invalid secret reference");
+    return `"${ref}"`;
+  };
+  const read = async (ref: string) => {
+    const { code, stdout } = await run(SECURITY, ["find-generic-password", "-s", service, "-a", ref, "-w"], "");
+    return code === 0 ? stdout.replace(/\n$/, "") : undefined;
+  };
+  const parts = (stored: string | undefined) => {
+    const match = stored?.match(/^parts:(\d+)$/);
+    return match ? Number(match[1]) : 0;
+  };
+  const deleteCommands = (ref: string, count: number) =>
+    [...Array.from({ length: count }, (_, i) => `${ref}#${i + 1}`), ref].map(
+      (account) => `delete-generic-password -s ${quote(service)} -a ${quote(account)}`,
+    );
+  const store: SecretStore = {
     async get(ref) {
-      const { code, stdout } = await security(["find-generic-password", "-s", SERVICE, "-a", ref, "-w"]);
-      return code === 0 ? stdout.replace(/\n$/, "") : undefined;
+      const stored = await read(ref);
+      if (stored === undefined) return undefined;
+      const count = parts(stored);
+      if (count > 0) {
+        let joined = "";
+        for (let i = 1; i <= count; i++) {
+          const part = await read(`${ref}#${i}`);
+          if (part === undefined) return undefined;
+          joined += part;
+        }
+        return Buffer.from(joined, "base64").toString("utf8");
+      }
+      if (stored.startsWith("b64:")) return Buffer.from(stored.slice(4), "base64").toString("utf8");
+      // Written before b64: values were plain JSON, printed as hex when not plain ASCII.
+      if (/^(?:[0-9a-f]{2})+$/i.test(stored)) return Buffer.from(stored, "hex").toString("utf8");
+      return stored;
     },
     async set(ref, value) {
-      // With -w last, security prompts for the password twice on stdin.
-      const { code } = await security(
-        ["add-generic-password", "-s", SERVICE, "-a", ref, "-U", "-w"],
-        `${value}\n${value}\n`,
-      );
-      if (code !== 0) throw new Error("could not save the credentials to the Keychain");
+      const previous = parts(await read(ref));
+      const encoded = Buffer.from(value, "utf8").toString("base64");
+      const add = (account: string, data: string) =>
+        `add-generic-password -s ${quote(service)} -a ${quote(account)} -U -w "${data}"`;
+      const commands: string[] = [];
+      let count = 0;
+      if (encoded.length <= CHUNK) commands.push(add(ref, `b64:${encoded}`));
+      else {
+        for (let at = 0; at < encoded.length; at += CHUNK) {
+          count++;
+          commands.push(add(`${ref}#${count}`, encoded.slice(at, at + CHUNK)));
+        }
+        commands.push(add(ref, `parts:${count}`));
+      }
+      // Parts left over from a longer earlier value.
+      for (let i = count + 1; i <= previous; i++) {
+        commands.push(`delete-generic-password -s ${quote(service)} -a ${quote(`${ref}#${i}`)}`);
+      }
+      await run(SECURITY, ["-i"], `${commands.join("\n")}\n`);
+      // Deleting stale parts that are already gone fails harmlessly, so the read-back is the check.
+      if ((await store.get(ref)) !== value) throw new Error("could not save the credentials to the Keychain");
     },
     async delete(ref) {
-      await security(["delete-generic-password", "-s", SERVICE, "-a", ref]);
+      const count = parts(await read(ref));
+      await run(SECURITY, ["-i"], `${deleteCommands(ref, count).join("\n")}\n`);
     },
   };
+  return store;
 }
 
 /** Runs a program with `stdin` and collects stdout. Never rejects. */
