@@ -5,8 +5,11 @@ Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
 ## Unreleased
 
+## 0.1.7
+
 - Pause an agent under Settings → Running (or `mingle agent pause`). A paused agent stops what it is doing and takes no messages until you resume it; people who write to it are told once per chat that it is paused, and reminders wait until it resumes. Its memory, settings and chat apps are kept, and it stays paused after a restart. "Stop" still only ends the current piece of work.
 - Creating another agent now opens its "connect a chat app" step, instead of jumping to your first agent.
+- Scanning an already connected bot again refreshes its credentials and reconnects it, so QQ's rotated secret no longer leaves the original connection offline. Scanning for the same agent succeeds; a bot already assigned to another agent stays with that agent.
 
 ## 0.1.6
 
