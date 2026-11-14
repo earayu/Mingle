@@ -655,7 +655,7 @@ macOS、Windows、Linux 都发桌面应用，每个系统都有 x64 和 ARM64 �
 
 | 能力 | macOS | Windows | Linux |
 |---|---|---|---|
-| IM 凭据 | 钥匙串（`/usr/bin/security`） | DPAPI 按当前用户加密后存文件（Credential Manager 底层用的也是它），通过 PowerShell 调用，不需要原生模块 | Secret Service（`secret-tool`：GNOME Keyring、KWallet）；没有时（如无界面的服务器）退回 0600 文件 |
+| IM 凭据 | 钥匙串（`/usr/bin/security`）。写入走 `security -i` 的 stdin，凭据不进 argv；值按 base64 存（`-w` 会把非 ASCII 打印成十六进制），超过一行命令长度的拆成多条；写完读回比对。不能用 `add-generic-password -w` 的密码提示，它只保留前 128 个字符 | DPAPI 按当前用户加密后存文件（Credential Manager 底层用的也是它），通过 PowerShell 调用，不需要原生模块 | Secret Service（`secret-tool`：GNOME Keyring、KWallet）；没有时（如无界面的服务器）退回 0600 文件 |
 | Agent 调用的 `mingle` 命令 | sh 脚本 | `mingle.cmd` | sh 脚本 |
 | 桌面应用停止 Mingle | 关闭它的标准输入（三个系统相同；Windows 没有 SIGTERM，而且应用崩溃时 Mingle 也会跟着退出） | 同左 | 同左 |
 | 应用的环境 | 从登录 shell 读取完整环境，找得到 Homebrew、npm 装的 harness 和 shell 里配的 API Key | 系统给应用的就是用户环境 | 从登录 shell 读取完整环境 |
