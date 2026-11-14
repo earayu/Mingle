@@ -502,6 +502,10 @@ export class Mingle {
 
   // ------------------------------------------------------------- connections
 
+  hasChannel(platform: Platform): boolean {
+    return Boolean(this.options.channels[platform]);
+  }
+
   channel(platform: Platform): Channel {
     const channel = this.options.channels[platform];
     if (!channel) throw new MingleError("platform_unsupported", `${platform} is not supported yet`);

@@ -4,7 +4,7 @@ import type { Platform } from "./api.ts";
  * Each chat app's mark on its brand color, so people find theirs at a glance.
  * Glyphs: Simple Icons (CC0, https://simpleicons.org) for WeChat, QQ, Slack, Discord and Telegram;
  * IconPark by ByteDance (Apache-2.0) for Feishu; Ant Design Icons (MIT) for DingTalk;
- * TDesign Icons by Tencent (MIT) for WeCom.
+ * TDesign Icons by Tencent (MIT) for WeCom. iMessage is a plain speech bubble drawn for Mingle (no Apple mark).
  */
 const marks: Record<Platform, { color: string; path?: string; svg?: { viewBox: string; body: string } }> = {
   wechat: {
@@ -47,6 +47,10 @@ const marks: Record<Platform, { color: string; path?: string; svg?: { viewBox: s
   telegram: {
     color: "#26A5E4",
     path: "M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z",
+  },
+  imessage: {
+    color: "#34C759",
+    path: "M12 3C6.48 3 2 6.92 2 11.75c0 2.7 1.4 5.12 3.6 6.72-.12 1.14-.6 2.33-1.6 3.28 2.07-.06 3.83-.86 5.06-1.85.95.22 1.93.35 2.94.35 5.52 0 10-3.92 10-8.75S17.52 3 12 3z",
   },
 };
 

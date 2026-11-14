@@ -46,7 +46,16 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export type AgentStatus = "offline" | "idle" | "thinking" | "working" | "error" | "paused";
-export type Platform = "wechat" | "wecom" | "feishu" | "dingtalk" | "qq" | "slack" | "discord" | "telegram";
+export type Platform =
+  | "wechat"
+  | "wecom"
+  | "feishu"
+  | "dingtalk"
+  | "qq"
+  | "slack"
+  | "discord"
+  | "telegram"
+  | "imessage";
 
 export interface ConnectionView {
   id: string;
