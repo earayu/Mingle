@@ -15,7 +15,7 @@ import type {
 } from "../channels/channel.ts";
 import type { Harness, HarnessInfo, HarnessStatus } from "../harness/harness.ts";
 import type { SecretStore } from "../platform/secrets.ts";
-import { type Agent, type Connection, type Message, Store } from "../store/store.ts";
+import { type Agent, type Connection, type Message, type Reminder, Store } from "../store/store.ts";
 import { VERSION } from "../version.ts";
 import { Brains } from "./brains.ts";
 import { checkEnvName, checkEnvValue, decodeEnvValue, encodeEnvValue, envRef } from "./env.ts";
@@ -139,19 +139,36 @@ export class Mingle {
     // Warm the harness list and the catalog so the console's first look at either does not
     // wait on the probe. One after the other: each starts every harness's executable.
     void this.probeHarnesses()
-      .catch(() => {})
+      .catch((error) => this.log(`harness probe failed: ${(error as Error).message}`))
       .then(() => this.probeCatalog())
-      .catch(() => {});
+      .catch((error) => this.log(`harness catalog probe failed: ${(error as Error).message}`));
     for (const agent of this.store.agents()) {
       // A paused agent stays paused across restarts: no session, no token, until the owner resumes it.
       if (agent.status === "paused") this.paused.add(agent.id);
       else this.addRuntime(agent).start();
     }
-    await Promise.all(this.store.connections().map((c) => this.reconnect(c.id)));
+    await Promise.all(
+      this.store
+        .connections()
+        .map((c) =>
+          this.reconnect(c.id).catch((error) =>
+            this.log(`connection ${c.id} could not be restored at start: ${(error as Error).message}`),
+          ),
+        ),
+    );
     const tick = this.options.reminderTickMs ?? 10_000;
     this.reminderTimer = setInterval(() => {
-      this.fireReminders();
-      this.resumeWaiting();
+      // One bad reminder or a store hiccup must not kill the tick, or the ones after it.
+      try {
+        this.fireReminders();
+      } catch (error) {
+        this.log(`reminder tick failed: ${(error as Error).message}`);
+      }
+      try {
+        this.resumeWaiting();
+      } catch (error) {
+        this.log(`waiting-messages tick failed: ${(error as Error).message}`);
+      }
     }, tick);
     // Timers do not run while the computer sleeps: a tick that comes far later than due means it
     // slept, and its connections are likely dead without knowing it yet (docs/spec.md 7.1).
@@ -161,7 +178,10 @@ export class Mingle {
       const now = Date.now();
       const slept = now - last - every;
       last = now;
-      if (slept > 60_000) void this.resume(`the computer slept for ${Math.round(slept / 60_000)} min`);
+      if (slept > 60_000)
+        void this.resume(`the computer slept for ${Math.round(slept / 60_000)} min`).catch((error) =>
+          this.log(`resume after sleep failed: ${(error as Error).message}`),
+        );
     }, every);
   }
 
@@ -709,6 +729,7 @@ export class Mingle {
         }
       } catch (error) {
         set({ kind: "failed", code: error instanceof MingleError ? error.code : "unknown" });
+        this.log(`onboarding ${platform} for ${agent.name} failed: ${(error as Error).message}`);
       }
     })();
     // Forget finished sessions after a while.
@@ -950,6 +971,7 @@ export class Mingle {
     try {
       return JSON.parse(raw) as Credentials;
     } catch {
+      this.log(`connection ${connection.id}: stored credentials could not be read`);
       return undefined;
     }
   }
@@ -1152,20 +1174,34 @@ export class Mingle {
 
   fireReminders(now = Date.now()): void {
     for (const reminder of this.store.dueReminders(now)) {
-      let next: number | null = null;
-      if (reminder.rule !== "once") {
-        try {
-          next = nextFire(reminder.rule, now);
-        } catch {
-          next = null;
-        }
+      try {
+        this.fireReminder(reminder, now);
+      } catch (error) {
+        this.log(`reminder ${reminder.id} failed to fire: ${(error as Error).message}`);
       }
-      this.store.markReminderFired(reminder.id, now, next);
-      const source = reminder.sourceMessageId ? this.store.message(reminder.sourceMessageId) : undefined;
-      const agentName = this.store.agent(reminder.agentId)?.name;
-      const quoted = source && renderMessage(this.store, source, agentName ? { agentName } : {});
-      this.runtimes.get(reminder.agentId)?.enqueueText(formatReminder(reminder, now, quoted || undefined));
     }
+  }
+
+  private fireReminder(reminder: Reminder, now: number): void {
+    let next: number | null = null;
+    if (reminder.rule !== "once") {
+      try {
+        next = nextFire(reminder.rule, now);
+      } catch {
+        next = null;
+      }
+    }
+    this.store.markReminderFired(reminder.id, now, next);
+    const source = reminder.sourceMessageId ? this.store.message(reminder.sourceMessageId) : undefined;
+    const agentName = this.store.agent(reminder.agentId)?.name;
+    const quoted = source && renderMessage(this.store, source, agentName ? { agentName } : {});
+    const runtime = this.runtimes.get(reminder.agentId);
+    if (!runtime) {
+      // A paused or deleted agent has no runtime: the reminder fired but goes nowhere.
+      this.log(`reminder ${reminder.id} fired but agent ${reminder.agentId} has no runtime`);
+      return;
+    }
+    runtime.enqueueText(formatReminder(reminder, now, quoted || undefined));
   }
 
   // --------------------------------------------------------------------- cli

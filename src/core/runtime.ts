@@ -380,6 +380,12 @@ export class AgentRuntime {
       const held = this.deps.store.moveInbound(group, "hold", undefined, at);
       if (held.length > 0) this.deps.onSettled?.(held, "waiting", { ...why, retryAt: at });
     }
+    // Quota waits are logged where the hold begins (block); these are the passing failures
+    // that have no other trace in the log until the retry.
+    if (why.failure !== "quota") {
+      const held = [...waits.values()].reduce((n, group) => n + group.length, 0);
+      if (held > 0) this.deps.log?.(`${this.agentId}: ${held} message(s) waiting to retry (${why.failure})`);
+    }
     // A usage limit holds for everything after it too, until the reset.
     if (why.failure === "quota" && waits.size > 0) this.block(Math.max(...waits.keys()), why, true);
     const failed = this.deps.store.moveInbound(failing, "fail");
@@ -417,6 +423,9 @@ export class AgentRuntime {
   private block(until: number, why: FailureInfo, announce: boolean): void {
     this.unblock(false);
     this.blocked = { until, why, since: Date.now() };
+    this.deps.log?.(
+      `${this.agentId}: usage limit wait until ${new Date(until).toISOString()}${why.resetsAt ? ` (resets ${new Date(why.resetsAt).toISOString()})` : ""}`,
+    );
     // Persisted, so the hold still applies after Mingle or the session is recreated.
     this.deps.store.setQuotaWait(this.agentId, { until, resetsAt: why.resetsAt ?? null });
     if (announce) this.deps.onLimit?.(until, why);
@@ -494,6 +503,7 @@ export class AgentRuntime {
           this.running = false;
           if (outcome.kind === "failed") {
             const failure = outcome.failure ?? "unknown";
+            this.deps.log?.(`${this.agentId}: turn failed (${failure}${outcome.reason ? `: ${outcome.reason}` : ""})`);
             this.setStatus("error", outcome.reason ?? "the turn failed", failure);
             // The agent did not get to answer: say so now rather than nudge it into the same failure.
             this.settleAwaiting({ failure, ...(outcome.resetsAt ? { resetsAt: outcome.resetsAt } : {}) });
@@ -518,6 +528,8 @@ export class AgentRuntime {
     }
     if (agent.sessionId && !session.resumed) {
       this.deps.log?.(`${this.agentId}: session ${agent.sessionId} was gone; opened ${session.id}`);
+    } else {
+      this.deps.log?.(`${this.agentId}: session ${session.id} ${session.resumed ? "resumed" : "opened"}`);
     }
     this.deps.store.setSessionId(this.agentId, session.id);
     this.session = session;
@@ -537,7 +549,10 @@ export class AgentRuntime {
       stale.map((m) => m.id),
       "give_up",
     );
-    if (givenUp.length > 0) this.deps.onSettled?.(givenUp, "unanswered");
+    if (givenUp.length > 0) {
+      this.deps.log?.(`${this.agentId}: gave up on ${givenUp.length} unanswered message(s)`);
+      this.deps.onSettled?.(givenUp, "unanswered");
+    }
     if (fresh.length > 0) {
       store.markNudged(fresh.map((m) => m.id));
       const ids = fresh.map((m) => m.id).join(", ");
