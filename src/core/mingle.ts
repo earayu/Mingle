@@ -23,7 +23,7 @@ import { MingleError, notFound } from "./errors.ts";
 import { formatReminder, renderMessage } from "./format.ts";
 import { createHome, memorySize, writeRole } from "./home.ts";
 import { slugify } from "./ids.ts";
-import { BACKOFF_MS, type LinkEvent, type LinkState, step, stored } from "./link.ts";
+import { BACKOFF_MS, type LinkEffect, type LinkEvent, type LinkState, step, stored } from "./link.ts";
 import { LiveReplies, pausedNote, stopNote } from "./live.ts";
 import { Outbox } from "./outbox.ts";
 import type { Paths } from "./paths.ts";
@@ -778,7 +778,10 @@ export class Mingle {
     // The owner is in the address book from the start, so the console can name them before they write.
     if (event.ownerId) this.store.touchContact(connection.id, event.ownerId, null);
     await this.reconnect(connection.id, event.credentials);
-    if (event.ownerId) void this.greetOwner(connection.id, event.ownerId);
+    if (event.ownerId)
+      void this.greetOwner(connection.id, event.ownerId).catch((error) =>
+        this.log(`greeting failed: ${(error as Error).message}`),
+      );
     return this.store.connection(connection.id) as Connection;
   }
 
@@ -842,9 +845,18 @@ export class Mingle {
   private drive(id: string, event: LinkEvent, gen?: number, credentials?: Credentials): Promise<void> {
     const link = this.links.get(id);
     if (!link || (gen !== undefined && gen !== link.gen)) return Promise.resolve();
-    const { state, effect } = step(link.state, event, Date.now(), this.options.reconnectDelaysMs ?? BACKOFF_MS);
-    link.state = state;
-    if (state.kind !== "removed") this.store.updateConnection(id, stored(state));
+    // This runs inside timer and adapter callbacks: a store error must not escape as an
+    // uncaught exception and take the whole process down.
+    let state: LinkState;
+    let effect: LinkEffect;
+    try {
+      ({ state, effect } = step(link.state, event, Date.now(), this.options.reconnectDelaysMs ?? BACKOFF_MS));
+      link.state = state;
+      if (state.kind !== "removed") this.store.updateConnection(id, stored(state));
+    } catch (error) {
+      this.log(`connection ${id} state update failed: ${(error as Error).message}`);
+      return Promise.resolve();
+    }
     if (effect === "none") return Promise.resolve();
     clearTimeout(link.timer);
     link.timer = undefined;
@@ -860,7 +872,9 @@ export class Mingle {
     }
     if (effect !== "connect") return Promise.resolve();
     link.gen++;
-    return this.attempt(id, link.gen, credentials);
+    return this.attempt(id, link.gen, credentials).catch((error) =>
+      this.log(`connection ${id} attempt failed unexpectedly: ${(error as Error).message}`),
+    );
   }
 
   private closeLive(id: string): void {
@@ -883,14 +897,24 @@ export class Mingle {
       }
       live = await this.channel(connection.platform).connect(credentials, {
         onMessage: (message) => {
-          if (this.links.get(id)?.gen === gen) this.receive(id, message);
+          if (this.links.get(id)?.gen !== gen) return;
+          try {
+            this.receive(id, message);
+          } catch (error) {
+            this.log(`could not take a message from ${connection.platform}: ${(error as Error).message}`);
+          }
         },
         onState: (state) => {
           if (state.kind === "error") reported = state.code;
           void this.drive(id, { kind: "reported", state }, gen);
         },
         onMembership: (change) => {
-          if (this.links.get(id)?.gen === gen) this.onMembership(id, change);
+          if (this.links.get(id)?.gen !== gen) return;
+          try {
+            this.onMembership(id, change);
+          } catch (error) {
+            this.log(`could not take a membership change from ${connection.platform}: ${(error as Error).message}`);
+          }
         },
       });
     } catch (error) {

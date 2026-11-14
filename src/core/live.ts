@@ -234,7 +234,7 @@ export class LiveReplies {
     connection: ChannelConnection;
   }): void {
     const { connection, chat } = input;
-    void connection.react(chat, input.platformMessageId, "processing");
+    void connection.react(chat, input.platformMessageId, "processing").catch(() => {});
     const lang = langFor(input.platform);
     const entry: Entry = {
       agentId: input.agentId,
@@ -292,7 +292,7 @@ export class LiveReplies {
     const entry = this.entries.get(messageId);
     if (!entry || entry.closed) return undefined;
     this.close(entry, messageId);
-    void entry.connection.react(entry.chat, entry.platformMessageId, "done");
+    void entry.connection.react(entry.chat, entry.platformMessageId, "done").catch(() => {});
     const live = await entry.live;
     if (!live) return undefined;
     try {
@@ -318,7 +318,7 @@ export class LiveReplies {
     if (!entry || entry.closed) return;
     this.close(entry, messageId);
     const reaction: ReactionState = outcome === "answered" ? "done" : outcome === "failed" ? "error" : "none";
-    void entry.connection.react(entry.chat, entry.platformMessageId, reaction);
+    void entry.connection.react(entry.chat, entry.platformMessageId, reaction).catch(() => {});
     const t = TEXT[entry.lang];
     const note =
       outcome === "answered"
