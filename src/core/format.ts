@@ -1,5 +1,5 @@
 import type { Platform } from "../channels/channel.ts";
-import { type Chat, type Contact, contactName, type Message, type Reminder } from "../store/store.ts";
+import { type Chat, type Contact, contactName, type Message, type Reminder, type Store } from "../store/store.ts";
 import { searchTerms } from "./terms.ts";
 
 /** ISO 8601 in local time with offset, minute precision: 2026-11-11T14:02+08:00. */
@@ -86,9 +86,39 @@ export function excerpt(body: string, query: string, before = EXCERPT_BEFORE, af
   return `${from > 0 ? "…" : ""}${window}${to < chars.length ? "…" : ""}`;
 }
 
-export function formatReminder(reminder: Reminder, at: number): string {
+/** A stored message as the agent sees it, with the names and owner mark its connection gives it. */
+export function renderMessage(
+  store: Store,
+  message: Message,
+  opts: { agentName?: string; unseen?: number } = {},
+): string {
+  const chat = store.chat(message.chatId);
+  const connection = chat && store.connection(chat.connectionId);
+  if (!chat || !connection) return "";
+  const contact =
+    message.direction === "in" && message.senderId
+      ? store.contactByPlatformId(chat.connectionId, message.senderId)
+      : undefined;
+  return formatMessage(message, chat, connection.platform, { ownerId: connection.ownerId, contact, ...opts });
+}
+
+/** Characters of a source message quoted in a reminder; the rest is one `message read` away. */
+const SOURCE_QUOTE_CHARS = 500;
+
+/**
+ * A reminder as it reaches the agent. One set for a message quotes it, header included, so the
+ * agent can `message reply` to it (docs/spec.md 4.6).
+ */
+export function formatReminder(reminder: Reminder, at: number, source?: string): string {
   const parts = [`reminder=${reminder.id}`];
   if (reminder.chatId) parts.push(`chat=${reminder.chatId}`);
   parts.push(`time=${localTime(at)}`);
-  return `[${parts.join(" ")}]\n${reminder.body}`;
+  const text = `[${parts.join(" ")}]\n${reminder.body}`;
+  if (!source) return text;
+  const chars = [...source];
+  const cut = chars.length > SOURCE_QUOTE_CHARS ? `${chars.slice(0, SOURCE_QUOTE_CHARS).join("").trimEnd()}…` : source;
+  return `${text}\n${cut
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n")}`;
 }

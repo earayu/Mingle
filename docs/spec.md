@@ -234,6 +234,10 @@ Raft 的做法更重。从它的源码和 agent 提示词看：忙碌时只给 a
 
 - 任务是轻量记录：标题、状态（`todo` / `in_progress` / `done` / `closed`）、来源聊天。由 Agent 用 CLI 维护，控制台只读展示。完成时 Agent 回到来源聊天回报。
 - 提醒到点后作为一条系统消息进入 Agent 的会话，和 IM 消息走同一条路。每日总结、定时检查都用它实现。
+- 提醒可以挂在一条消息上（`--from <消息ID>`，存为 `reminders.source_message_id`），聊天由这条消息决定。到点时系统消息在正文下方用 `> ` 引用原消息（消息头加正文，正文超过 500 字截断），Agent 用 `message reply` 回到那条消息，群里看得出它在回哪件事。原消息被删除时只发提醒本身。
+- 到点了但事情还没好（"天气还没出来"），Agent 用 `snooze` 推迟，而不是再建一个。推迟从现在算起：一次性提醒改 `next_fire_at`；周期提醒只把下一次改到那个时间，触发后照原规则继续。
+- 每次触发记下 `last_fired_at`，控制台的提醒列表显示"上次触发"。
+- 不提供修改提醒的命令，取消再新建即可，少一套参数校验。
 
 ### 4.7 权限
 
@@ -432,8 +436,9 @@ MSG
 
 | 命令 | 作用 |
 |---|---|
-| `mingle reminder set <内容>` | `--in 30m`、`--at <时间>` 或 `--every daily@09:00`；`--chat <聊天ID>` 记录相关聊天 |
+| `mingle reminder set <内容>` | `--in 30m`、`--at <时间>` 或 `--every daily@09:00`；`--from <消息ID>` 挂到一条消息上，到点时引用它；只记聊天时用 `--chat <聊天ID>` |
 | `mingle reminder list` | 列出提醒 |
+| `mingle reminder snooze <提醒ID> --by 2h` | 推迟到从现在起的 `--by` 之后；周期提醒只推迟下一次 |
 | `mingle reminder cancel <提醒ID>` | 取消 |
 
 **自身**

@@ -381,6 +381,7 @@ const en = {
   "agent.noTasksBody": "Tasks the agent tracks for you will appear here.",
   "agent.noReminders": "No reminders.",
   "agent.noRemindersBody": "Reminders the agent sets for you will appear here.",
+  "agent.reminderLastFired": "Last fired {time}",
   "agent.brainSaved": "Saved. It applies from the next message.",
   "agent.deleteTitle": "Delete {name}?",
   "agent.deleteBody":
@@ -809,6 +810,7 @@ const zh: Record<MessageKey, string> = {
   "agent.noTasksBody": "Agent 为你跟进的任务会显示在这里。",
   "agent.noReminders": "没有提醒。",
   "agent.noRemindersBody": "Agent 为你设置的提醒会显示在这里。",
+  "agent.reminderLastFired": "上次触发 {time}",
   "agent.brainSaved": "已保存，从下一条消息起生效。",
   "agent.deleteTitle": "删除 {name}？",
   "agent.deleteBody": "它的机器人会断开，凭据和环境变量会删除。它的文件夹（记忆和笔记）会保留。",

@@ -208,6 +208,7 @@ export interface Reminder {
   body: string;
   rule: string;
   nextFireAt: number | null;
+  lastFiredAt: number | null;
 }
 
 export const api = {
