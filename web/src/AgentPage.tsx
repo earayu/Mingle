@@ -115,6 +115,7 @@ export function AgentPage({
     setActivityError(false);
     setWorkError(false);
     setConfirmDelete(false);
+    setPauseFailure(null);
     setNotice(null);
     setTab("activity");
     setManageRequest(0);
@@ -133,13 +134,18 @@ export function AgentPage({
   const busy = agent.status === "thinking" || agent.status === "working";
   const paused = agent.status === "paused";
   const [switching, setSwitching] = useState(false);
-  const setPaused = async (pause: boolean) => {
+  const [pauseFailure, setPauseFailure] = useState<string | null>(null);
+  // The settings row answers in place, where the click was: it already reads "paused" or not, and
+  // a failure shows under it. The top notice is only for the paused card, which sits up there.
+  const setPaused = async (pause: boolean, from: "card" | "row" = "card") => {
     setSwitching(true);
+    setPauseFailure(null);
     try {
       await (pause ? api.pause(agent.id) : api.resume(agent.id));
-      setNotice(t(pause ? "agent.pausedNotice" : "agent.resumed", { name: agent.name }));
+      if (from === "card") setNotice(t(pause ? "agent.pausedNotice" : "agent.resumed", { name: agent.name }));
     } catch (error) {
-      setNotice(errorText(t, error));
+      if (from === "row") setPauseFailure(errorText(t, error));
+      else setNotice(errorText(t, error));
     } finally {
       setSwitching(false);
     }
@@ -240,17 +246,6 @@ export function AgentPage({
       <div className="flex min-h-0 flex-1">
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           <div className="flex max-w-[680px] flex-col gap-7 px-6 py-6 md:px-8">
-            {confirmDelete ? (
-              <DeleteConfirm
-                agent={agent}
-                onCancel={() => setConfirmDelete(false)}
-                onDeleted={async () => {
-                  // Refresh first: with the old list, "home" would pick the deleted agent again.
-                  await onChanged();
-                  onNavigate({ kind: "home" }, { replace: true });
-                }}
-              />
-            ) : null}
             {notice ? <p className="rise -mb-3 text-small text-ink2">{notice}</p> : null}
             {paused ? <PausedCard name={agent.name} disabled={switching} onResume={() => setPaused(false)} /> : null}
             {agent.status === "error" ? <AgentError agent={agent} /> : null}
@@ -278,7 +273,7 @@ export function AgentPage({
                 <AgentEnv agent={agent} />
                 <Section title={t("agent.lifecycle")}>
                   <Group>
-                    <GroupRow>
+                    <GroupRow className="flex-wrap">
                       <span className="flex min-w-0 flex-1 flex-col">
                         <span>
                           {paused
@@ -294,16 +289,17 @@ export function AgentPage({
                         </span>
                       </span>
                       {paused ? (
-                        <Button small disabled={switching} onClick={() => setPaused(false)}>
+                        <Button small disabled={switching} onClick={() => setPaused(false, "row")}>
                           <PlayIcon />
                           {t("agent.resume")}
                         </Button>
                       ) : (
-                        <Button small disabled={switching} onClick={() => setPaused(true)}>
+                        <Button small disabled={switching} onClick={() => setPaused(true, "row")}>
                           <PauseIcon />
                           {t("agent.pause")}
                         </Button>
                       )}
+                      {pauseFailure ? <p className="w-full text-caption text-red">{pauseFailure}</p> : null}
                     </GroupRow>
                   </Group>
                 </Section>
@@ -320,15 +316,17 @@ export function AgentPage({
                         {t("agent.openHome")}
                       </Button>
                     </GroupRow>
-                    <GroupRow>
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <span>{t("agent.delete")}</span>
-                        <span className="text-caption text-ink2">{t("agent.deleteBody")}</span>
-                      </span>
-                      <Button small variant="danger" onClick={() => setConfirmDelete(true)}>
-                        {t("agent.delete")}
-                      </Button>
-                    </GroupRow>
+                    <DeleteRow
+                      agent={agent}
+                      confirming={confirmDelete}
+                      onAsk={() => setConfirmDelete(true)}
+                      onCancel={() => setConfirmDelete(false)}
+                      onDeleted={async () => {
+                        // Refresh first: with the old list, "home" would pick the deleted agent again.
+                        await onChanged();
+                        onNavigate({ kind: "home" }, { replace: true });
+                      }}
+                    />
                   </Group>
                 </Section>
               </>
@@ -1100,50 +1098,73 @@ function Brain({ agent, onSaved }: { agent: AgentView; onSaved: () => void }) {
   );
 }
 
-function DeleteConfirm({
+/** The delete row asks in place: the question replaces the row the click came from. */
+function DeleteRow({
   agent,
+  confirming,
+  onAsk,
   onCancel,
   onDeleted,
 }: {
   agent: AgentView;
+  confirming: boolean;
+  onAsk: () => void;
   onCancel: () => void;
   onDeleted: () => Promise<void>;
 }) {
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const cancel = () => {
+    setFailure(null);
+    onCancel();
+  };
   return (
-    <div className="rise flex flex-col gap-3 rounded-card border border-red-line bg-red-tint px-4 py-3.5">
-      <div className="flex flex-col gap-0.5">
-        <span className="font-semibold">{t("agent.deleteTitle", { name: agent.name })}</span>
-        <span className="text-small text-ink2">{t("agent.deleteBody")}</span>
-      </div>
-      <div className="flex gap-2">
-        <Button
-          variant="danger"
-          small
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setFailure(null);
-            try {
-              await api.remove(agent.id);
-            } catch (error) {
-              setFailure(errorText(t, error));
-              setBusy(false);
-              return;
-            }
-            await onDeleted();
+    <GroupRow className={`flex-wrap transition-colors duration-[120ms] ${confirming ? "bg-red-tint" : ""}`}>
+      <span className="flex min-w-0 flex-1 flex-col" aria-live="polite">
+        <span className={confirming ? "font-medium" : undefined}>
+          {confirming ? t("agent.deleteTitle", { name: agent.name }) : t("agent.delete")}
+        </span>
+        <span className="text-caption text-ink2">{t("agent.deleteBody")}</span>
+      </span>
+      {confirming ? (
+        // biome-ignore lint/a11y/noStaticElementInteractions: Escape backs out of the question it belongs to
+        <span
+          className="flex shrink-0 items-center gap-1.5"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !busy) cancel();
           }}
         >
-          {t("agent.deleteYes")}
+          <Button
+            small
+            variant="danger"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setFailure(null);
+              try {
+                await api.remove(agent.id);
+              } catch (error) {
+                setFailure(errorText(t, error));
+                setBusy(false);
+                return;
+              }
+              await onDeleted();
+            }}
+          >
+            {t("agent.deleteYes")}
+          </Button>
+          <Button small variant="ghost" autoFocus disabled={busy} onClick={cancel}>
+            {t("agent.deleteNo")}
+          </Button>
+        </span>
+      ) : (
+        <Button small variant="danger" onClick={onAsk}>
+          {t("agent.delete")}
         </Button>
-        <Button variant="ghost" small onClick={onCancel}>
-          {t("agent.deleteNo")}
-        </Button>
-      </div>
-      {failure ? <p className="text-small text-red">{failure}</p> : null}
-    </div>
+      )}
+      {failure ? <p className="w-full text-caption text-red">{failure}</p> : null}
+    </GroupRow>
   );
 }
 
