@@ -196,6 +196,10 @@ describe("cold-start input", () => {
       now,
     });
     expect(text.match(/\[msg=/g)).toHaveLength(25);
+    const big = inbound(dm, "x".repeat(5000), now);
+    const cut = buildColdContext({ store, agentId, agentName: "Alex", homeDir: home, actions: [], exclude: [], now });
+    expect(cut).toContain(`[cut here; the full text: "$MINGLE_CLI" message read ${dm.id} --around ${big.id}]`);
+    expect(cut).not.toContain("x".repeat(1201));
     expect(text).not.toContain("message 4\n");
     expect(text).toContain("message 5");
     expect(text).not.toContain("## MEMORY.md");

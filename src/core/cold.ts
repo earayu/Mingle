@@ -176,7 +176,10 @@ export function buildColdContext(input: {
     .recentConversation(input.agentId, RECENT_MESSAGES, input.exclude)
     .map((m) => {
       const body = [...m.body];
-      const message = body.length > MESSAGE_CHARS ? { ...m, body: `${body.slice(0, MESSAGE_CHARS).join("")}…` } : m;
+      // Say where the rest is: the spike showed a cut message is otherwise taken as all there is.
+      const rest = `[cut here; the full text: "$MINGLE_CLI" message read ${m.chatId} --around ${m.id}]`;
+      const message =
+        body.length > MESSAGE_CHARS ? { ...m, body: `${body.slice(0, MESSAGE_CHARS).join("")}…\n${rest}` } : m;
       return renderMessage(store, message, { agentName: input.agentName });
     })
     .filter(Boolean);
