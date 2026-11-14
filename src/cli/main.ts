@@ -32,6 +32,7 @@ const OPTIONS = {
   limit: { type: "string" },
   before: { type: "string" },
   around: { type: "string" },
+  since: { type: "string" },
   in: { type: "string" },
   out: { type: "string" },
   from: { type: "string" },
@@ -179,11 +180,19 @@ async function agentCommand(group: string, action: string | undefined, args: str
       const chat = need(
         args[0],
         "chat_required",
-        "usage: mingle message read <chat-id> [--limit 30] [--before <message-id> | --around <message-id>]",
+        "usage: mingle message read <chat-id> [--limit 30] [--before <message-id> | --since <message-id> | --around <message-id>]",
       );
+      const anchors = (["before", "since", "around"] as const).filter((k) => flags[k]);
+      if (anchors.length > 1) throw new CliError("flags_conflict", "pass only one of --before, --since and --around");
       const q = new URLSearchParams({
         limit: flags.limit ?? (flags.around ? "11" : "30"),
-        ...(flags.around ? { around: flags.around } : flags.before ? { before: flags.before } : {}),
+        ...(flags.around
+          ? { around: flags.around }
+          : flags.since
+            ? { since: flags.since }
+            : flags.before
+              ? { before: flags.before }
+              : {}),
       });
       const messages = await call()<{ id: string; text: string }[]>("GET", `/v1/agent/chats/${chat}/messages?${q}`);
       print(messages, () => messages.map((m) => m.text).join("\n\n") || "no messages");

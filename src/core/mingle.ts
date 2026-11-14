@@ -929,11 +929,20 @@ export class Mingle {
     if (!connection) return;
     // Other bots are ignored until there are rules against bot-to-bot loops (docs/spec.md 13).
     if (inbound.sender.isBot) return;
+    const parent = inbound.chat.parent
+      ? this.store.upsertChat({
+          connectionId,
+          platformId: inbound.chat.parent.platformId,
+          kind: "group",
+          name: inbound.chat.parent.name,
+        })
+      : undefined;
     const chat = this.store.upsertChat({
       connectionId,
       platformId: inbound.chat.platformId,
       kind: inbound.chat.kind,
       name: inbound.chat.name,
+      parentId: parent?.id,
     });
     let ownerId = connection.ownerId;
     if (!ownerId && chat.kind === "dm") {

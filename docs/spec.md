@@ -127,6 +127,19 @@ erDiagram
 
 消息是推给 Agent 的，Agent 不需要轮询收件箱。每个 Agent 同一时刻只有一轮在跑，不做并发会话。
 
+**群里没 @ 它的消息是背景，不推给它，但让它知道（MING-62）。** 群聊里大部分话不是对 Agent 说的，全推进会话既费上下文又让它分不清该回什么；完全看不到，被问"你怎么看"时又缺了前文。借鉴 Raft 的做法，由 Agent 自己决定要不要读：
+
+- 平台把群消息给到机器人时，Mingle 照样存下来，标记为不触发（状态 `ignored`），`message read` 和 `message search` 都能查到。Telegram、Discord、飞书、钉钉本来如此；Slack 频道里没 @ 它、也不在它所在线程里的消息存进这个频道自己的聊天（不是每条消息一个线程聊天），别人线程里的回复带 `reply_to` 指向线程根消息。订阅的仍是原有的 `message.channels`、`message.groups`，不需要新权限。
+- 触发消息的来源行带 `unseen=N`：这个群里，从 Agent 上次在这里发言到这条消息之间，有 N 条没 @ 它的消息。N 为 0 时不写。在投递时计算，之后再来的消息不改变已投递的来源行。
+- **线程有所属的群。** Slack 的线程是一个独立聊天，背景却在频道里。适配器给线程聊天报上所属的群（`ChatRef.parent`，存为 `chats.parent_id`），来源行带 `in=<群聊天ID>`。线程的 `unseen` 同时数线程自己和所属的群，"上次发言"以这个频道里任一处为准：Agent 在频道的任一线程里说过话，之前的频道消息就不算没看到。
+- 操作指南只给一条规则：`unseen` 不为 0 且问题依赖前文时，先 `message read`（线程读 `in=` 指向的聊天）；否则直接回答，不必每条都回读。
+- **不新增敏感权限。** Telegram 的隐私模式、飞书的"获取群组中所有消息"保持原样，Mingle 不引导用户去开。没开的群里机器人只收到 @ 它的消息，`unseen` 一直是 0，行为和以前一样。
+
+```text
+[msg=m9c1d chat=c31 im=slack group="C0123:1731.42" in=c30 from="张三" user=u7k2p time=2026-11-15T10:20+08:00 unseen=7]
+@Alex 你怎么看？
+```
+
 ### 4.3 多人同时 @ 与插话
 
 一个 Agent 只有一个会话，所以多人同时找它时不会各开一个分身，而是按下面的规则进入同一轮。
@@ -367,7 +380,7 @@ Mingle 启动 harness 时通过 OAR 的 `env` 放入三个环境变量：本地 
 |---|---|
 | `mingle message reply <消息ID>` | 回复某条消息，平台支持时显示为引用回复 |
 | `mingle message send --to <聊天ID>` | 向某个聊天主动发消息 |
-| `mingle message read <聊天ID>` | 读某个聊天最近的消息，`--limit`、`--before` 翻页；`--around <消息ID>` 读某条消息前后的消息（默认共 11 条） |
+| `mingle message read <聊天ID>` | 读某个聊天最近的消息，`--limit`、`--before` 翻页；`--since <消息ID>` 读某条消息之后的消息，从旧到新；`--around <消息ID>` 读某条消息前后的消息（默认共 11 条）。三者只能用一个 |
 | `mingle message search <关键词>` | 全文检索消息记录，`--in <聊天ID>` 限定范围 |
 
 **搜索结果是给 Agent 看的界面（借鉴 Raft 的 *A Comfortable AX for Agent Search*）。** 只给 ID，Agent 得逐条再查；给全文，几十条命中会挤满上下文；只给命中的那一条，又常常缺了推翻它的下一句。所以每条结果是消息头加上匹配处之前约 80、之后约 120 个字符（后文更常是对它的回应），命中处用 `<match></match>` 标出，被截掉的一侧标 `…`，让 Agent 知道这只是一个窗口；短消息整条返回。
@@ -648,7 +661,7 @@ flowchart TD
 |---|---|
 | `agents` | 名字、slug、头像、harness、模型、权限模式、当前会话 ID、状态 |
 | `connections` | 所属 Agent、平台、机器人身份、连接状态、凭据引用 |
-| `chats` | 所属连接、平台侧 ID、类型（群 / 私聊 / 话题）、名称 |
+| `chats` | 所属连接、平台侧 ID、类型（群 / 私聊 / 话题）、名称、线程所属的群（4.2） |
 | `contacts` | 所属连接、平台侧用户 ID、平台给的名字、owner 或 Agent 起的名字。升级时从已有消息的发送者和 owner 补建 |
 | `messages` | 所属聊天、方向、发送者、内容、附件引用、平台消息 ID、时间、处理状态 |
 | `tasks` | 所属 Agent、标题、状态、来源聊天 |
@@ -819,6 +832,7 @@ docs/             文档
 | Agent 暂停与恢复（MING-46） | 完成（2026-11-14）：见 4.11。功能清单从产品角度梳理了创建、叫停、暂停、恢复、删除；新增暂停/恢复的 API、CLI、控制台和菜单栏状态。测试覆盖暂停时中止当前轮、旧 token 失效、暂停期间消息忽略且每个聊天只说明一次、重试被拒、提醒顺延到恢复、重启后保持暂停、删除已暂停的 Agent；控制台用 `pnpm ui:review` 截图并点击走过暂停和恢复 |
 | 个人账号接入（MING-52） | 完成（2026-11-14）：原则见 1.4、6.6，各平台评估见 6.6。iMessage 自聊形态在真机上跑通（12.1）；专用 Apple ID 形态没有测试环境，不开放 |
 | 多微信号与通讯录（MING-55） | 完成（2026-11-14）：见 4.2、6.1。`contacts` 表和迁移 006，消息头带 `user=`，`mingle contact list / name`，控制台连接行给 owner 起名、动态按名字显示；请求微信二维码时带上本机已有的 token。测试覆盖迁移补建、名字优先级、两个 owner 在同一平台时不显示"你"、Agent 用 CLI 起名后消息头和动态更新、`local_token_list` 和 `already_connected`。手机端提示待实测（12.2） |
+| 群聊背景消息（MING-62） | 完成（2026-11-15）：见 4.2。来源行的 `unseen` 和 `in`、`message read --since`、Slack 存下没 @ 它的频道消息，迁移 010 加 `chats.parent_id`。测试覆盖计数（含线程和所属频道）、`--since`、Slack 映射和不触发；Slack 真机未复测 |
 | 更多 harness、审批转发 | 未开始 |
 
 ## 12. 验证记录
@@ -853,6 +867,8 @@ docs/             文档
 | v0.1.8 官网发布 | 通过（2026-11-14，MING-49）。[v0.1.8](https://github.com/earayu/Mingle/releases/tag/v0.1.8) 于北京时间 17:05 发布为 Latest（完成验收后，比计划晚约 28 分钟）；[官网部署](https://github.com/earayu/Mingle/actions/runs/43578862834)通过。英文首页、中文首页和 llms.txt 返回 200，两个页面的八种安装包链接均指向 v0.1.8，逐个跟随下载重定向均返回 200。iMessage 真实账号端到端仍待验证（12.2），发布说明已注明。 |
 | v0.1.9 安装包、迁移与增量包 | 通过（2026-11-14，MING-60，macOS arm64，0.1.8 → 0.1.9）。[发布流水线](https://github.com/earayu/Mingle/actions/runs/43592812221)的四个平台构建、三项安装包 smoke、上传与全部资产校验通过，[主干 CI](https://github.com/earayu/Mingle/actions/runs/43592795226)通过。下载的 arm64 DMG 与 SHA256SUMS 一致，DMG 签名、公证票据及应用的 codesign / Gatekeeper 检查通过，内置 CLI 的版本与启动冒烟通过。用旧版内置 Store 创建隔离的合成 Agent、无凭据连接及 ROLE.md / MEMORY.md，旧版启动后由新版启动同一数据目录：数据库从 5 迁移至 6，owner 联系人回填，Agent、连接及文件保留，控制台和静态资源可加载；再次重启没有重复数据，标识不变。发布后从公开 Latest 获取 1,273,580 字节的 0.1.8 → 0.1.9 增量包，以 mygo 0.9.0 的更新代码验签并重建；结果通过 codesign / Gatekeeper，可执行文件与 DMG 版本哈希一致，重建包的内置 CLI 在同一数据目录启动并通过数据核对。本轮保留正在运行的用户应用，仅运行隔离副本的内置 CLI；未验证原生自动下载、退出替换和界面重启，也未覆盖真实 IM 凭据或 Windows / Linux 桌面安装。 |
 | v0.1.9 官网发布 | 通过（2026-11-14，MING-60）。[发布准备 PR #54](https://github.com/earayu/Mingle/pull/54) 已合并；[v0.1.9](https://github.com/earayu/Mingle/releases/tag/v0.1.9) 于北京时间 20:46 发布为正式 Latest，[官网部署](https://github.com/earayu/Mingle/actions/runs/43596480076)通过。英文首页、中文首页和 llms.txt 返回 200，两种语言的八种安装包链接均指向 v0.1.9，逐个跟随下载重定向返回 200；公开 macOS arm64 更新清单报告 0.1.9。发布说明保留本版本的 Slack 文件发送、停止入口和后台任务迟到回复等已知限制。 |
+| v0.1.10 安装包、迁移与增量包 | 通过（2026-11-14 UTC，MING-61，macOS arm64，0.1.9 → 0.1.10）。[发布流水线](https://github.com/earayu/Mingle/actions/runs/43607945095)四个平台构建、三项安装包 smoke、上传及全部 41 项资产校验通过，[最终 PR CI](https://github.com/earayu/Mingle/actions/runs/43607813298)与[合并主干 CI](https://github.com/earayu/Mingle/actions/runs/43607887364)通过。arm64 DMG 的 SHA256SUMS、codesign、公证票据及应用 Gatekeeper 检查通过，内置 CLI 报告 0.1.10。用 0.1.9 内置 Store 建立隔离的合成 Agent、无凭据连接、聊天、消息、任务、提醒、联系人及 ROLE.md / MEMORY.md / notes 文件，旧版启动后用新版启动同一目录：数据库从 6 迁移至 9，全部原字段及文件保留，再次重启无重复数据，控制台和静态资源可加载。发布后从公开 Latest 获取 1,290,237 字节的 0.1.9 → 0.1.10 增量包，以 mygo 0.9.0 的 Verify / ApplyDelta 验签并重建；结果通过 codesign / Gatekeeper，可执行文件与 DMG 版本哈希一致，同一数据目录启动及核对通过。本轮仅运行隔离副本的内置 CLI，保留正在运行的用户应用；原生自动下载、退出替换、界面重启、真实 IM 凭据以及 Windows / Linux 桌面安装仍未验证。 |
+| v0.1.10 官网发布 | 通过（2026-11-14 UTC，MING-61）。四项 P0 与审查修复随 [PR #62](https://github.com/earayu/Mingle/pull/62) 合并；[v0.1.10](https://github.com/earayu/Mingle/releases/tag/v0.1.10) 于 16:05 UTC 发布为正式 Latest，[官网部署](https://github.com/earayu/Mingle/actions/runs/43613676820)通过。英文首页、中文首页和 llms.txt 返回 200，两个页面的八种安装包均指向 v0.1.10，逐个跟随下载重定向返回 200；公开 macOS arm64 更新清单报告 0.1.10。自动额度恢复使用脚本化故障验证，尚未用真实耗尽额度的账号实测。 |
 
 **2026-11-14（UTC+8），MING-38 真机回归。** 源码启动 Mingle 0.1.4（`c4829f7`），macOS 14.5，Node 24.15.0，OAR 0.97.0，Claude Code 2.1.322，飞书 SDK 1.76.0。Agent 为 `Smoke`，模型选「默认」（`model: null`），实际模型未单独记录。本机原生客户端已安装，但本轮没有可用的 Pinky 工具，macOS 辅助功能自动化未启用；飞书收发使用已登录的官方网页版（Chrome 154），未验证原生桌面客户端的呈现。以下编号对应 MING-38 的十项用例，不代表八个平台全部通过。
 
@@ -947,11 +963,10 @@ docs/             文档
 | Discord 端到端 | Gateway 收发、resume、引用回复、表情、实时编辑、文件上传、邀请链接 | 2026-11-14 已复用桌面登录态进入官方 Developer Portal；需人工完成创建应用时的 hCaptcha，再继续 bot 配置、测试服务器邀请和真机用例（12.1） |
 | iMessage 专用 Apple ID 形态 | 别人私聊、群聊 @ | 第二个 Apple ID 和一个单独的 macOS 用户或一台 Mac；开放前必须真机跑通 |
 | Windows、Linux 实机 | 安装、托盘（左键开窗、右键菜单、首次关窗提示）、开机自启、保持唤醒、自动更新；凭据走 DPAPI、Secret Service；Codex 在 PowerShell 里按指南调用 `mingle` | 一台 Windows 和一台 Linux 桌面机 |
-| 自动更新未覆盖路径 | 更早正式版（含 0.1.0）的升级、原生更新器实际选择增量包、界面“重启以更新”按钮；0.1.6 → 0.1.7 的 macOS 下载、验签、退出替换和数据保留已通过；0.1.7 → 0.1.8、0.1.8 → 0.1.9 的签名增量包重建与旧数据启动已通过，这两次原生自动更新流程未测（12.1） | 保留旧版的隔离安装和可操作原生窗口的测试环境 |
+| 自动更新未覆盖路径 | 更早正式版（含 0.1.0）的升级、原生更新器实际选择增量包、界面“重启以更新”按钮；0.1.6 → 0.1.7 的 macOS 下载、验签、退出替换和数据保留已通过；0.1.7 → 0.1.8、0.1.8 → 0.1.9、0.1.9 → 0.1.10 的签名增量包重建与旧数据启动已通过，这三次原生自动更新流程未测（12.1） | 保留旧版的隔离安装和可操作原生窗口的测试环境 |
 | 离线补推 | Telegram、Discord、个人微信、QQ、企业微信、钉钉断开期间是否补推；飞书和 Slack 的更多断连条件 | 各平台已接入的机器人；飞书一次约 5 分钟恢复补推、Slack 一次约 2 分钟断连未补推但恢复后新消息可回复，均见 12.1，不外推为平台保证 |
 
 ## 13. 未决问题
 
-- **群内非 @ 消息**：是否让 Agent 读到群里没有 @ 它的消息作为背景。多数平台需要额外的敏感权限，本版不做。
 - **多个 Agent 同在一个群**：互相 @ 时的防循环规则。
 - **长任务末尾的插话**：消息恰好在一轮结束的瞬间插入时，harness 可能接受了却不处理。聊天消息由"未回复提醒"兜底；提醒和系统通知改为等到下一轮再投递。真实 harness 上是否会出现，待长期使用观察。

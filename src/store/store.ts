@@ -68,6 +68,8 @@ export interface Chat {
   platformId: string;
   kind: ChatKind;
   name: string | null;
+  /** The chat this thread belongs to, whose messages are its background. */
+  parentId: string | null;
 }
 
 export interface Attachment {
@@ -340,7 +342,13 @@ export class Store {
 
   // ------------------------------------------------------------------- chats
 
-  upsertChat(input: { connectionId: string; platformId: string; kind: ChatKind; name?: string | undefined }): Chat {
+  upsertChat(input: {
+    connectionId: string;
+    platformId: string;
+    kind: ChatKind;
+    name?: string | undefined;
+    parentId?: string | undefined;
+  }): Chat {
     const existing = this.db
       .prepare("SELECT * FROM chats WHERE connection_id = ? AND platform_id = ?")
       .get(input.connectionId, input.platformId) as Row | undefined;
@@ -351,14 +359,19 @@ export class Store {
           .prepare("UPDATE chats SET name = ?, updated_at = ? WHERE id = ?")
           .run(input.name, t, String(existing.id));
       }
+      if (input.parentId && input.parentId !== existing.parent_id) {
+        this.db
+          .prepare("UPDATE chats SET parent_id = ?, updated_at = ? WHERE id = ?")
+          .run(input.parentId, t, String(existing.id));
+      }
       return this.chat(String(existing.id)) as Chat;
     }
     const id = this.mint("chats", "c", 4);
     this.db
       .prepare(
-        "INSERT INTO chats (id, connection_id, platform_id, kind, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO chats (id, connection_id, platform_id, kind, name, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(id, input.connectionId, input.platformId, input.kind, input.name ?? null, t, t);
+      .run(id, input.connectionId, input.platformId, input.kind, input.name ?? null, input.parentId ?? null, t, t);
     return this.chat(id) as Chat;
   }
 
@@ -590,25 +603,67 @@ export class Store {
    * the message itself, and the rest after. Undefined when the message is not in this chat.
    */
   chatAround(chatId: string, messageId: string, limit: number): Message[] | undefined {
-    const row = this.db.prepare("SELECT rowid, * FROM messages WHERE id = ? AND chat_id = ?").get(messageId, chatId) as
-      | Row
-      | undefined;
-    if (!row) return undefined;
-    const anchor = toMessage(row);
-    const before = Math.floor((limit - 1) / 2);
+    const anchor = this.anchor(chatId, messageId);
+    if (!anchor) return undefined;
     const older = this.db
       .prepare(
         `SELECT * FROM messages WHERE chat_id = ? AND (created_at < ? OR (created_at = ? AND rowid < ?))
          ORDER BY created_at DESC, rowid DESC LIMIT ?`,
       )
-      .all(chatId, anchor.createdAt, anchor.createdAt, row.rowid as number, before) as Row[];
-    const newer = this.db
+      .all(chatId, anchor.at, anchor.at, anchor.rowid, Math.floor((limit - 1) / 2)) as Row[];
+    const newer = this.after(chatId, anchor, limit - 1 - older.length);
+    return [...older.map(toMessage).reverse(), anchor.message, ...newer];
+  }
+
+  /**
+   * The first `limit` messages after `messageId` in its chat, oldest first, without the message
+   * itself. Undefined when the message is not in this chat.
+   */
+  chatSince(chatId: string, messageId: string, limit: number): Message[] | undefined {
+    const anchor = this.anchor(chatId, messageId);
+    return anchor && this.after(chatId, anchor, limit);
+  }
+
+  private anchor(chatId: string, messageId: string): { message: Message; at: number; rowid: number } | undefined {
+    const row = this.db.prepare("SELECT rowid, * FROM messages WHERE id = ? AND chat_id = ?").get(messageId, chatId) as
+      | Row
+      | undefined;
+    return row && { message: toMessage(row), at: Number(row.created_at), rowid: Number(row.rowid) };
+  }
+
+  private after(chatId: string, anchor: { at: number; rowid: number }, limit: number): Message[] {
+    const rows = this.db
       .prepare(
         `SELECT * FROM messages WHERE chat_id = ? AND (created_at > ? OR (created_at = ? AND rowid > ?))
          ORDER BY created_at, rowid LIMIT ?`,
       )
-      .all(chatId, anchor.createdAt, anchor.createdAt, row.rowid as number, limit - 1 - older.length) as Row[];
-    return [...older.map(toMessage).reverse(), anchor, ...newer.map(toMessage)];
+      .all(chatId, anchor.at, anchor.at, anchor.rowid, limit) as Row[];
+    return rows.map(toMessage);
+  }
+
+  /**
+   * How many messages in this chat, and in the chat its thread belongs to, did not reach the
+   * agent since it last spoke there (docs/spec.md 4.2). "There" is the whole channel: the chat,
+   * its parent and the parent's other threads. Messages from before `before` only.
+   */
+  unseen(chatId: string, before: number): number {
+    const chat = this.chat(chatId);
+    if (!chat) return 0;
+    const scope = chat.parentId ? [chat.id, chat.parentId] : [chat.id];
+    const marks = scope.map(() => "?").join(", ");
+    const spoke = this.db
+      .prepare(
+        `SELECT max(created_at) AS at FROM messages WHERE direction = 'out' AND created_at <= ?
+         AND chat_id IN (SELECT id FROM chats WHERE id IN (${marks}) OR parent_id IN (${marks}))`,
+      )
+      .get(before, ...scope, ...scope) as Row;
+    const row = this.db
+      .prepare(
+        `SELECT count(*) AS n FROM messages WHERE chat_id IN (${marks}) AND direction = 'in' AND triggers = 0
+         AND created_at > ? AND created_at < ?`,
+      )
+      .get(...scope, spoke.at == null ? -1 : Number(spoke.at), before) as Row;
+    return Number(row.n);
   }
 
   /**
@@ -891,6 +946,7 @@ function toChat(r: Row): Chat {
     platformId: String(r.platform_id),
     kind: String(r.kind) as ChatKind,
     name: str(r.name),
+    parentId: str(r.parent_id),
   };
 }
 

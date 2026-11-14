@@ -60,7 +60,7 @@ describe("formatMessage", () => {
         state: "received",
         createdAt: Date.UTC(2026, 10, 11, 6, 2),
       },
-      { id: "c12", connectionId: "n1", platformId: "-100", kind: "group", name: "Weekend hikes" },
+      { id: "c12", connectionId: "n1", platformId: "-100", kind: "group", name: "Weekend hikes", parentId: null },
       "feishu",
       { ownerId: "u1" },
     );
@@ -87,7 +87,14 @@ describe("message header contacts", () => {
     state: "received" as const,
     createdAt: Date.UTC(2026, 10, 11, 6, 2),
   };
-  const chat = { id: "c12", connectionId: "n1", platformId: "o9cq@im.wechat", kind: "dm" as const, name: null };
+  const chat = {
+    id: "c12",
+    connectionId: "n1",
+    platformId: "o9cq@im.wechat",
+    kind: "dm" as const,
+    name: null,
+    parentId: null,
+  };
   const contact = {
     id: "u7k2",
     connectionId: "n1",

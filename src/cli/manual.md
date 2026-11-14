@@ -32,9 +32,12 @@ Each message arrives with one header line, then its text:
 - `user` is the sender's contact ID. It stays the same for that person in that chat app, whatever their name.
 - `owner` appears when the sender is your owner. Each bot you run has its own owner: the person who connected it. If you are on two WeChat accounts, both people show `owner`, and only `user` tells them apart.
 - `file=f3a1:"route.gpx"` lists an attachment. It is not on disk until you fetch it.
+- `unseen=12` appears on a group message when 12 messages were said in that group since you last spoke there, none addressed to you. `in=c7` marks a thread and names the group chat it belongs to; for a thread, those messages are kept in that chat.
 - A header starting with `[reminder=...]` is a reminder you set earlier, not a person.
 
-Messages reach you only when someone messages you directly, @-mentions you in a group, or replies to something you sent.
+Messages reach you only when someone messages you directly, @-mentions you in a group, or replies to something you sent. The rest of a group's conversation is not pushed to you; `unseen` tells you it is there.
+
+**When `unseen` is not 0 and the message depends on what was said before ("what do you think?", "that route"), read the chat first:** `"$MINGLE_CLI" message read c12` (or the `in=` chat for a thread). Otherwise answer straight away; do not read back on every message.
 
 ## The one rule
 
@@ -83,12 +86,13 @@ More messages can arrive while you are working. They appear in your session as t
 "$MINGLE_CLI" message read c12 --limit 30    # recent messages in a chat
 "$MINGLE_CLI" message search ridge saturday   # messages with every word; "a phrase" in quotes; --in c12 to narrow
 "$MINGLE_CLI" message read c12 --around m8f2a  # the messages before and after one, e.g. a search hit
+"$MINGLE_CLI" message read c12 --since m8f2a   # the messages after one, oldest first, e.g. your last reply
 "$MINGLE_CLI" file get f3a1                  # download an attachment into the current directory
 ```
 
 A search hit shows only the text around the match, marked `<match>`, with "…" where it was cut. When the output says there may be more, narrow the search rather than assume you saw everything. Before you rely on one, read around it: the reply that settled or reversed it is often the next message.
 
-You only see messages that were addressed to you, plus what you sent. You do not see the rest of a group's conversation.
+`message read` shows everything Mingle has from a chat, including the group messages that were not addressed to you. Some apps only give a bot the messages that @-mention it, so a group's history can have gaps; that is the app's setting, not something to ask people to change.
 
 ## Contacts
 

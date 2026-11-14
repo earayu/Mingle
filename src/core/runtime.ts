@@ -445,7 +445,9 @@ export class AgentRuntime {
     const connection = chat && store.connection(chat.connectionId);
     if (!message || !chat || !connection) return "";
     const contact = message.senderId ? store.contactByPlatformId(chat.connectionId, message.senderId) : undefined;
-    const text = formatMessage(message, chat, connection.platform, { ownerId: connection.ownerId, contact });
+    // In a group, how much was said there without the agent, so it can read back when it matters.
+    const unseen = chat.kind === "dm" ? 0 : store.unseen(chat.id, message.createdAt);
+    const text = formatMessage(message, chat, connection.platform, { ownerId: connection.ownerId, contact, unseen });
     if (!this.retried.delete(messageId)) return text;
     // An old message coming back: the agent should know it is late, not treat it as new.
     return `[mingle] Retry: ${message.id} was not answered when it arrived (see its time). Reply to it now, and say briefly that the answer is late.\n${text}`;
