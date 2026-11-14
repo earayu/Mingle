@@ -325,16 +325,23 @@ describe("group background", () => {
 
   it("refuses two read anchors at once", async () => {
     let stderr = "";
+    let api: { status: number; error: string } | undefined;
     current = await rig(async (t) => {
       const env = t.options.env as Record<string, string>;
       const [id] = messageIds(t.input);
       const chat = /chat=(c\w+)/.exec(t.input)?.[1] as string;
       stderr = (await runCli(env, ["message", "read", chat, "--since", id as string, "--before", id as string])).stderr;
+      // The API refuses the same combination for callers that skip the CLI.
+      const res = await fetch(`${env.MINGLE_API}/v1/agent/chats/${chat}/messages?since=${id}&before=${id}`, {
+        headers: { authorization: `Bearer ${env.MINGLE_TOKEN}` },
+      });
+      api = { status: res.status, error: ((await res.json()) as { error: string }).error };
       await runCli(env, ["message", "reply", id as string], "ok");
     });
     current.channel.receive({ text: "hi" });
     await until(() => current?.channel.sent.length === 1);
     expect(stderr).toBe("error: flags_conflict\nnext: pass only one of --before, --since and --around\n");
+    expect(api).toEqual({ status: 400, error: "flags_conflict" });
   });
 });
 

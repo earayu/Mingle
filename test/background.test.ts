@@ -24,9 +24,11 @@ describe("background messages", () => {
         createdAt: clock,
       }) as NonNullable<ReturnType<Store["insertInbound"]>>;
     };
-    const speak = (chatId: string) => {
+    const speak = (chatId: string, state: "sent" | "failed" | "uncertain" = "sent") => {
       clock += 10;
-      return store.insertOutbound({ chatId, body: "ok", replyTo: null });
+      const message = store.insertOutbound({ chatId, body: "ok", replyTo: null });
+      store.setOutboundResult(message.id, state, state === "sent" ? `p-${message.id}` : null);
+      return message;
     };
     return { store, connectionId, say, speak };
   }
@@ -50,6 +52,22 @@ describe("background messages", () => {
     say(group.id, false);
     expect(store.unseen(group.id, second.createdAt)).toBe(1);
     expect(store.unseen(group.id, chatter.createdAt)).toBe(0);
+  });
+
+  it("does not count a reply that never reached the chat as having spoken", () => {
+    const { store, connectionId, say, speak } = setup();
+    const group = store.upsertChat({ connectionId, platformId: "G", kind: "group" });
+    say(group.id, false);
+    speak(group.id, "failed");
+    say(group.id, false);
+    const trigger = say(group.id, true);
+    // The failed send is not "spoke": both messages before it still count.
+    expect(store.unseen(group.id, trigger.createdAt)).toBe(2);
+
+    speak(group.id, "uncertain");
+    say(group.id, false);
+    const next = say(group.id, true);
+    expect(store.unseen(group.id, next.createdAt)).toBe(1);
   });
 
   it("counts a thread's channel, and resets when the agent speaks in any of its threads", () => {
