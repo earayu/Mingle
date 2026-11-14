@@ -205,6 +205,8 @@ export async function rig(
     secrets?: SecretStore;
     /** Every line Mingle logs. */
     log?: (line: string) => void;
+    /** `MINGLE_COLD_START`: which agents open a fresh session on a cold start. */
+    coldStart?: string;
   } = {},
 ): Promise<Rig> {
   const home = mkdtempSync(join(tmpdir(), "mingle-test-"));
@@ -242,6 +244,7 @@ export async function rig(
     secrets: options.secrets ?? memorySecrets(),
     cliEntry: CLI_ENTRY,
     coalesceMs: options.coalesceMs ?? 150,
+    ...(options.coldStart ? { coldStart: options.coldStart } : {}),
     reminderTickMs: 60_000,
     retryDelaysMs: [10],
     reconnectDelaysMs: [30],

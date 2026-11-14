@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { type Failure, failureOf, type Harness, type HarnessSession } from "../harness/harness.ts";
 import type { Agent, AgentStatus, Store } from "../store/store.ts";
+import {
+  type Action,
+  buildColdContext,
+  type ColdPolicy,
+  DEFAULT_COLD_POLICY,
+  describeAction,
+  isCold,
+  RECENT_ACTIONS,
+} from "./cold.ts";
 import { renderMessage } from "./format.ts";
 import { MEMORY_LIMIT, memoryHint, memoryHintDue, memorySize, readRole } from "./home.ts";
 import { renderManual } from "./manual.ts";
@@ -48,6 +57,13 @@ export interface RuntimeDeps {
   readonly onTurnCompleted?: (key: string, revision: number | undefined) => void;
   /** Wait before delivering to an idle agent, so a burst of messages becomes one input. */
   readonly coalesceMs?: number;
+  /**
+   * Cold start (docs/spec.md 4.1): when an input meets a large session that sat idle past the
+   * prompt cache's lifetime, open a fresh session with a built context instead of resuming. Off
+   * unless `rebuild`; cold turns are measured and logged either way, for the comparison.
+   */
+  readonly coldStart?: { readonly rebuild: boolean; readonly policy?: ColdPolicy };
+  readonly now?: () => number;
   readonly log?: (line: string) => void;
 }
 
@@ -135,6 +151,12 @@ export class AgentRuntime {
   /** The ledger revision the running turn began with, so it clears only the wait it knew. */
   private turnRevision: number | undefined;
   private unblockTimer: NodeJS.Timeout | undefined;
+  /** When the agent last finished work, or Mingle last saw it busy: how long the session sat. */
+  private idleSince: number;
+  /** The root agent's latest tool calls, kept across sessions for a cold start's context. */
+  private actions: Action[] = [];
+  /** The turn now running met a cold session: measured when it ends (docs/spec.md 12). */
+  private coldTurn: { mode: "resume" | "rebuild"; tokens: number | null; idleMs: number } | undefined;
   /** The sign-in the open session runs on; events report under it, whatever config changes to. */
   private sessionSignIn: string;
   /** Bumped when a session is replaced or disposed: a retired session's events are dropped. */
@@ -147,6 +169,12 @@ export class AgentRuntime {
     this.agentId = agentId;
     this.deps = deps;
     this.sessionSignIn = deps.signIn();
+    const last = deps.store.lastMessageTimes(agentId);
+    this.idleSince = Math.max(last.inAt ?? 0, last.outAt ?? 0) || this.now();
+  }
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
   }
 
   get id(): string {
@@ -320,10 +348,19 @@ export class AgentRuntime {
     if (this.blocked && Date.now() >= this.blocked.until) this.unblock();
     if (this.holdBatch(batch)) return;
 
+    const messageIdsInBatch = batch.flatMap((p) => (p.kind === "message" ? [p.id] : []));
     let session: HarnessSession;
+    let context = "";
     try {
-      session = await this.ensureSession();
+      const cold = this.running ? undefined : this.coldCheck();
+      if (cold?.rebuild) {
+        context = this.coldContext(messageIdsInBatch);
+        session = await this.reopenFresh(cold.tokens);
+      } else {
+        session = await this.ensureSession();
+      }
     } catch (error) {
+      this.coldTurn = undefined;
       this.lose(batch, error);
       throw error;
     }
@@ -348,10 +385,14 @@ export class AgentRuntime {
       .flatMap((p) => (p.kind === "text" ? [p.text] : delivered.has(p.id) ? [this.render(p.id)] : []))
       .filter(Boolean)
       .join("\n\n");
-    if (!text) return;
+    if (!text) {
+      this.coldTurn = undefined;
+      return;
+    }
+    const input = context ? `${context}\n\n${text}` : text;
     let result: Awaited<ReturnType<HarnessSession["deliver"]>>;
     try {
-      result = await session.deliver(text, inputId);
+      result = await session.deliver(input, inputId);
     } catch (error) {
       this.lose(batch, error);
       throw error;
@@ -362,6 +403,58 @@ export class AgentRuntime {
       throw error;
     }
     this.deps.log?.(`${this.agentId}: delivered ${messageIds.join(",") || "note"} (${result.outcome})`);
+  }
+
+  /**
+   * Whether the input about to be delivered meets a cold session (docs/spec.md 4.1). Any turn after
+   * a long idle is marked for measurement; `rebuild` when a fresh session should replace it.
+   */
+  private coldCheck(): { rebuild: boolean; tokens: number | null } | undefined {
+    const session = this.session;
+    if (!session) return undefined;
+    const now = this.now();
+    const policy = this.deps.coldStart?.policy ?? DEFAULT_COLD_POLICY;
+    const idleMs = now - this.idleSince;
+    if (idleMs <= policy.idleMs) return undefined;
+    const tokens = session.contextTokens?.() ?? null;
+    const rebuild =
+      this.deps.coldStart?.rebuild === true &&
+      isCold({ running: false, idleSince: this.idleSince, tokens }, now, policy);
+    this.coldTurn = { mode: rebuild ? "rebuild" : "resume", tokens, idleMs };
+    return { rebuild, tokens };
+  }
+
+  private coldContext(exclude: readonly string[]): string {
+    return buildColdContext({
+      store: this.deps.store,
+      agentId: this.agentId,
+      agentName: this.agent().name,
+      homeDir: this.deps.homeDir,
+      actions: this.actions,
+      exclude,
+      now: this.now(),
+    });
+  }
+
+  /**
+   * Close the cold session and open a fresh one in its place. The old session's id is kept as the
+   * previous one, so the switch can be undone. If the fresh one fails to open, the agent still
+   * points at the old session, and the next input resumes it.
+   */
+  private async reopenFresh(tokens: number | null): Promise<HarnessSession> {
+    const old = this.session;
+    // The cold session's events are ignored from here on, as on any replacement.
+    this.generation++;
+    this.session = undefined;
+    await old?.dispose().catch(() => {});
+    this.opening ??= this.open(true).finally(() => {
+      this.opening = undefined;
+    });
+    const session = await this.opening;
+    this.deps.log?.(
+      `${this.agentId}: cold start: opened ${session.id} in place of ${old?.id ?? "none"} (context ${tokens ?? "?"} tokens)`,
+    );
+    return session;
   }
 
   /**
@@ -502,7 +595,7 @@ export class AgentRuntime {
     return this.opening;
   }
 
-  private async open(): Promise<HarnessSession> {
+  private async open(fresh = false): Promise<HarnessSession> {
     // The sign-in this session will run on, fixed before anything async: everything the session
     // reports later (quota waits, completed turns) is accounted under this key, never under
     // whatever the configuration changed to while the session lived. Reading the secret store
@@ -532,7 +625,7 @@ export class AgentRuntime {
         harness: agent.harness,
         model: agent.model,
         cwd: this.deps.homeDir,
-        resume: agent.sessionId,
+        resume: fresh ? null : agent.sessionId,
         appendSystemPrompt: renderManual(agent.name, readRole(this.deps.homeDir), process.platform, Object.keys(own)),
         // Mingle's own variables win over the agent's.
         env: { ...own, ...this.deps.env() },
@@ -553,6 +646,7 @@ export class AgentRuntime {
         onTurnEnded: (outcome) => {
           if (this.disposed || gen !== this.generation) return;
           this.running = false;
+          this.idleSince = this.now();
           if (outcome.kind === "failed") {
             const failure = outcome.failure ?? "unknown";
             this.deps.log?.(`${this.agentId}: turn failed (${failure}${outcome.reason ? `: ${outcome.reason}` : ""})`);
@@ -572,6 +666,21 @@ export class AgentRuntime {
           this.setStatus(kind === "tool" ? "working" : "thinking", detail ?? null);
           this.deps.onActivity?.(kind, detail);
         },
+        onAction: (tool, input) => {
+          if (this.disposed || gen !== this.generation) return;
+          this.actions.push({ at: this.now(), text: describeAction(tool, input) });
+          if (this.actions.length > RECENT_ACTIONS) this.actions.splice(0, this.actions.length - RECENT_ACTIONS);
+        },
+        onTurnUsage: (usage) => {
+          if (gen !== this.generation) return;
+          const cold = this.coldTurn;
+          if (!cold) return;
+          this.coldTurn = undefined;
+          // The cold-start comparison (docs/spec.md 12): what the first turn after a long idle cost.
+          this.deps.log?.(
+            `${this.agentId}: cold turn mode=${cold.mode} idle=${Math.round(cold.idleMs / 60_000)}m context=${cold.tokens ?? "?"} input=${usage.input} cache_read=${usage.cacheRead} cache_write=${usage.cacheWrite} output=${usage.output}`,
+          );
+        },
       },
     );
     if (this.disposed || gen !== this.generation) {
@@ -584,7 +693,8 @@ export class AgentRuntime {
     } else {
       this.deps.log?.(`${this.agentId}: session ${session.id} ${session.resumed ? "resumed" : "opened"}`);
     }
-    this.deps.store.setSessionId(this.agentId, session.id);
+    if (fresh) this.deps.store.replaceSession(this.agentId, session.id);
+    else this.deps.store.setSessionId(this.agentId, session.id);
     this.session = session;
     return session;
   }

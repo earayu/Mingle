@@ -600,6 +600,7 @@ async function start(flags: Flags): Promise<void> {
     channels: await loadChannels(),
     secrets: defaultSecrets(resolve(paths.home, "secrets.json")),
     cliEntry: fileURLToPath(import.meta.url),
+    ...(process.env.MINGLE_COLD_START ? { coldStart: process.env.MINGLE_COLD_START } : {}),
     log,
   });
   const app = createApi(mingle);

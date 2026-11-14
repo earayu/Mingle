@@ -286,6 +286,22 @@ export class Store {
     this.db.prepare("UPDATE agents SET session_id = ?, updated_at = ? WHERE id = ?").run(sessionId, this.now(), id);
   }
 
+  /**
+   * A cold start opened `sessionId` in place of the agent's current session, which is kept as the
+   * previous one so the switch can be undone (docs/spec.md 4.1).
+   */
+  replaceSession(id: string, sessionId: string): void {
+    this.db
+      .prepare("UPDATE agents SET previous_session_id = session_id, session_id = ?, updated_at = ? WHERE id = ?")
+      .run(sessionId, this.now(), id);
+  }
+
+  /** The session the last cold start replaced; null when there was none. */
+  previousSessionId(id: string): string | null {
+    const row = this.db.prepare("SELECT previous_session_id FROM agents WHERE id = ?").get(id) as Row | undefined;
+    return str(row?.previous_session_id);
+  }
+
   deleteAgent(id: string): void {
     this.db.prepare("DELETE FROM agents WHERE id = ?").run(id);
   }
@@ -738,6 +754,23 @@ export class Store {
       const message = toMessage(r);
       return { ...message, chat: this.chat(message.chatId) as Chat, platform: String(r.platform) as Platform };
     });
+  }
+
+  /**
+   * The agent's latest conversation across all its chats, oldest first. Ignored inbound messages
+   * (background chatter, paused work, or requests the owner dismissed) and failed sends are left out.
+   */
+  recentConversation(agentId: string, limit: number, exclude: readonly string[] = []): Message[] {
+    const marks = exclude.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
+         WHERE n.agent_id = ? AND ((m.direction = 'in' AND m.triggers = 1 AND m.state != 'ignored') OR (m.direction = 'out' AND m.state IN ('sent', 'uncertain')))
+         ${exclude.length ? `AND m.id NOT IN (${marks})` : ""}
+         ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?`,
+      )
+      .all(agentId, ...exclude, limit) as Row[];
+    return rows.map(toMessage).reverse();
   }
 
   /** Delivered inbound messages for this agent that nobody has answered yet. */
