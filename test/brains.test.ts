@@ -133,4 +133,70 @@ describe("harness installs and sign-ins", () => {
       await r.close();
     }
   });
+
+  it("lists a newly installed harness at once instead of the cached list", async () => {
+    let installed = false;
+    const r = await rig(async () => {}, {
+      wrap: (harness) => ({
+        ...harness,
+        available: async () => [
+          ...(await harness.available()),
+          ...(installed ? [{ id: "fresh-test", name: "Fresh Test" }] : []),
+        ],
+        install: async () => {
+          installed = true;
+          return { ok: true };
+        },
+      }),
+    });
+    try {
+      const ids = async () => (await r.mingle.availableHarnesses()).map((h) => h.id);
+      expect(await ids()).not.toContain("fresh-test");
+      const job = r.mingle.brains.install("fresh-test");
+      await until(() => r.mingle.brains.get(job.id).state === "done");
+      expect(await ids()).toContain("fresh-test");
+    } finally {
+      await r.close();
+    }
+  });
+
+  it("answers GET /v1/admin/brains from the last probe, and probes again when asked fresh", async () => {
+    let probes = 0;
+    let installed = false;
+    const r = await rig(async () => {}, {
+      wrap: (harness) => ({
+        ...harness,
+        catalog: async () => {
+          probes++;
+          return [{ id: "cached-test", name: "Cached Test", installed, canInstall: true, canSignIn: false }];
+        },
+        install: async () => {
+          installed = true;
+          return { ok: true };
+        },
+      }),
+    });
+    type Row = { id: string; installed: boolean };
+    const brains = async (query = "") => (await r.admin("GET", `/v1/admin/brains${query}`)).json as Row[];
+    try {
+      await brains();
+      const before = probes;
+      expect(await brains()).toEqual([expect.objectContaining({ id: "cached-test", installed: false })]);
+      expect(probes).toBe(before);
+
+      installed = true; // installed outside Mingle, say in a terminal
+      expect((await brains())[0]?.installed).toBe(false);
+      expect((await brains("?fresh=1"))[0]?.installed).toBe(true);
+      expect(probes).toBe(before + 1);
+
+      // An install through Mingle drops the cached catalog at once.
+      installed = false;
+      await brains("?fresh=1");
+      const job = r.mingle.brains.install("cached-test");
+      await until(() => r.mingle.brains.get(job.id).state === "done");
+      expect((await brains())[0]?.installed).toBe(true);
+    } finally {
+      await r.close();
+    }
+  });
 });

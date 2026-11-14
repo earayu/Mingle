@@ -10,6 +10,7 @@ import {
   type Reminder,
   type Task,
 } from "./api.ts";
+import { peek, remember, useCached } from "./cache.ts";
 import { errorText, type MessageKey, statusDetailText, useI18n } from "./i18n.ts";
 import { ModelPicker } from "./NewAgent.tsx";
 import { online, useOnline } from "./online.ts";
@@ -42,6 +43,9 @@ import {
   Waiting,
 } from "./ui.tsx";
 
+type AgentWork = { tasks: Task[]; reminders: Reminder[] };
+const NO_WORK: AgentWork = { tasks: [], reminders: [] };
+
 export function AgentPage({
   agent,
   onNavigate,
@@ -52,8 +56,9 @@ export function AgentPage({
   onChanged: () => Promise<void> | void;
 }) {
   const { t } = useI18n();
-  const [activity, setActivity] = useState<Activity[] | null>(null);
-  const [work, setWork] = useState<{ tasks: Task[]; reminders: Reminder[] }>({ tasks: [], reminders: [] });
+  // The last activity and work seen for an agent show at once when its page opens again.
+  const [activity, setActivity] = useState<Activity[] | null>(() => peek<Activity[]>(`activity:${agent.id}`) ?? null);
+  const [work, setWork] = useState<AgentWork>(() => peek<AgentWork>(`work:${agent.id}`) ?? NO_WORK);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [tab, setTab] = useState<"activity" | "settings">("activity");
@@ -70,17 +75,18 @@ export function AgentPage({
   const refresh = useCallback(() => {
     api
       .activity(agent.id)
-      .then(setActivity)
+      .then((list) => setActivity(remember(`activity:${agent.id}`, list)))
       .catch(() => {});
     api
       .work(agent.id)
-      .then(setWork)
+      .then((next) => setWork(remember(`work:${agent.id}`, next)))
       .catch(() => {});
   }, [agent.id]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset when switching to another agent
+  // Switching to another agent starts from what was last seen for it.
   useEffect(() => {
-    setActivity(null);
+    setActivity(peek<Activity[]>(`activity:${agent.id}`) ?? null);
+    setWork(peek<AgentWork>(`work:${agent.id}`) ?? NO_WORK);
     setConfirmDelete(false);
     setNotice(null);
     setTab("activity");
@@ -829,16 +835,9 @@ function RoleEditor({ agent, onSaved }: { agent: AgentView; onSaved: () => void 
 /** Which harness and model drive the agent. A change applies from the next message. */
 function Brain({ agent, onSaved }: { agent: AgentView; onSaved: () => void }) {
   const { t } = useI18n();
-  const [harnesses, setHarnesses] = useState<Harness[] | null>(null);
+  const { value: harnesses } = useCached<Harness[]>("harnesses", api.harnesses, []);
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    api
-      .harnesses()
-      .then(setHarnesses)
-      .catch(() => setHarnesses([]));
-  }, []);
-
   async function save(patch: { harness?: string; model?: string | null }) {
     setState("saving");
     setError(null);

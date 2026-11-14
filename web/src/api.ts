@@ -195,7 +195,8 @@ export interface Reminder {
 export const api = {
   status: () => call<{ version: string; agents: AgentView[] }>("GET", "/v1/admin/status"),
   harnesses: () => call<Harness[]>("GET", "/v1/admin/harnesses"),
-  brains: () => call<BrainStatus[]>("GET", "/v1/admin/brains"),
+  /** The last catalog Mingle found at once; `fresh` probes every harness again, a second or more. */
+  brains: (fresh = false) => call<BrainStatus[]>("GET", `/v1/admin/brains${fresh ? "?fresh=1" : ""}`),
   signInState: (harness: string) => call<SignInState>("GET", `/v1/admin/brains/${harness}/sign-in`),
   installPlan: (harness: string) => call<InstallPlan>("GET", `/v1/admin/brains/${harness}/install-plan`),
   install: (harness: string) => call<Job>("POST", `/v1/admin/brains/${harness}/install`),

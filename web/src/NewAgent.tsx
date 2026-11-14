@@ -2,6 +2,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { Navigate } from "./App.tsx";
 import { type AgentView, api, type BrainStatus, type ModelList } from "./api.ts";
 import { BrainRow, SignInBrain, useSignIn } from "./Brains.tsx";
+import { useCached } from "./cache.ts";
 import { errorText, type MessageKey, useI18n } from "./i18n.ts";
 import {
   ApiKeyHint,
@@ -34,20 +35,20 @@ export function NewAgent({
   const [role, setRole] = useState("");
   const [harness, setHarness] = useState("");
   const [model, setModel] = useState("");
-  const [harnesses, setHarnesses] = useState<BrainStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const loadBrains = useCallback(() => {
-    api
-      .brains()
-      .then((list) => {
-        setHarnesses(list);
-        setHarness((current) => current || list.find((b) => b.installed)?.id || "");
-      })
-      .catch(() => setHarnesses([]));
-  }, []);
-  useEffect(loadBrains, [loadBrains]);
+  const { value: harnesses, reload: reloadBrains } = useCached<BrainStatus[]>(
+    "brains",
+    () => api.brains(),
+    [],
+    () => api.brains(true),
+  );
+  const loadBrains = useCallback(() => void reloadBrains(), [reloadBrains]);
+  // The first installed harness is the default choice, as soon as the list is known.
+  useEffect(() => {
+    if (harnesses) setHarness((current) => current || harnesses.find((b) => b.installed)?.id || "");
+  }, [harnesses]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -266,18 +267,9 @@ export function ModelPicker({
   inline?: boolean;
 }) {
   const { t } = useI18n();
-  const [list, setList] = useState<ModelList | null>(null);
-  useEffect(() => {
-    let live = true;
-    setList(null);
-    api
-      .models(harness)
-      .then((next) => live && setList(next))
-      .catch(() => live && setList({ kind: "unsupported" }));
-    return () => {
-      live = false;
-    };
-  }, [harness]);
+  const { value: list } = useCached<ModelList>(`models:${harness}`, () => api.models(harness), {
+    kind: "unsupported",
+  });
 
   const wrap = (control: React.ReactNode) =>
     inline ? (
