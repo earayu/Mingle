@@ -8,7 +8,16 @@
  * - An adapter never throws for "the platform cannot do this": it degrades and says so.
  */
 
-export type Platform = "wechat" | "wecom" | "feishu" | "dingtalk" | "qq" | "slack" | "discord" | "telegram";
+export type Platform =
+  | "wechat"
+  | "wecom"
+  | "feishu"
+  | "dingtalk"
+  | "qq"
+  | "slack"
+  | "discord"
+  | "telegram"
+  | "imessage";
 
 export type ChatKind = "dm" | "group" | "thread";
 
@@ -75,6 +84,10 @@ export type OnboardingFailure =
   | "invalid_credentials"
   | "network"
   | "already_bound"
+  /** The app or system denied something only the person can grant (macOS privacy settings, for example). */
+  | "permission_missing"
+  /** A personal-account channel signed in to the owner's own account; the agent needs its own (docs/spec.md 1.4). */
+  | "owner_account"
   | "unknown";
 
 /** Opaque to the core. Stored in the system keychain, never in SQLite or logs. */
