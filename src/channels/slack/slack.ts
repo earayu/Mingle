@@ -17,6 +17,7 @@ import type {
   ReactionState,
   SendResult,
 } from "../channel.ts";
+import { withTextSent } from "../channel.ts";
 
 /**
  * Slack through Socket Mode: the app opens a WebSocket to Slack, so no public address is
@@ -99,6 +100,9 @@ const MANIFEST = {
   },
 };
 
+/** Methods that ignore a JSON body: their arguments go form-encoded. */
+const FORM_ONLY = new Set(["files.getUploadURLExternal"]);
+
 export const SLACK_SETUP_URL = `https://api.slack.com/apps?new_app=1&manifest_json=${encodeURIComponent(JSON.stringify(MANIFEST))}`;
 
 class SlackError extends Error {
@@ -150,10 +154,14 @@ export function slackChannel(options: SlackOptions = {}): Channel {
       body: Record<string, unknown> = {},
       timeoutMs = 20_000,
     ): Promise<T> => {
+      const form = FORM_ONLY.has(method);
       const response = await fetchImpl(`${apiBase}/${method}`, {
         method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" },
-        body: JSON.stringify(body),
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": form ? "application/x-www-form-urlencoded" : "application/json; charset=utf-8",
+        },
+        body: form ? formBody(body) : JSON.stringify(body),
         signal: AbortSignal.timeout(timeoutMs),
       });
       const json = (await response.json().catch(() => ({ ok: false, error: `http_${response.status}` }))) as {
@@ -346,15 +354,22 @@ export function slackChannel(options: SlackOptions = {}): Channel {
         async send(message: OutboundMessage): Promise<SendResult> {
           const { channel, thread } = parseChat(message.chat.platformId);
           const threadTs = thread ?? (message.chat.kind === "group" ? message.replyTo : undefined);
+          let ts = "";
           try {
-            let ts = "";
+            // Bytes first: a file Slack refuses must not leave the text behind on its own.
+            const staged: Staged[] = [];
+            for (const file of message.files ?? []) staged.push(await stageUpload(call, fetchImpl, file));
             if (message.text.trim()) ts = await post(message.chat, message.text, message.replyTo);
-            for (const file of message.files ?? []) {
-              await upload(call, fetchImpl, file, channel, threadTs);
+            if (staged.length) {
+              await call("files.completeUploadExternal", {
+                files: staged,
+                channel_id: channel,
+                ...(threadTs ? { thread_ts: threadTs } : {}),
+              });
             }
             return { kind: "sent", platformId: ts || `file-${Date.now()}` };
           } catch (error) {
-            return sendFailure(error);
+            return withTextSent(sendFailure(error), ts);
           }
         },
 
@@ -436,31 +451,42 @@ async function displayNameOf(call: Call, userId: string): Promise<string> {
   return user.profile?.display_name || user.profile?.real_name || user.real_name || user.name;
 }
 
-/** Slack's external upload: reserve a URL, send the bytes, then share the file into the chat. */
-async function upload(
-  call: Call,
-  fetchImpl: Fetch,
-  file: { path: string; name?: string },
-  channel: string,
-  threadTs: string | undefined,
-) {
+/** Form fields for the methods in FORM_ONLY; objects and arrays go as JSON strings. */
+function formBody(body: Record<string, unknown>): string {
+  const form = new URLSearchParams();
+  for (const [key, value] of Object.entries(body)) {
+    if (value === undefined) continue;
+    form.set(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+  }
+  return form.toString();
+}
+
+interface Staged {
+  id: string;
+  title: string;
+}
+
+/**
+ * The first two steps of Slack's external upload: reserve a URL, send the bytes. Nothing shows
+ * in the chat until files.completeUploadExternal shares the staged files.
+ */
+async function stageUpload(call: Call, fetchImpl: Fetch, file: { path: string; name?: string }): Promise<Staged> {
   const name = file.name ?? basename(file.path);
   const { size } = await stat(file.path);
+  // Slack rejects a zero length; an empty file cannot be shared.
+  if (size === 0) throw new SlackError("file_empty", 200);
   const reserved = await call<{ upload_url: string; file_id: string }>("files.getUploadURLExternal", {
     filename: name,
     length: size,
   });
+  // The upload URL is signed: it never goes into an error or a log.
   const sent = await fetchImpl(reserved.upload_url, {
     method: "POST",
     body: new Blob([await readFile(file.path)]),
     signal: AbortSignal.timeout(120_000),
   });
   if (!sent.ok) throw new SlackError(`upload_http_${sent.status}`, sent.status);
-  await call("files.completeUploadExternal", {
-    files: [{ id: reserved.file_id, title: name }],
-    channel_id: channel,
-    ...(threadTs ? { thread_ts: threadTs } : {}),
-  });
+  return { id: reserved.file_id, title: name };
 }
 
 function parseChat(platformId: string): { channel: string; thread?: string } {
@@ -529,17 +555,40 @@ export async function toInbound(
   };
 }
 
+const CHAT_GONE = new Set(["channel_not_found", "is_archived", "thread_not_found", "invalid_channel"]);
+const FORBIDDEN = new Set([
+  "not_in_channel",
+  "restricted_action",
+  "cant_update_message",
+  "missing_scope",
+  "no_permission",
+  "access_denied",
+  "posting_to_channel_denied",
+  "file_uploads_disabled",
+  "file_uploads_except_images_disabled",
+  "file_type_not_allowed",
+  "blocked_file_type",
+  "slack_connect_blocked_file_type",
+  "slack_connect_file_upload_sharing_blocked",
+]);
+const TOO_LARGE = new Set([
+  "msg_too_long",
+  "too_many_attachments",
+  "invalid_blocks",
+  "file_upload_size_restricted",
+  "storage_limit_reached",
+]);
+const TRANSIENT = new Set(["internal_error", "fatal_error", "service_unavailable", "request_timeout"]);
+
 function sendFailure(error: unknown): SendResult {
   if (error instanceof SlackError) {
+    const detail = error.code;
     if (error.code === "ratelimited" || error.status === 429)
-      return { kind: "failed", code: "rate_limited", retryable: true };
-    if (["channel_not_found", "is_archived", "thread_not_found"].includes(error.code))
-      return { kind: "failed", code: "chat_gone", retryable: false };
-    if (["not_in_channel", "restricted_action", "cant_update_message", "missing_scope"].includes(error.code))
-      return { kind: "failed", code: "forbidden", retryable: false };
-    if (["msg_too_long", "too_many_attachments", "invalid_blocks"].includes(error.code))
-      return { kind: "failed", code: "too_large", retryable: false };
-    return { kind: "failed", code: "unknown", retryable: error.status >= 500 };
+      return { kind: "failed", code: "rate_limited", retryable: true, detail };
+    if (CHAT_GONE.has(error.code)) return { kind: "failed", code: "chat_gone", retryable: false, detail };
+    if (FORBIDDEN.has(error.code)) return { kind: "failed", code: "forbidden", retryable: false, detail };
+    if (TOO_LARGE.has(error.code)) return { kind: "failed", code: "too_large", retryable: false, detail };
+    return { kind: "failed", code: "unknown", retryable: error.status >= 500 || TRANSIENT.has(error.code), detail };
   }
   if ((error as Error)?.name === "TimeoutError") return { kind: "uncertain" };
   return { kind: "failed", code: "network", retryable: true };

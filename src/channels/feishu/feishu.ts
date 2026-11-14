@@ -19,6 +19,7 @@ import type {
   ReactionState,
   SendResult,
 } from "../channel.ts";
+import { withTextSent } from "../channel.ts";
 
 /**
  * Feishu (and Lark) through the official SDK: QR app registration, then a
@@ -282,10 +283,11 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
         async send(message: OutboundMessage): Promise<SendResult> {
           if (!channel) return { kind: "failed", code: "forbidden", retryable: false };
           const opts = message.replyTo ? { replyTo: message.replyTo } : {};
+          let textId = "";
           try {
             let last = "";
             if (message.text)
-              last = (await channel.send(message.chat.platformId, { markdown: message.text }, opts)).messageId;
+              last = textId = (await channel.send(message.chat.platformId, { markdown: message.text }, opts)).messageId;
             for (const file of message.files ?? []) {
               const source = await readFile(file.path);
               const name = file.name ?? basename(file.path);
@@ -296,7 +298,7 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
             }
             return { kind: "sent", platformId: last };
           } catch (error) {
-            return sendFailure(error);
+            return withTextSent(sendFailure(error), textId);
           }
         },
 

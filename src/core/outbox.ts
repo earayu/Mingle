@@ -106,8 +106,20 @@ export class Outbox {
         this.markAnswered(chat.id, quoted);
         return { messages: sent, state: "uncertain", degraded: [...degraded] };
       }
+      const why = result.detail ? ` (${connection.platform}: ${result.detail})` : "";
+      if (result.textSent) {
+        // The person has the text; only the files are missing. Say so, so nobody sends it twice.
+        store.setOutboundResult(record.id, "sent", result.textSent.platformId);
+        this.markAnswered(chat.id, quoted);
+        throw new MingleError(
+          `send_${result.code}`,
+          `the text was delivered but the file was not${why}: ${failureNext(result.code, "file")}. ` +
+            "Do not send the text again; send only the file with --file and no text, or tell the person it could not be attached",
+          502,
+        );
+      }
       store.setOutboundResult(record.id, "failed", null);
-      throw new MingleError(`send_${result.code}`, failureNext(result.code), 502);
+      throw new MingleError(`send_${result.code}`, `${failureNext(result.code, "message")}${why}`, 502);
     }
     this.markAnswered(chat.id, quoted);
     return { messages: sent, state: "sent", degraded: [...degraded] };
@@ -118,11 +130,16 @@ export class Outbox {
     message: Parameters<ChannelConnection["send"]>[0],
   ): Promise<SendResult> {
     let result = await live.send(message);
+    // Once the text is out, retries carry only the files.
+    const textSent = result.kind === "failed" ? result.textSent : undefined;
     for (const delay of this.retryDelaysMs) {
       if (result.kind !== "failed" || !result.retryable) break;
       await new Promise((r) => setTimeout(r, delay));
-      result = await live.send(message);
+      result = await live.send(textSent ? { ...message, text: "" } : message);
     }
+    if (!textSent) return result;
+    if (result.kind === "sent") return { ...result, platformId: textSent.platformId };
+    if (result.kind === "failed") return { ...result, textSent };
     return result;
   }
 
@@ -141,18 +158,20 @@ export class Outbox {
   }
 }
 
-function failureNext(code: string): string {
+function failureNext(code: string, what: "message" | "file"): string {
   switch (code) {
     case "rate_limited":
       return "the chat app is rate limiting; wait a minute before sending again";
     case "forbidden":
-      return "the bot may have been removed from this chat or lacks permission to post";
+      return what === "file"
+        ? "the bot lacks permission to share files here, or the workspace blocks this kind of file"
+        : "the bot may have been removed from this chat or lacks permission to post";
     case "too_large":
       return "the file is too large for this chat app; send a smaller file or a link";
     case "chat_gone":
       return "this chat no longer exists for the bot";
     default:
-      return "the message was not sent; try again shortly";
+      return what === "file" ? "the chat app refused it" : "the message was not sent; try again shortly";
   }
 }
 
