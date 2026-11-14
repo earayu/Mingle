@@ -37,7 +37,7 @@ export function memorySize(dir: string): number {
 }
 
 /** MEMORY.md is read at the start of every session; past this size Mingle asks the agent to trim it. */
-export const MEMORY_LIMIT = 32 * 1024;
+export const MEMORY_LIMIT = 64 * 1024;
 
 /**
  * Whether to tell the agent now that MEMORY.md is too large (docs/spec.md 4.5): it is over the

@@ -420,8 +420,36 @@ export class Mingle {
   async resetSession(idOrSlug: string): Promise<void> {
     const agent = this.agent(idOrSlug);
     const runtime = this.runtimes.get(agent.id);
-    if (runtime) await runtime.reset();
-    else this.store.setSessionId(agent.id, null);
+    const notes = runtime?.takePendingNotes() ?? [];
+    // The old session's token is retired with it: its background work cannot send any more.
+    this.revokeTokens(agent.id);
+    for (const id of this.replies.openFor(agent.id)) this.replies.settle(id, "stopped");
+    this.runtimes.delete(agent.id);
+    let closing = this.closing.get(agent.id);
+    if (runtime) {
+      const previous = closing;
+      const retiring = runtime.dispose("offline", true);
+      const done = Promise.all([previous, retiring])
+        .then(() => {})
+        .finally(() => {
+          if (this.closing.get(agent.id) === done) this.closing.delete(agent.id);
+        });
+      closing = done;
+      this.closing.set(agent.id, done);
+    }
+    // Already delivered work will not be answered by the retired session; queued and waiting
+    // messages stay for the replacement.
+    this.store.moveInbound(
+      this.store.awaitingReply(agent.id).map((m) => m.id),
+      "give_up",
+    );
+    this.store.setSessionId(agent.id, null);
+    if (!this.paused.has(agent.id)) {
+      const replacement = this.addRuntime(this.agent(agent.id));
+      // The old session may still be closing; the replacement opens only once it is gone.
+      replacement.start(closing);
+      for (const note of notes) replacement.enqueueText(note);
+    }
     this.log(`${agent.name}: session reset`);
   }
 
@@ -437,19 +465,20 @@ export class Mingle {
     const now = Date.now();
     const counts = this.store.inboundCounts(agent.id, now - 7 * 86_400_000);
     const states = ["received", "delivered", "waiting", "replied", "unanswered", "failed", "ignored"];
+    // Only structured states belong in a shareable report; raw provider/adapter errors may
+    // contain request data.
     const lines = [
       "Mingle diagnostic info",
       `time: ${new Date(now).toISOString()}`,
       `mingle: ${VERSION} · node ${process.version} · ${process.platform} ${arch()} ${release()}`,
       `agent: ${agent.id} · status ${agent.status}${agent.statusFailure ? ` (${agent.statusFailure})` : ""}`,
-      ...(agent.statusDetail ? [`detail: ${agent.statusDetail.replaceAll("\n", " ").slice(0, 300)}`] : []),
       `brain: ${agent.harness}${harness?.version ? ` ${harness.version}` : ""}${harness ? "" : " (not found on this computer)"} · model ${agent.model ?? "default"}`,
       `session: ${agent.sessionId ?? "none"}`,
       `memory: MEMORY.md ${memorySize(this.homeDir(agent))} bytes`,
       "chat apps:",
       ...this.store.connections(agent.id).map((n) => {
         const state = this.isLive(n.id) ? n.state : n.state === "connected" ? "reconnecting" : n.state;
-        return `  ${n.platform} ${n.id} · ${state}${n.stateDetail ? ` (${n.stateDetail})` : ""}${n.ownerId ? "" : " · no owner"}`;
+        return `  ${n.platform} ${n.id} · ${state}${n.ownerId ? "" : " · no owner"}`;
       }),
       `messages, last 7 days: ${states.map((k) => `${k} ${counts[k] ?? 0}`).join(" · ")}`,
       `tasks open: ${this.store.tasks(agent.id, false).length} · reminders: ${this.store.reminders(agent.id).length}`,
@@ -995,7 +1024,7 @@ export class Mingle {
     }
     for (const [agentId, ids] of due) {
       this.log(`${agentId}: trying again on ${ids.join(",")} after waiting`);
-      this.runtimes.get(agentId)?.retry(ids);
+      this.runtimes.get(agentId)?.resume(ids, now);
     }
   }
 

@@ -2,9 +2,10 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ScriptedTurn } from "@botiverse/oar/testing";
 import { afterEach, describe, expect, it } from "vitest";
-import { MEMORY_LIMIT } from "../src/core/home.ts";
+import { MEMORY_LIMIT, memoryHintDue } from "../src/core/home.ts";
+import { Mingle } from "../src/core/mingle.ts";
 import { holdUntil } from "../src/core/runtime.ts";
-import type { Failure, Harness } from "../src/harness/harness.ts";
+import type { Failure, Harness, HarnessEvents } from "../src/harness/harness.ts";
 import { messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
 
 /** How the agent recovers: hints about its memory, waiting out a limit, resetting its session. */
@@ -34,7 +35,7 @@ describe("memory hint", () => {
     writeFileSync(join(home, "MEMORY.md"), "x".repeat(MEMORY_LIMIT + 4096));
 
     channel.receive({ text: "first" });
-    await until(() => inputs.some((i) => i.startsWith("[mingle] Your MEMORY.md is 36 KB")));
+    await until(() => inputs.some((i) => i.startsWith("[mingle] Your MEMORY.md is 68 KB")));
     expect(inputs[0]).toContain("first");
     expect(mingle.store.memoryHint(agentId)?.size).toBe(MEMORY_LIMIT + 4096);
 
@@ -234,5 +235,275 @@ describe("waiting out a passing failure", () => {
     const [third] = mingle.store.waiting(agentId);
     await mingle.pauseAgent(agentId);
     expect(mingle.store.message(third?.id as string)?.state).toBe("ignored");
+  });
+});
+
+describe("CR regression", () => {
+  it("does not resume an old session when reset races with its opening", async () => {
+    const gate = Promise.withResolvers<void>();
+    const resumes: (string | null | undefined)[] = [];
+    try {
+      current = await rig(async () => {}, {
+        wrap: (h) => ({
+          ...h,
+          open: async (options, events) => {
+            resumes.push(options.resume);
+            if (resumes.length === 1) await gate.promise;
+            return h.open(options, events);
+          },
+        }),
+      });
+      const { mingle, agentId } = current;
+      await until(() => resumes.length === 1);
+      const result = await current.admin("POST", `/v1/admin/agents/${agentId}/reset`);
+      expect(result.status).toBe(200);
+      gate.resolve();
+      await until(() => resumes.length >= 2 && Boolean(mingle.agent(agentId).sessionId));
+      expect(resumes[1] ?? null).toBeNull();
+    } finally {
+      gate.resolve();
+    }
+  });
+
+  it("revokes the old session token so its background work cannot send after reset", async () => {
+    const envs: Record<string, string>[] = [];
+    current = await rig(answering([]), {
+      wrap: (h) => ({
+        ...h,
+        open: async (options, events) => {
+          envs.push({ ...options.env });
+          return h.open(options, events);
+        },
+      }),
+    });
+    const { mingle, channel, agentId } = current;
+    channel.receive({ text: "before reset" });
+    await until(() => channel.sent.length === 1 && !mingle.runtime(agentId)?.busy);
+    const chat = mingle.store.agentChats(agentId)[0];
+    const old = envs[0] as Record<string, string>;
+    await current.admin("POST", `/v1/admin/agents/${agentId}/reset`);
+    await until(() => envs.length >= 2 && Boolean(mingle.agent(agentId).sessionId));
+    const result = await runCli(old, ["message", "send", "--to", chat?.id as string], "obsolete background result");
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("unauthorized");
+    expect(channel.sent.some((m) => m.text === "obsolete background result")).toBe(false);
+  });
+
+  it("does not copy raw provider reasons into shareable diagnostics", async () => {
+    current = await rig(async () => {}, {
+      wrap: (h) => ({
+        ...h,
+        open: (options, events) =>
+          h.open(options, {
+            ...events,
+            onTurnEnded: () =>
+              events.onTurnEnded({
+                kind: "failed",
+                failure: "auth",
+                reason: "Authorization: Bearer synthetic-private-key; request body: synthetic-private-chat",
+              }),
+          }),
+      }),
+    });
+    const { mingle, channel, agentId } = current;
+    channel.receive({ text: "trigger failed provider" });
+    await until(() => mingle.agent(agentId).status === "error");
+    const result = await current.admin("GET", `/v1/admin/agents/${agentId}/diagnostics`);
+    expect(result.status).toBe(200);
+    const text = (result.json as { text: string }).text;
+    expect(text).not.toContain("synthetic-private-key");
+    expect(text).not.toContain("synthetic-private-chat");
+  });
+
+  it("keeps the approved 64 KiB memory threshold", () => {
+    expect(memoryHintDue(48 * 1024, undefined, Date.now())).toBe(false);
+    expect(memoryHintDue(64 * 1024, undefined, Date.now())).toBe(false);
+    expect(memoryHintDue(64 * 1024 + 1, undefined, Date.now())).toBe(true);
+  });
+
+  it("restores the quota block for new messages when Mingle restarts", async () => {
+    const state = { fails: 1 };
+    const inputs: string[] = [];
+    const reset = Date.now() + 30 * 60_000;
+    current = await rig(
+      async (t) => {
+        inputs.push(t.input);
+      },
+      { wrap: flaky(state, "quota", () => reset) },
+    );
+    const { mingle, channel, agentId } = current;
+    channel.receive({ text: "first quota message" });
+    await until(() => mingle.store.waiting(agentId).length === 1);
+    const deadline = mingle.store.waiting(agentId)[0]?.retryAt;
+    // Same pattern as the existing test/pause.test.ts restart persistence test.
+    const again = new Mingle(mingle.options);
+    try {
+      await again.start("http://127.0.0.1:1");
+      const incoming = channel.receive({ text: "new message before reset" });
+      const chat = again.store.agentChats(agentId)[0] as { id: string };
+      const message = await until(() => {
+        const m = again.store.messageByPlatformId(chat.id, incoming.platformId);
+        return m && m.state !== "received" ? m : undefined;
+      });
+      expect(message.state).toBe("waiting");
+      expect(message.retryAt).toBe(deadline);
+      expect(inputs).toHaveLength(1);
+    } finally {
+      await again.stop();
+    }
+  });
+
+  it("ignores the retired session's events after reset", async () => {
+    const opened: HarnessEvents[] = [];
+    current = await rig(answering([]), {
+      wrap: (h) => ({
+        ...h,
+        open: (options, events) => {
+          opened.push(events);
+          return h.open(options, events);
+        },
+      }),
+    });
+    const { mingle, channel, agentId } = current;
+    channel.receive({ text: "before reset" });
+    await until(() => channel.sent.length === 1 && !mingle.runtime(agentId)?.busy);
+    const old = opened[0] as HarnessEvents;
+    const result = await current.admin("POST", `/v1/admin/agents/${agentId}/reset`);
+    expect(result.status).toBe(200);
+    await until(() => opened.length >= 2 && Boolean(mingle.agent(agentId).sessionId));
+    // Late events of the session that was retired must not touch the new one's work.
+    old.onTurnStarted();
+    old.onActivity("tool", "stale");
+    old.onTurnEnded({ kind: "failed", failure: "auth", reason: "stale failure" });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mingle.agent(agentId).status).toBe("idle");
+    expect(mingle.agent(agentId).statusDetail).toBeNull();
+    expect(channel.sent).toHaveLength(1);
+  });
+
+  it("resets a paused agent without opening a session until resumed", async () => {
+    const resumes: (string | null | undefined)[] = [];
+    current = await rig(answering([]), {
+      wrap: (h) => ({
+        ...h,
+        open: (options, events) => {
+          resumes.push(options.resume);
+          return h.open(options, events);
+        },
+      }),
+    });
+    const { mingle, channel, agentId } = current;
+    channel.receive({ text: "before pause" });
+    await until(() => channel.sent.length === 1 && !mingle.runtime(agentId)?.busy);
+    await mingle.pauseAgent(agentId);
+    const result = await current.admin("POST", `/v1/admin/agents/${agentId}/reset`);
+    expect(result.status).toBe(200);
+    expect(mingle.agent(agentId).sessionId).toBeNull();
+    // Paused: no replacement session opens.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(resumes).toHaveLength(1);
+    expect(await mingle.resumeAgent(agentId)).toBe(true);
+    await until(() => resumes.length === 2 && Boolean(mingle.agent(agentId).sessionId));
+    expect(resumes[1] ?? null).toBeNull();
+    channel.receive({ text: "after resume" });
+    await until(() => channel.sent.length === 2);
+  });
+
+  it("carries queued notes into the replacement session", async () => {
+    const gate = Promise.withResolvers<void>();
+    const inputs: string[] = [];
+    let first = true;
+    try {
+      current = await rig(async (t) => {
+        inputs.push(t.input);
+        if (first) {
+          first = false;
+          await gate.promise;
+        }
+      });
+      const { mingle, channel, agentId } = current;
+      channel.receive({ text: "start a long turn" });
+      await until(() => inputs.length === 1);
+      mingle.runtime(agentId)?.enqueueText("queued reminder fixture");
+      const result = await current.admin("POST", `/v1/admin/agents/${agentId}/reset`);
+      expect(result.status).toBe(200);
+      gate.resolve();
+      await until(() => inputs.length === 2);
+      expect(inputs.filter((i) => i.includes("queued reminder fixture"))).toHaveLength(1);
+    } finally {
+      gate.resolve();
+    }
+  });
+
+  it("keeps the persisted quota wait when the runtime closes", async () => {
+    const state = { fails: 1 };
+    const reset = Date.now() + 30 * 60_000;
+    current = await rig(async () => {}, { wrap: flaky(state, "quota", () => reset) });
+    const { mingle, channel, agentId } = current;
+    channel.receive({ text: "limited" });
+    await until(() => mingle.store.waiting(agentId).length === 1);
+    const wait = mingle.store.quotaWait(agentId);
+    expect(wait?.until).toBe(mingle.store.waiting(agentId)[0]?.retryAt);
+    await mingle.runtime(agentId)?.dispose();
+    expect(mingle.store.quotaWait(agentId)).toEqual(wait);
+  });
+
+  it("lets a newer quota wait hold back an earlier scheduled retry until the owner asks", async () => {
+    const state = { fails: 2 };
+    const inputs: string[] = [];
+    const reset = Date.now() + 30 * 60_000;
+    const classes: Failure[] = ["overloaded", "quota"];
+    current = await rig(answeringUnless(state, inputs), {
+      wrap: (h) => ({
+        ...h,
+        open: (options, events) =>
+          h.open(options, {
+            ...events,
+            onTurnEnded: (outcome) => {
+              if (state.fails <= 0) return events.onTurnEnded(outcome);
+              const failure = classes[classes.length - state.fails] as Failure;
+              state.fails--;
+              events.onTurnEnded({
+                kind: "failed",
+                reason: failure,
+                failure,
+                ...(failure === "quota" ? { resetsAt: reset } : {}),
+              });
+            },
+          }),
+      }),
+    });
+    const { mingle, channel, agentId } = current;
+    channel.receive({ text: "A hits a busy provider" });
+    await until(() => mingle.store.waiting(agentId).length === 1);
+    const a = mingle.store.waiting(agentId)[0] as { id: string; retryAt: number };
+    channel.receive({ text: "B hits the usage limit" });
+    await until(() => mingle.store.waiting(agentId).length === 2);
+    const bDeadline = mingle.store.waiting(agentId)[1]?.retryAt as number;
+    expect(bDeadline).toBe(reset + 15_000);
+
+    // A's own retry time comes first: it waits again at the later quota time, no new input.
+    mingle.resumeWaiting(a.retryAt);
+    await until(() => {
+      const m = mingle.store.message(a.id);
+      return m?.state === "waiting" && m.retryAt === bDeadline;
+    });
+    expect(inputs).toHaveLength(2);
+
+    // The owner asking to retry delivers it now.
+    const retried = await current.admin("POST", `/v1/admin/agents/${agentId}/messages/retry`, { ids: [a.id] });
+    expect((retried.json as { retried: string[] }).retried).toEqual([a.id]);
+    await until(() => mingle.store.message(a.id)?.state === "replied");
+  });
+
+  it("does not copy connection error detail into diagnostics", async () => {
+    current = await rig(answering([]));
+    const { mingle, agentId } = current;
+    const connection = mingle.store.connections(agentId)[0] as { id: string };
+    mingle.store.updateConnection(connection.id, { state: "error", stateDetail: "synthetic-adapter-secret" });
+    const result = await current.admin("GET", `/v1/admin/agents/${agentId}/diagnostics`);
+    expect(result.status).toBe(200);
+    const text = (result.json as { text: string }).text;
+    expect(text).not.toContain("synthetic-adapter-secret");
   });
 });

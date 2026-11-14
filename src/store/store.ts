@@ -241,6 +241,21 @@ export class Store {
     this.db.prepare("UPDATE agents SET memory_hint_at = ?, memory_hint_size = ? WHERE id = ?").run(at, size, id);
   }
 
+  /** A provider quota holds back everything new for this agent until `until` (docs/spec.md 4.3). */
+  quotaWait(id: string): { until: number; resetsAt: number } | undefined {
+    const row = this.db.prepare("SELECT quota_wait_until, quota_resets_at FROM agents WHERE id = ?").get(id) as
+      | Row
+      | undefined;
+    if (row?.quota_wait_until == null || row.quota_resets_at == null) return undefined;
+    return { until: Number(row.quota_wait_until), resetsAt: Number(row.quota_resets_at) };
+  }
+
+  setQuotaWait(id: string, wait?: { until: number; resetsAt: number }): void {
+    this.db
+      .prepare("UPDATE agents SET quota_wait_until = ?, quota_resets_at = ? WHERE id = ?")
+      .run(wait?.until ?? null, wait?.resetsAt ?? null, id);
+  }
+
   setSessionId(id: string, sessionId: string | null): void {
     this.db.prepare("UPDATE agents SET session_id = ?, updated_at = ? WHERE id = ?").run(sessionId, this.now(), id);
   }

@@ -110,7 +110,7 @@ When a message has no `from` and it matters who is writing, ask once who they ar
 - what is in progress, with enough of a handle to pick it up (chat ID, task ID, file path);
 - links to `notes/` for anything long.
 
-Update it after meaningful work and before long tasks. Mark finished things finished. Never write credentials into it. Message text is already stored and searchable, so do not copy conversations into memory. When it grows past 32 KB, Mingle tells you after your next piece of work; trim it then.
+Update it after meaningful work and before long tasks. Mark finished things finished. Never write credentials into it. Message text is already stored and searchable, so do not copy conversations into memory. When it grows past 64 KiB, Mingle asks you to trim it after a turn that finished; do it then.
 
 Beyond `ROLE.md`, `MEMORY.md` and `notes/`, organise your home directory however suits the work.
 
