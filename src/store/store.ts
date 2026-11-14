@@ -6,7 +6,7 @@ import { INBOUND, type InboundEvent } from "../core/inbound.ts";
 
 export type AgentStatus = "offline" | "idle" | "thinking" | "working" | "error" | "paused";
 export type ConnectionStateKind = "awaiting_credentials" | "awaiting_approval" | "connected" | "reconnecting" | "error";
-export type InboundState = "received" | "delivered" | "replied" | "unanswered" | "failed" | "ignored";
+export type InboundState = "received" | "delivered" | "waiting" | "replied" | "unanswered" | "failed" | "ignored";
 export type OutboundState = "pending" | "sent" | "failed" | "uncertain";
 export type TaskStatus = "todo" | "in_progress" | "done" | "closed";
 
@@ -90,6 +90,8 @@ export interface Message {
   triggers: boolean;
   state: InboundState | OutboundState;
   createdAt: number;
+  /** Inbound, while `waiting`: when Mingle delivers it again. */
+  retryAt?: number | null;
 }
 
 export interface Task {
@@ -224,6 +226,34 @@ export class Store {
     }
     if (!sets.length) return;
     this.db.prepare(`UPDATE agents SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`).run(...values, this.now(), id);
+  }
+
+  /** The last MEMORY.md size hint given to this agent (docs/spec.md 4.5), if any. */
+  memoryHint(id: string): { at: number; size: number } | undefined {
+    const row = this.db.prepare("SELECT memory_hint_at, memory_hint_size FROM agents WHERE id = ?").get(id) as
+      | Row
+      | undefined;
+    if (row?.memory_hint_at == null) return undefined;
+    return { at: Number(row.memory_hint_at), size: Number(row.memory_hint_size) };
+  }
+
+  setMemoryHint(id: string, at: number, size: number): void {
+    this.db.prepare("UPDATE agents SET memory_hint_at = ?, memory_hint_size = ? WHERE id = ?").run(at, size, id);
+  }
+
+  /** A provider quota holds back everything new for this agent until `until` (docs/spec.md 4.3). */
+  quotaWait(id: string): { until: number; resetsAt: number } | undefined {
+    const row = this.db.prepare("SELECT quota_wait_until, quota_resets_at FROM agents WHERE id = ?").get(id) as
+      | Row
+      | undefined;
+    if (row?.quota_wait_until == null || row.quota_resets_at == null) return undefined;
+    return { until: Number(row.quota_wait_until), resetsAt: Number(row.quota_resets_at) };
+  }
+
+  setQuotaWait(id: string, wait?: { until: number; resetsAt: number }): void {
+    this.db
+      .prepare("UPDATE agents SET quota_wait_until = ?, quota_resets_at = ? WHERE id = ?")
+      .run(wait?.until ?? null, wait?.resetsAt ?? null, id);
   }
 
   setSessionId(id: string, sessionId: string | null): void {
@@ -485,15 +515,30 @@ export class Store {
    * late or repeated event cannot overwrite a newer state. Returns the IDs that moved.
    * `deliver` records `inputId`; `retry` clears the nudge so the message is nudged again.
    */
-  moveInbound(ids: readonly string[], event: InboundEvent, inputId?: string): string[] {
+  moveInbound(ids: readonly string[], event: InboundEvent, inputId?: string, retryAt?: number): string[] {
     const rule = INBOUND[event];
+    // `hold` sets when to try again and counts the wait; leaving `waiting` clears the time; the
+    // owner's retry starts the count over.
     const stmt = this.db.prepare(
-      `UPDATE messages SET state = ?, input_id = coalesce(?, input_id), nudged = CASE WHEN ? THEN 0 ELSE nudged END
+      `UPDATE messages SET state = ?, input_id = coalesce(?, input_id), nudged = CASE WHEN ? THEN 0 ELSE nudged END,
+         retry_at = CASE WHEN ? THEN ? ELSE NULL END,
+         holds = CASE WHEN ? THEN holds + 1 WHEN ? THEN 0 ELSE holds END
        WHERE id = ? AND direction = 'in' AND state IN (${rule.from.map(() => "?").join(", ")})`,
     );
+    const hold = event === "hold" ? 1 : 0;
     const moved: string[] = [];
     for (const id of ids) {
-      const result = stmt.run(rule.to, inputId ?? null, event === "retry" ? 1 : 0, id, ...rule.from);
+      const result = stmt.run(
+        rule.to,
+        inputId ?? null,
+        event === "retry" ? 1 : 0,
+        hold,
+        retryAt ?? null,
+        hold,
+        event === "retry" ? 1 : 0,
+        id,
+        ...rule.from,
+      );
       if (result.changes) moved.push(id);
     }
     return moved;
@@ -532,6 +577,32 @@ export class Store {
       )
       .all(chatId, anchor, limit) as Row[];
     return rows.map(toMessage).reverse();
+  }
+
+  /**
+   * Messages around `messageId` in its chat, oldest first: about half of `limit` before it,
+   * the message itself, and the rest after. Undefined when the message is not in this chat.
+   */
+  chatAround(chatId: string, messageId: string, limit: number): Message[] | undefined {
+    const row = this.db.prepare("SELECT rowid, * FROM messages WHERE id = ? AND chat_id = ?").get(messageId, chatId) as
+      | Row
+      | undefined;
+    if (!row) return undefined;
+    const anchor = toMessage(row);
+    const before = Math.floor((limit - 1) / 2);
+    const older = this.db
+      .prepare(
+        `SELECT * FROM messages WHERE chat_id = ? AND (created_at < ? OR (created_at = ? AND rowid < ?))
+         ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+      )
+      .all(chatId, anchor.createdAt, anchor.createdAt, row.rowid as number, before) as Row[];
+    const newer = this.db
+      .prepare(
+        `SELECT * FROM messages WHERE chat_id = ? AND (created_at > ? OR (created_at = ? AND rowid > ?))
+         ORDER BY created_at, rowid LIMIT ?`,
+      )
+      .all(chatId, anchor.createdAt, anchor.createdAt, row.rowid as number, limit - 1 - older.length) as Row[];
+    return [...older.map(toMessage).reverse(), anchor, ...newer.map(toMessage)];
   }
 
   search(agentId: string, query: string, chatId?: string, limit = 20): Message[] {
@@ -584,16 +655,56 @@ export class Store {
     return row?.nudged === 1;
   }
 
-  /** Inbound messages of this agent that were given up on (failed or unanswered), oldest first; `ids` narrows it. */
+  /** Inbound messages of this agent the owner can retry or ignore (waiting, failed or unanswered), oldest first; `ids` narrows it. */
   retryable(agentId: string, ids?: readonly string[]): Message[] {
     const rows = this.db
       .prepare(
         `SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
-         WHERE n.agent_id = ? AND m.direction = 'in' AND m.state IN ('failed', 'unanswered') ORDER BY m.created_at`,
+         WHERE n.agent_id = ? AND m.direction = 'in' AND m.state IN ('waiting', 'failed', 'unanswered') ORDER BY m.created_at`,
       )
       .all(agentId) as Row[];
     const wanted = ids && new Set(ids);
     return rows.map(toMessage).filter((m) => !wanted || wanted.has(m.id));
+  }
+
+  /** How many times this message has waited for a passing failure since the owner last retried it. */
+  holds(id: string): number {
+    const row = this.db.prepare("SELECT holds FROM messages WHERE id = ?").get(id) as Row | undefined;
+    return Number(row?.holds ?? 0);
+  }
+
+  /** Waiting inbound messages whose retry time has come, oldest first, with their agent. */
+  dueWaiting(now: number): (Message & { agentId: string })[] {
+    const rows = this.db
+      .prepare(
+        `SELECT m.*, n.agent_id AS owner_agent FROM messages m JOIN chats c ON c.id = m.chat_id
+         JOIN connections n ON n.id = c.connection_id
+         WHERE m.direction = 'in' AND m.state = 'waiting' AND m.retry_at <= ? ORDER BY m.created_at`,
+      )
+      .all(now) as Row[];
+    return rows.map((r) => ({ ...toMessage(r), agentId: String(r.owner_agent) }));
+  }
+
+  /** This agent's waiting inbound messages. */
+  waiting(agentId: string): Message[] {
+    const rows = this.db
+      .prepare(
+        `SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
+         WHERE n.agent_id = ? AND m.direction = 'in' AND m.state = 'waiting' ORDER BY m.created_at`,
+      )
+      .all(agentId) as Row[];
+    return rows.map(toMessage);
+  }
+
+  /** How many of this agent's inbound messages since `since` are in each state, for diagnostics. */
+  inboundCounts(agentId: string, since: number): Record<string, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT m.state, count(*) AS n FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
+         WHERE n.agent_id = ? AND m.direction = 'in' AND m.triggers = 1 AND m.created_at >= ? GROUP BY m.state`,
+      )
+      .all(agentId, since) as Row[];
+    return Object.fromEntries(rows.map((r) => [String(r.state), Number(r.n)]));
   }
 
   /** Inbound messages received but never handed to the agent (for example, the process stopped first). */
@@ -763,6 +874,7 @@ function toMessage(r: Row): Message {
     triggers: r.triggers === 1,
     state: String(r.state) as Message["state"],
     createdAt: Number(r.created_at),
+    retryAt: r.retry_at == null ? null : Number(r.retry_at),
   };
 }
 

@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import QRCode from "qrcode";
 import type { CredentialField, OnboardingMethod, Platform } from "../channels/channel.ts";
 import { contactAlias, MingleError, notFound } from "../core/errors.ts";
-import { formatMessage } from "../core/format.ts";
+import { excerpt, formatMessage } from "../core/format.ts";
 import { readRole } from "../core/home.ts";
 import { renderManual } from "../core/manual.ts";
 import type { Mingle } from "../core/mingle.ts";
@@ -186,7 +186,11 @@ export function createApi(mingle: Mingle): Hono<Env> {
     const chat = store.agentChat(agent.id, c.req.param("id"));
     if (!chat) throw notFound("chat", c.req.param("id"));
     const limit = clamp(Number(c.req.query("limit") ?? 30), 1, 200);
-    const messages = store.chatMessages(chat.id, limit, c.req.query("before"));
+    const around = c.req.query("around");
+    const messages = around
+      ? store.chatAround(chat.id, around, limit)
+      : store.chatMessages(chat.id, limit, c.req.query("before"));
+    if (!messages) throw notFound("message", around ?? "");
     return c.json(messages.map((m) => ({ id: m.id, text: render(agent, m) })));
   });
 
@@ -198,7 +202,10 @@ export function createApi(mingle: Mingle): Hono<Env> {
     const chatId = c.req.query("in");
     if (chatId && !store.agentChat(agent.id, chatId)) throw notFound("chat", chatId);
     const messages = store.search(agent.id, q, chatId, clamp(Number(c.req.query("limit") ?? 20), 1, 100));
-    return c.json(messages.map((m) => ({ id: m.id, text: render(agent, m) })));
+    // Each hit is the text around the match, not the whole message (docs/spec.md 5.3).
+    return c.json(
+      messages.map((m) => ({ id: m.id, chat: m.chatId, text: render(agent, { ...m, body: excerpt(m.body, q) }) })),
+    );
   });
 
   app.post("/v1/agent/files/:id/download", async (c) => {
@@ -468,6 +475,8 @@ export function createApi(mingle: Mingle): Hono<Env> {
           contactId: contact?.id ?? null,
           body: m.body,
           state: m.state,
+          /** While waiting for a passing failure: when Mingle tries it again. */
+          retryAt: m.state === "waiting" ? (m.retryAt ?? null) : null,
           files: m.attachments.map((a) => a.name),
           createdAt: m.createdAt,
         };
@@ -557,6 +566,15 @@ export function createApi(mingle: Mingle): Hono<Env> {
   });
 
   app.post("/v1/admin/agents/:id/stop", async (c) => c.json({ stopped: await mingle.stopAgent(c.req.param("id")) }));
+  /** Start over in a new harness session; home, memory and messages stay (docs/spec.md 4.11). */
+  app.post("/v1/admin/agents/:id/reset", async (c) => {
+    await mingle.resetSession(c.req.param("id"));
+    return c.json({ ok: true });
+  });
+  /** Plain text for someone helping: versions, brain, session, status. No message text or secrets. */
+  app.get("/v1/admin/agents/:id/diagnostics", async (c) =>
+    c.json({ text: await mingle.diagnostics(c.req.param("id")) }),
+  );
   /** Pause and resume (docs/spec.md 4.11). Both are idempotent: `changed` is false when it already was. */
   app.post("/v1/admin/agents/:id/pause", async (c) => c.json({ changed: await mingle.pauseAgent(c.req.param("id")) }));
   app.post("/v1/admin/agents/:id/resume", async (c) =>

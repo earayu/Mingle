@@ -301,6 +301,8 @@ export function AgentPage({
                       )}
                       {pauseFailure ? <p className="w-full text-caption text-red">{pauseFailure}</p> : null}
                     </GroupRow>
+                    <ResetRow key={agent.id} agent={agent} busy={busy} disabled={switching} />
+                    <DiagnosticsRow key={`d-${agent.id}`} agent={agent} />
                   </Group>
                 </Section>
                 <Section title={t("agent.home")}>
@@ -1174,6 +1176,150 @@ function DeleteRow({
   );
 }
 
+/**
+ * Start the agent over in a new session, for a session that is stuck or muddled. Its history is
+ * gone afterwards, so it asks in place first (DESIGN.md: no modal dialogs).
+ */
+function ResetRow({ agent, busy, disabled }: { agent: AgentView; busy: boolean; disabled: boolean }) {
+  const { t } = useI18n();
+  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  // When the question closes (cancelled or done), keyboard focus goes back to the button that asked it.
+  const resetButton = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(confirming);
+  useLayoutEffect(() => {
+    if (wasConfirming.current && !confirming) resetButton.current?.focus();
+    wasConfirming.current = confirming;
+  }, [confirming]);
+  const cancel = () => setConfirming(false);
+  return (
+    <GroupRow className={`flex-wrap transition-colors duration-[120ms] ${confirming ? "bg-amber-tint" : ""}`}>
+      <span className="flex min-w-0 flex-1 flex-col" aria-live="polite">
+        <span className={confirming ? "font-medium" : undefined}>
+          {confirming ? t("agent.resetAsk", { name: agent.name }) : t("agent.resetTitle")}
+        </span>
+        <span className="text-caption text-ink2">
+          {busy ? `${t("agent.resetBody")} ${t("agent.resetBusy")}` : t("agent.resetBody")}
+        </span>
+      </span>
+      {confirming ? (
+        // biome-ignore lint/a11y/noStaticElementInteractions: Escape backs out of the question it belongs to
+        <span
+          className="flex shrink-0 items-center gap-1.5"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !pending) cancel();
+          }}
+        >
+          <Button
+            small
+            disabled={pending}
+            onClick={async () => {
+              setPending(true);
+              setResult(null);
+              try {
+                await api.resetSession(agent.id);
+                setResult({ ok: true, text: t("agent.resetDone", { name: agent.name }) });
+                setConfirming(false);
+              } catch (error) {
+                setResult({ ok: false, text: errorText(t, error) });
+              } finally {
+                setPending(false);
+              }
+            }}
+          >
+            {t("agent.reset")}
+          </Button>
+          <Button small autoFocus disabled={pending} onClick={cancel}>
+            {t("agent.cancel")}
+          </Button>
+        </span>
+      ) : (
+        <Button
+          ref={resetButton}
+          small
+          disabled={disabled}
+          onClick={() => {
+            setResult(null);
+            setConfirming(true);
+          }}
+        >
+          {t("agent.reset")}
+        </Button>
+      )}
+      {result ? <p className={`w-full text-caption ${result.ok ? "text-ink2" : "text-red"}`}>{result.text}</p> : null}
+    </GroupRow>
+  );
+}
+
+/** Copy text, falling back to a hidden text area where the clipboard API is not offered (some webviews). */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.append(area);
+    area.select();
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      area.remove();
+    }
+  }
+}
+
+/** Copy what someone helping needs. Where copying fails, the text shows in place to select by hand. */
+function DiagnosticsRow({ agent }: { agent: AgentView }) {
+  const { t } = useI18n();
+  const [pending, setPending] = useState(false);
+  const [state, setState] = useState<
+    { kind: "copied" } | { kind: "manual"; text: string } | { kind: "error"; text: string } | null
+  >(null);
+  useEffect(() => {
+    if (state?.kind !== "copied") return;
+    const timer = setTimeout(() => setState(null), 4000);
+    return () => clearTimeout(timer);
+  }, [state]);
+  return (
+    <GroupRow className="flex-wrap">
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span>{t("agent.diagnosticsTitle")}</span>
+        <span className="text-caption text-ink2">{t("agent.diagnosticsBody")}</span>
+      </span>
+      <Button
+        small
+        disabled={pending}
+        onClick={async () => {
+          setPending(true);
+          try {
+            const { text } = await api.diagnostics(agent.id);
+            setState((await copyText(text)) ? { kind: "copied" } : { kind: "manual", text });
+          } catch (error) {
+            setState({ kind: "error", text: errorText(t, error) });
+          } finally {
+            setPending(false);
+          }
+        }}
+      >
+        {state?.kind === "copied" ? t("agent.diagnosticsCopied") : t("agent.diagnosticsCopy")}
+      </Button>
+      {state?.kind === "manual" ? (
+        <pre className="selectable w-full overflow-x-auto rounded-control bg-bg2 p-3 font-mono text-caption whitespace-pre-wrap wrap-anywhere text-ink2">
+          {state.text}
+        </pre>
+      ) : null}
+      {state?.kind === "error" ? <p className="w-full text-caption text-red">{state.text}</p> : null}
+    </GroupRow>
+  );
+}
+
 /** Retry or dismiss a message; disabled while the request runs, so a double click does not send it twice. */
 function MessageActions({
   onRetry,
@@ -1276,6 +1422,13 @@ function ActivityList({
                 <p className="flex flex-wrap items-center gap-1.5 text-caption text-amber">
                   <StatusDot state="awaiting_approval" />
                   {t("agent.unanswered")}
+                  <MessageActions inline onRetry={() => onRetry([m.id])} onIgnore={() => onIgnore([m.id])} />
+                </p>
+              ) : null}
+              {m.direction === "in" && m.state === "waiting" ? (
+                <p className="flex flex-wrap items-center gap-1.5 text-caption text-ink2">
+                  <StatusDot state="reconnecting" />
+                  {m.retryAt ? t("agent.waitingUntil", { time: shortDateTime(m.retryAt, locale) }) : t("agent.waiting")}
                   <MessageActions inline onRetry={() => onRetry([m.id])} onIgnore={() => onIgnore([m.id])} />
                 </p>
               ) : null}

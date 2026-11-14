@@ -106,6 +106,8 @@ export interface Activity {
   contactId: string | null;
   body: string;
   state: string;
+  /** While waiting for a passing failure: when Mingle tries it again. */
+  retryAt: number | null;
   files: string[];
   createdAt: number;
 }
@@ -235,6 +237,10 @@ export const api = {
   /** Stop taking messages until resumed; ends the work in hand (docs/spec.md 4.11). */
   pause: (id: string) => call<{ changed: boolean }>("POST", `/v1/admin/agents/${id}/pause`),
   resume: (id: string) => call<{ changed: boolean }>("POST", `/v1/admin/agents/${id}/resume`),
+  /** Start over in a new harness session; home, memory and messages stay. */
+  resetSession: (id: string) => call<{ ok: true }>("POST", `/v1/admin/agents/${id}/reset`),
+  /** Plain text to share when asking for help: versions, brain, session, status. */
+  diagnostics: (id: string) => call<{ text: string }>("GET", `/v1/admin/agents/${id}/diagnostics`),
   /** Try again on failed or unanswered messages: these, or all of them. */
   retry: (id: string, ids?: string[]) =>
     call<{ retried: string[]; offline: string[] }>("POST", `/v1/admin/agents/${id}/messages/retry`, ids ? { ids } : {}),

@@ -164,11 +164,24 @@ erDiagram
 
 **没有回应时的兜底。** 一轮结束后，若有触发消息没有得到任何 `reply`，Mingle 追加一次提示，列出这些消息 ID，由 Agent 逐条回复或明确说明无需回复。只提示一次；仍未回复的在控制台标为"未回复"。Mingle 不会把 Agent 的自言自语自动发到群里。
 
-**出错时的兜底。** 一轮以失败结束（harness 未登录、额度用完、欠费、模型不可用、服务繁忙、内容过长等，分类取自 OAR 的 `failure`），或者会话根本打不开（harness 没装、启动失败）时，Mingle 不再追加提示，而是把这一轮还没回复的触发消息标为"出错未回复"，并立刻告诉发消息的人：有实时回复的收成一句说明；没有实时回复（例如 QQ）、或实时回复已经收不了尾时，另发一条短消息，同一个聊天 60 秒内只发一次。说明用聊天的语言，讲清是什么问题、该怎么办，例如"Claude Code 没有登录，暂时回复不了。请在运行 Mingle 的电脑上登录 Claude Code，然后再发一次。"；额度用完且 harness 报告了恢复时间的，带上恢复时间。控制台把失败分类存为 `agents.status_failure`，在 Agent 页给出对应的标题和下一步，harness 的原话放在下面备查；"上手"卡片和"需要你处理"不会停在"正在回复"。失败的消息不自动重发。问题解决后，可以由发消息的人再发一次，也可以由 owner 在控制台点"重试"。
+**出错时的兜底。** 一轮以失败结束（harness 未登录、额度用完、欠费、模型不可用、服务繁忙、内容过长等，分类取自 OAR 的 `failure`），或者会话根本打不开（harness 没装、启动失败）时，Mingle 不再追加提示，而是把这一轮还没回复的触发消息标为"出错未回复"，并立刻告诉发消息的人：有实时回复的收成一句说明；没有实时回复（例如 QQ）、或实时回复已经收不了尾时，另发一条短消息，同一个聊天 60 秒内只发一次。说明用聊天的语言，讲清是什么问题、该怎么办，例如"Claude Code 没有登录，暂时回复不了。请在运行 Mingle 的电脑上登录 Claude Code，然后再发一次。"；额度用完且 harness 报告了恢复时间的，带上恢复时间。控制台把失败分类存为 `agents.status_failure`，在 Agent 页给出对应的标题和下一步，harness 的原话放在下面备查；"上手"卡片和"需要你处理"不会停在"正在回复"。需要人处理的失败（未登录、欠费、模型不可用、内容过长、harness 没装等）不自动重发。问题解决后，可以由发消息的人再发一次，也可以由 owner 在控制台点"重试"。
 
-**重试。** 控制台"需要你处理"的"出错未回复"和"没有回复"两项各有"重试"，动态里每条这样的消息后面也有（`POST /v1/admin/agents/:id/messages/retry`，参数 `{ ids? }`，不传就重试全部）。重试只针对 `failed` 和 `unanswered` 的入站消息，其他状态直接忽略，所以重复点击没有副作用；聊天软件离线的消息不重试，因为 Agent 也回不了。被重试的消息回到 `received`，提示标记清零，像新消息一样走一遍投递：重新打上"处理中"的表情、开一条实时回复，投递时前面加一行 `[mingle] Retry: …`，告诉 Agent 这是一条迟到的消息，回复时简单说明晚了。Agent 还处在出错状态时，按钮旁边提示先解决问题，但不禁用按钮，因为状态可能已经过时。Agent 自己发出去失败的消息不提供重试：明确失败的已经重试过三次，并且把错误交给了 Agent；结果不确定的为了避免重复发言，本来就不重发（见 7.1）。
+**会自己过去的失败，等它过去再回（借鉴 Raft 的额度等待）。** 额度用完、被限流、服务繁忙或出错，过一会儿通常自己就好了。让 owner 一条条点重试没有必要，让发消息的人再发一遍也不对。这类失败让消息进入 `waiting`（等待中），到时间自动再投递一次：
 
-**忽略。** 不需要再回复的消息，可以在“需要你处理”的“出错未回复”和“没有回复”项里点“忽略”，也可以在动态里逐条忽略。批量操作只针对该项当前列出的消息。`POST /v1/admin/agents/:id/messages/ignore` 必须传 `{ ids: string[] }`，返回 `{ ignored: string[] }`；只处理属于该 Agent、状态为 `failed` 或 `unanswered` 的入站消息，重复、已处理、其他 Agent 或不存在的 ID 跳过，空数组不做任何事。消息持久化为已有的 `ignored` 状态，原文和附件保留，动态标为“已忽略”，不再计入需要处理的消息或提供重试；刷新和重启后保持。群里本就不触发 Agent 的背景消息不显示这个手动忽略标记。忽略只整理本机记录，不唤醒 Agent、不向聊天软件发送或修改消息，离线也可用；Agent 和连接本身的错误仍保留。
+| 失败分类 | 等到什么时候 | 何时放弃 |
+|---|---|---|
+| `quota`，harness 报告了恢复时间 | 恢复时间后 15 秒，一次最多等 1 小时；到点仍超额就再等一轮 | 连续等了 200 次 |
+| `quota`，没有恢复时间 | 不等，直接"出错未回复" | |
+| `rate_limited`、`overloaded`、`provider` | 依次 1 分钟、5 分钟、15 分钟 | 等满三次仍失败 |
+
+- **告诉发消息的人**：实时回复收成一句"Claude Code 的用量额度用完了，预计 15:00 恢复。这条消息会先等着，恢复后自动回复，不用再发。"或"Claude Code 那边暂时繁忙，1 分钟后自动重试，不用再发。"；没有实时回复时另发一条，同一个聊天 60 秒内只发一次，和出错说明相同。表情清除。
+- **额度用完时后面的消息也先等着**：等待期间新来的消息不交给 harness（交过去也只会再失败一次），直接进入 `waiting`，到同一个时间一起投递；提醒和系统消息留在队列里，到点再投。这次面向整个 Agent 的等待单独存在 `agents.quota_wait_until` / `quota_resets_at`，进程或会话重建后仍然有效：到点的自动重试会尊重比它更晚出现的额度等待（回到 `waiting` 等到新到点），owner 手动点"重试"则取消这次等待、立刻试一次。
+- **到点再投递**：Mingle 每 10 秒（和提醒同一个计时器，电脑睡醒后也会立即检查）把到点的 `waiting` 消息放回 `received`，像 owner 重试一样重新打上"处理中"、开实时回复，投递时加 `[mingle] Retry: …` 那一行。聊天软件离线的消息继续等，重连后的下一次检查再投。Mingle 重启后照样生效：等待时间存在 `messages.retry_at`，等待次数存在 `messages.holds`，owner 重试时清零。
+- **控制台**：等待中的消息不进"需要你处理"（不需要人做什么），动态里那一条下面写"等待中，今天 15:00 自动重试"，后面是"重试"和"忽略"。Agent 的失败卡片区分等待中的自动重试与已经失败后的手动重试。
+
+**重试。** 控制台"需要你处理"的"出错未回复"和"没有回复"两项各有"重试"，动态里每条这样的消息后面也有（`POST /v1/admin/agents/:id/messages/retry`，参数 `{ ids? }`，不传就重试全部）。重试只针对 `waiting`、`failed` 和 `unanswered` 的入站消息，其他状态直接忽略，所以重复点击没有副作用；聊天软件离线的消息不重试，因为 Agent 也回不了。被重试的消息回到 `received`，提示标记清零，像新消息一样走一遍投递：重新打上"处理中"的表情、开一条实时回复，投递时前面加一行 `[mingle] Retry: …`，告诉 Agent 这是一条迟到的消息，回复时简单说明晚了。Agent 还处在出错状态时，按钮旁边提示先解决问题，但不禁用按钮，因为状态可能已经过时。Agent 自己发出去失败的消息不提供重试：明确失败的已经重试过三次，并且把错误交给了 Agent；结果不确定的为了避免重复发言，本来就不重发（见 7.1）。
+
+**忽略。** 不需要再回复的消息，可以在“需要你处理”的“出错未回复”和“没有回复”项里点“忽略”，也可以在动态里逐条忽略。批量操作只针对该项当前列出的消息。`POST /v1/admin/agents/:id/messages/ignore` 必须传 `{ ids: string[] }`，返回 `{ ignored: string[] }`；只处理属于该 Agent、状态为 `waiting`、`failed` 或 `unanswered` 的入站消息，重复、已处理、其他 Agent 或不存在的 ID 跳过，空数组不做任何事。消息持久化为已有的 `ignored` 状态，原文和附件保留，动态标为“已忽略”，不再计入需要处理的消息或提供重试；刷新和重启后保持。群里本就不触发 Agent 的背景消息不显示这个手动忽略标记。忽略只整理本机记录，不唤醒 Agent、不向聊天软件发送或修改消息，离线也可用；Agent 和连接本身的错误仍保留。
 
 Raft 的做法更重。从它的源码和 agent 提示词看：忙碌时只给 agent 发"有新消息"的通知，由 agent 自己用命令去拉取；发送被拦下时消息会存为草稿，由 agent 决定修改后重发还是放弃。Mingle 直接把消息内容插进会话，省掉拉取和草稿这两层，等实际遇到"答非所问"的问题再考虑加新鲜度检查。
 
@@ -195,6 +208,12 @@ Raft 的做法更重。从它的源码和 agent 提示词看：忙碌时只给 a
 - `MEMORY.md` 是恢复索引：自己是谁、进行中的事、指向详细笔记的链接。保持简短。
 - `notes/` 放按主题展开的笔记。
 - 消息原文不进记忆，需要时用 `mingle message search` 检索。
+
+**记忆体检（借鉴 Raft 的 Cleaner）。** `MEMORY.md` 每次开会话都会读入上下文，越长每一轮越慢、越贵，而 Agent 自己很少主动删。所以 Mingle 在它超过 64 KiB 时提醒一次：
+
+- **时机**：只在一轮正常完成（`completed`）、没有被叫停、也没有排队的输入时检查，提醒作为一条 `[mingle]` 系统消息开始新的一轮。它不会打断正在做的事，不会和别的消息并成一轮，也不会唤醒没有在工作的 Agent。
+- **频率**：一天最多一次；文件比上次提醒时又大了 25% 时可以提前再提醒。上次提醒的时间和大小存在 `agents.memory_hint_at`、`memory_hint_size`，重启后照样有效。
+- **内容**：说清现在多大、为什么要紧、怎么做（删掉已完成的事和被推翻的决定，保持索引形态，把细节挪到 `notes/`；删之前对照当前来源核实），并说明不需要在聊天里回复。删什么由 Agent 判断，Mingle 不替它改文件。
 
 ### 4.6 任务与提醒
 
@@ -225,7 +244,7 @@ owner 想让 Agent 用 webhook 地址、API key 这类密钥（"每天早上把�
 
 ### 4.10 入站消息状态
 
-触发 Agent 的入站消息有六种状态：`received`（已收到，待投递）、`delivered`（已交给 Agent）、`replied`（已回复）、`unanswered`（提示过一次仍未回复）、`failed`（出错未回复）、`ignored`（owner 忽略，或本就不触发 Agent 的背景消息）。它是一个显式状态机，规则集中在 [`src/core/inbound.ts`](../src/core/inbound.ts) 的转换表里，所有写入都经过 `Store.moveInbound`：事件只作用于处在它的来源状态的消息，其余消息原样不动，并返回实际变化的 ID，后续动作（实时回复收尾、通知发消息的人、重新投递）只对这些消息执行。
+触发 Agent 的入站消息有七种状态：`received`（已收到，待投递）、`delivered`（已交给 Agent）、`waiting`（等一个会自己过去的失败过去，到 `retry_at` 再投递，见 4.3）、`replied`（已回复）、`unanswered`（提示过一次仍未回复）、`failed`（出错未回复）、`ignored`（owner 忽略，或本就不触发 Agent 的背景消息）。它是一个显式状态机，规则集中在 [`src/core/inbound.ts`](../src/core/inbound.ts) 的转换表里，所有写入都经过 `Store.moveInbound`：事件只作用于处在它的来源状态的消息，其余消息原样不动，并返回实际变化的 ID，后续动作（实时回复收尾、通知发消息的人、重新投递）只对这些消息执行。
 
 ```mermaid
 stateDiagram-v2
@@ -242,16 +261,21 @@ stateDiagram-v2
   unanswered --> received: owner 重试（retry）
   failed --> ignored: owner 忽略（ignore）
   unanswered --> ignored: owner 忽略（ignore）
+  received --> waiting: 会自己过去的失败（hold）
+  delivered --> waiting: 会自己过去的失败（hold）
+  waiting --> received: 到点、或 owner 重试（resume / retry）
+  waiting --> replied: 引用回复（reply）
+  waiting --> ignored: owner 忽略、Agent 被暂停（ignore / pause）
   received --> ignored: Agent 被暂停（pause）
   delivered --> ignored: Agent 被暂停（pause）
 ```
 
 - **终态**：`replied` 和 `ignored`。之后到达的任何事件（迟到的失败、重复的重试、忽略后才到的回复）都不改变它。
-- **非终态都有出路**：`received`、`delivered` 由投递和本轮结束自己推进；`failed`、`unanswered` 由 owner 在控制台重试或忽略，Agent 之后回复也能把它们结束。
+- **非终态都有出路**：`received`、`delivered` 由投递和本轮结束自己推进；`waiting` 到 `retry_at` 自己回到 `received`，等满次数后变为 `failed`；`failed`、`unanswered` 由 owner 在控制台重试或忽略，Agent 之后回复也能把它们结束。
 - **出错的消息被回复**：Agent 用 `message reply` 引用一条 `failed` 消息作答时，它变为 `replied`，因为发消息的人已经得到回答，不应再留在"出错未回复"里。`message send` 的普通发送只结束该聊天里 Agent 已经看到的消息（`delivered`、`unanswered`），不结束 `failed`：这条消息可能从未交到 Agent 手里，一条无关的发送不能把它从待处理里藏掉；也不结束还没投递的 `received`。
 - **先到先得**：重试、忽略、迟到的回复以任意顺序到达，第一个生效，后一个只有在它是前者结果的合法下一步时才生效。例如重试后再忽略不生效（消息已回到 `received`）；重试后、重新投递前 Agent 已经回复，投递时发现它不再是 `received`，不再投递。
 - 重试把消息放回 `received` 时清零提示标记，像新消息一样再走一遍。
-- **暂停**：Agent 被暂停时，还没回复的 `received`、`delivered` 变为 `ignored`；暂停期间收到的触发消息直接变为 `ignored`。`failed`、`unanswered` 不动，恢复后由 owner 重试或忽略（4.11）。
+- **暂停**：Agent 被暂停时，还没回复的 `received`、`delivered`、`waiting` 变为 `ignored`；暂停期间收到的触发消息直接变为 `ignored`。`failed`、`unanswered` 不动，恢复后由 owner 重试或忽略（4.11）。
 
 ### 4.11 Agent 生命周期
 
@@ -279,8 +303,12 @@ stateDiagram-v2
 | 恢复 | 重新打开会话，开始接收新消息，补发暂停期间到点的提醒 | 暂停卡片和 Agent 设置 → 运行、`mingle agent resume` | 本次新增 |
 | 删除 | 断开机器人，删除凭据和环境变量，保留文件夹 | Agent 设置 → 文件夹，原地确认、`mingle agent delete` | 已有 |
 | 修改角色、大脑、环境变量 | 下一条消息起生效，不打断正在做的事 | Agent 设置 | 已有 |
+| 重置会话 | 中止正在做的事，丢下当前 harness 会话，开一个新会话，Agent 从 `ROLE.md` 和 `MEMORY.md` 重新开始。主目录、消息记录、任务、提醒、连接都保留。用于会话卡住、上下文太乱或一再出错 | Agent 设置 → 运行，原地确认、`mingle agent reset` | 新增（MING-61） |
+| 复制诊断信息 | 一段纯文本：时间、Mingle/Node/系统版本、Agent ID、状态和失败类别、大脑及版本、模型、会话 ID、`MEMORY.md` 大小、各连接的平台和状态、最近 7 天各状态的消息数、未完成任务和提醒数。不含消息内容、联系人名字、凭据和环境变量的值 | Agent 设置 → 运行、`mingle agent diagnostics` | 新增（MING-61） |
 
-暂不做，等有需求再加：重置会话（让 Agent 从 `MEMORY.md` 重新开始，用于会话坏掉或上下文太乱；目前换大脑或会话损坏时 Mingle 已会自动新建）、复制 Agent、导出/导入、定时暂停（例如夜间免打扰）、只暂停某一个聊天软件（目前可以移除那个机器人）、IM 里的 `/pause` 命令（IM 里仍只有 `/stop`，4.7）。
+**排查顺序（借鉴 Raft 的恢复梯子）**：Agent 不回复时，先看"需要你处理"和状态；能叫停就叫停；仍不行再重置会话（重启 Mingle 等同于重开同一会话）；还不行就复制诊断信息贴给帮忙的人。重置不可撤销（旧会话不会再被恢复），所以在原地确认；Agent 正在工作时说明里多一句"重置会中止这件事"。重置同时作废旧会话的 CLI 授权（它留在后台的工作不能再发消息），旧会话之后再上报的事件一律丢弃，不会改动新会话的工作；已经投递未回复的消息标为"没有回复"，由 owner 在控制台重试或忽略；排队未投递的消息和提醒、系统消息留给新会话，额度等待也保留。暂停中的 Agent 重置只清掉会话 ID，恢复时开新会话。
+
+暂不做，等有需求再加：复制 Agent、导出/导入、定时暂停（例如夜间免打扰）、只暂停某一个聊天软件（目前可以移除那个机器人）、IM 里的 `/pause` 命令（IM 里仍只有 `/stop`，4.7）。
 
 **暂停的语义**
 
@@ -296,7 +324,7 @@ stateDiagram-v2
 - **重启**：暂停状态存在 `agents.status = 'paused'`，Mingle 重启后不为它打开会话。
 - **桌面应用**：菜单栏里它的那一行显示"已暂停"，不算在线，不计入"N 个 Agent 在线"，也不为它保持唤醒。
 
-**接口**：`POST /v1/admin/agents/:id/pause`、`POST /v1/admin/agents/:id/resume`，返回 `{ changed }`，已经是目标状态时为 `false`，重复调用没有副作用。CLI：`mingle agent pause <agent>`、`mingle agent resume <agent>`。
+**接口**：`POST /v1/admin/agents/:id/pause`、`POST /v1/admin/agents/:id/resume`，返回 `{ changed }`，已经是目标状态时为 `false`，重复调用没有副作用。CLI：`mingle agent pause <agent>`、`mingle agent resume <agent>`。重置：`POST /v1/admin/agents/:id/reset`，返回 `{ ok: true }`；诊断：`GET /v1/admin/agents/:id/diagnostics`，返回 `{ text }`。
 
 **界面**（视觉见 `DESIGN.md`）
 
@@ -337,8 +365,10 @@ Mingle 启动 harness 时通过 OAR 的 `env` 放入三个环境变量：本地 
 |---|---|
 | `mingle message reply <消息ID>` | 回复某条消息，平台支持时显示为引用回复 |
 | `mingle message send --to <聊天ID>` | 向某个聊天主动发消息 |
-| `mingle message read <聊天ID>` | 读某个聊天最近的消息，`--limit`、`--before` 翻页 |
+| `mingle message read <聊天ID>` | 读某个聊天最近的消息，`--limit`、`--before` 翻页；`--around <消息ID>` 读某条消息前后的消息（默认共 11 条） |
 | `mingle message search <关键词>` | 全文检索消息记录，`--in <聊天ID>` 限定范围 |
+
+**搜索结果是给 Agent 看的界面（借鉴 Raft 的 *A Comfortable AX for Agent Search*）。** 只给 ID，Agent 得逐条再查；给全文，几十条命中会挤满上下文；只给命中的那一条，又常常缺了推翻它的下一句。所以每条结果是消息头加上匹配处前后各约 80 个字符，被截掉的一侧标 `…`，让 Agent 知道这只是一个窗口；输出最后一行给出下一步：`message read <聊天ID> --around <消息ID>` 读这条前后的对话。短消息原样返回。
 
 `reply` 和 `send` 的正文从标准输入读取，用 heredoc 传入，避免引号、反引号和换行被 shell 解释。`--file <路径>` 附带文件，可重复：
 

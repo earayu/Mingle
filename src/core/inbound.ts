@@ -12,21 +12,28 @@ import type { InboundState } from "../store/store.ts";
  *   deliver: received ──▶ delivered
  *   give_up: delivered ──▶ unanswered
  *   fail:    received, delivered ──▶ failed
- *   reply:   received, delivered, unanswered, failed ──▶ replied
+ *   hold:    received, delivered ──▶ waiting
+ *   resume:  waiting ──▶ received
+ *   reply:   received, delivered, waiting, unanswered, failed ──▶ replied
  *   send:    delivered, unanswered ──▶ replied
- *   retry:   failed, unanswered ──▶ received
- *   ignore:  failed, unanswered ──▶ ignored
- *   pause:   received, delivered ──▶ ignored
+ *   retry:   waiting, failed, unanswered ──▶ received
+ *   ignore:  waiting, failed, unanswered ──▶ ignored
+ *   pause:   received, delivered, waiting ──▶ ignored
  *
  * `replied` and `ignored` are final. `failed` and `unanswered` wait for the owner (retry or
  * ignore in the console) or for the agent to answer later; `received` and `delivered` move
- * on by themselves (delivery, the end of the turn).
+ * on by themselves (delivery, the end of the turn); `waiting` moves on by itself at its
+ * retry time (or sooner, when the owner retries or ignores it).
  */
 export type InboundEvent =
   /** Handed to the agent's session. */
   | "deliver"
   /** Could not be handed over, or the turn it was in failed. */
   | "fail"
+  /** As `fail`, but the failure passes (a usage limit, a busy provider): try again at a set time. */
+  | "hold"
+  /** Its retry time came: back to the inbox. */
+  | "resume"
   /** The turn ended, the agent was nudged once, and it still did not answer. */
   | "give_up"
   /** Answered by quoting it (`mingle message reply`, or Mingle answering `/stop`). */
@@ -45,17 +52,20 @@ export const INBOUND: Readonly<
 > = {
   deliver: { from: ["received"], to: "delivered" },
   fail: { from: ["received", "delivered"], to: "failed" },
+  hold: { from: ["received", "delivered"], to: "waiting" },
+  resume: { from: ["waiting"], to: "received" },
   give_up: { from: ["delivered"], to: "unanswered" },
   // A failed message the agent answers by quoting it was answered: the person has the reply,
   // so it must leave the console's "failed" list.
-  reply: { from: ["received", "delivered", "unanswered", "failed"], to: "replied" },
+  reply: { from: ["received", "delivered", "waiting", "unanswered", "failed"], to: "replied" },
   // A plain send only answers what the agent has seen and not settled otherwise. A failed
   // message may never have reached the agent; an unrelated message must not hide it.
   send: { from: ["delivered", "unanswered"], to: "replied" },
-  retry: { from: ["failed", "unanswered"], to: "received" },
-  ignore: { from: ["failed", "unanswered"], to: "ignored" },
+  retry: { from: ["waiting", "failed", "unanswered"], to: "received" },
+  ignore: { from: ["waiting", "failed", "unanswered"], to: "ignored" },
   // Failed and unanswered messages stay for the owner to retry or ignore after resuming.
-  pause: { from: ["received", "delivered"], to: "ignored" },
+  // Waiting ones were in hand when the owner paused; like received ones, they are not answered later.
+  pause: { from: ["received", "delivered", "waiting"], to: "ignored" },
 };
 
 export const FINAL_INBOUND: readonly InboundState[] = ["replied", "ignored"];

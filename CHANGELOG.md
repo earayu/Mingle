@@ -3,6 +3,18 @@
 Each version's section is its release notes, and what the update window shows.
 Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
+## 0.1.10
+
+- Messages now wait when the brain reports a usage limit with a reset time, and retry automatically after it. Temporary provider failures retry after 1, 5 and 15 minutes before asking you to intervene. Activity shows each waiting message's retry time, with Retry and Ignore controls. Quota waits survive a restart and also hold back new messages.
+- Settings → Running now offers Reset session and Copy diagnostic info. Reset starts from the agent's role and memory while keeping its folder, messages, tasks, reminders and chat apps. Old background work loses permission to send, and diagnostic reports exclude message text, credentials and raw provider errors.
+- Agents are reminded to trim MEMORY.md after completed work when it exceeds 64 KiB, at most once a day unless it grows another 25%.
+- Message search shows excerpts around each match and a command to read the surrounding conversation: `mingle message read <chat> --around <message>`.
+- Stopping an agent also stops its background work and blocks late replies. Slack file uploads work again, and a failed file upload no longer repeats text that was already sent.
+- Slack apps created with the current manifest register `/stop` as a real slash command. In channels and threads, or with an older app manifest, use ` /stop` with a leading space.
+- Cancelling agent deletion is explicit and returns keyboard focus to Delete; the new session reset confirmation follows the same behavior.
+
+Known limitation: connecting a second personal WeChat account still needs a real-device check.
+
 ## 0.1.9
 
 - On macOS, chat apps no longer go offline with "can't find this bot's credentials" after Mingle restarts. The Keychain kept only the first 128 characters of each bot's credentials (and of long environment variables), and returned names in other scripts in a form Mingle could not read. Credentials are now saved in full and checked when saved. Bots that already show this error need to be connected again once: scan or enter the credentials again for the same agent.

@@ -6,12 +6,35 @@ import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toInbound } from "../src/channels/telegram/telegram.ts";
-import { formatMessage } from "../src/core/format.ts";
+import { excerpt, formatMessage } from "../src/core/format.ts";
 import { split } from "../src/core/outbox.ts";
 import { nextFire, parseDuration } from "../src/core/schedule.ts";
 import { applyShellEnvironment } from "../src/platform/shell-env.ts";
 import { type LocalePreference, localePreference, resolveLocale } from "../web/src/locale.ts";
 import { applyTheme, savedTheme } from "../web/src/theme.ts";
+
+describe("excerpt", () => {
+  it("keeps short messages whole", () => {
+    expect(excerpt("the ridge route is open", "ridge")).toBe("the ridge route is open");
+  });
+
+  it("cuts a long message to a window around the match, marking each cut side", () => {
+    const body = `${"a".repeat(200)} Ridge route ${"b".repeat(200)}`;
+    const text = excerpt(body, "ridge", 10);
+    expect(text).toBe(`…${"a".repeat(9)} Ridge route ${"b".repeat(3)}…`);
+  });
+
+  it("slides the window inward near either end", () => {
+    const body = `ridge ${"x".repeat(100)}`;
+    expect(excerpt(body, "ridge", 10)).toBe(`ridge ${"x".repeat(19)}…`);
+    expect(excerpt(`${"x".repeat(100)} ridge`, "ridge", 10)).toBe(`…${"x".repeat(19)} ridge`);
+  });
+
+  it("counts characters, not UTF-16 units", () => {
+    const body = `${"山".repeat(50)}徒步路线${"水".repeat(50)}`;
+    expect(excerpt(body, "徒步", 5)).toBe(`…${"山".repeat(5)}徒步路线${"水".repeat(3)}…`);
+  });
+});
 
 describe("formatMessage", () => {
   it("puts everything an agent needs on one header line", () => {

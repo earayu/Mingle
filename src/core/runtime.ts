@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Failure, failureOf, type Harness, type HarnessSession } from "../harness/harness.ts";
 import type { Agent, AgentStatus, Store } from "../store/store.ts";
 import { formatMessage } from "./format.ts";
-import { readRole } from "./home.ts";
+import { memoryHint, memoryHintDue, memorySize, readRole } from "./home.ts";
 import { renderManual } from "./manual.ts";
 
 export interface RuntimeDeps {
@@ -19,7 +19,11 @@ export interface RuntimeDeps {
   /** Progress inside a turn, for live replies. */
   readonly onActivity?: (kind: "thinking" | "tool", detail?: string) => void;
   /** Messages that will not be answered: given up on after the nudge, or lost to a failed turn. */
-  readonly onSettled?: (messageIds: readonly string[], outcome: "unanswered" | "failed", why?: FailureInfo) => void;
+  readonly onSettled?: (
+    messageIds: readonly string[],
+    outcome: "unanswered" | "failed" | "waiting",
+    why?: FailureInfo,
+  ) => void;
   /** Wait before delivering to an idle agent, so a burst of messages becomes one input. */
   readonly coalesceMs?: number;
   readonly log?: (line: string) => void;
@@ -29,6 +33,39 @@ export interface RuntimeDeps {
 export interface FailureInfo {
   readonly failure: Failure;
   readonly resetsAt?: number;
+  /** For messages left waiting: when Mingle delivers them again. */
+  readonly retryAt?: number;
+}
+
+/** Waits between tries for a busy or rate-limited provider; after the last, the message fails. */
+export const BUSY_RETRY_MS: readonly number[] = [60_000, 5 * 60_000, 15 * 60_000];
+/** A usage limit is waited out at most this long at a time, then tried again (and waited again). */
+export const QUOTA_WAIT_MS = 3_600_000;
+/** A little past the reported reset, so the first try after it is not refused again. */
+const QUOTA_MARGIN_MS = 15_000;
+/** A usage limit that keeps coming back this many times is no longer waited for. */
+const MAX_QUOTA_HOLDS = 200;
+
+/**
+ * When to deliver a message again after `why`, or undefined when it should fail and wait for the
+ * owner (docs/spec.md 4.3). Only failures that pass by themselves wait: a usage limit with a
+ * known reset, a rate limit, a busy or failing provider. A sign-in, payment or missing harness
+ * needs a person, so those fail at once. `holds`: how many times the message already waited.
+ */
+export function holdUntil(why: FailureInfo, holds: number, now: number): number | undefined {
+  switch (why.failure) {
+    case "quota":
+      if (!why.resetsAt || why.resetsAt <= now || holds >= MAX_QUOTA_HOLDS) return undefined;
+      return Math.min(why.resetsAt + QUOTA_MARGIN_MS, now + QUOTA_WAIT_MS);
+    case "rate_limited":
+    case "overloaded":
+    case "provider": {
+      const wait = BUSY_RETRY_MS[holds];
+      return wait === undefined ? undefined : now + wait;
+    }
+    default:
+      return undefined;
+  }
 }
 
 type Pending = { readonly kind: "message"; readonly id: string } | { readonly kind: "text"; readonly text: string };
@@ -58,6 +95,12 @@ export class AgentRuntime {
   private stopped = false;
   /** Messages the owner asked to try again; their next delivery says so. */
   private readonly retried = new Set<string>();
+  /**
+   * The harness's usage limit is used up until then: new messages wait for it instead of being
+   * delivered only to fail again. Cleared when the owner asks to retry.
+   */
+  private blocked: { until: number; why: FailureInfo } | undefined;
+  private unblockTimer: NodeJS.Timeout | undefined;
 
   private readonly agentId: string;
   private readonly deps: RuntimeDeps;
@@ -80,6 +123,10 @@ export class AgentRuntime {
    * previous session of this agent to close, so there are never two.
    */
   start(after?: Promise<void>): void {
+    // A provider-wide quota wait survives a restart (docs/spec.md 4.3); restore it before opening.
+    const wait = this.deps.store.quotaWait(this.agentId);
+    if (wait && wait.until > Date.now()) this.block(wait.until, { failure: "quota", resetsAt: wait.resetsAt });
+    else if (wait) this.deps.store.setQuotaWait(this.agentId);
     this.setStatus("idle");
     // Open the session now, not on the first message: startup problems (login,
     // a refused option) surface before anyone chats. No input is delivered here.
@@ -99,8 +146,19 @@ export class AgentRuntime {
     this.schedule();
   }
 
-  /** Deliver messages again that were given up on. The store already has them back as received. */
+  /**
+   * Deliver messages again that were given up on or waited. The store already has them back as
+   * received. A retry is a request to try now, so it does not wait out a usage limit.
+   */
   retry(messageIds: readonly string[]): void {
+    if (messageIds.length === 0) return;
+    this.unblock();
+    this.resume(messageIds);
+  }
+
+  /** A scheduled retry must respect a newer provider-wide quota wait. */
+  resume(messageIds: readonly string[], now = Date.now()): void {
+    if (this.blocked && this.blocked.until <= now) this.unblock();
     for (const id of messageIds) {
       this.retried.add(id);
       this.enqueueMessage(id);
@@ -151,6 +209,13 @@ export class AgentRuntime {
     await this.chain;
   }
 
+  /** Preserve queued reminders and system notes when replacing a session. */
+  takePendingNotes(): string[] {
+    const notes = this.pending.flatMap((p) => (p.kind === "text" ? [p.text] : []));
+    this.pending = this.pending.filter((p) => p.kind !== "text");
+    return notes;
+  }
+
   /**
    * The agent's variables changed. They reach the harness when its process starts, so reopen
    * (resuming the same conversation) now if idle, or after the current turn: never mid-work.
@@ -168,14 +233,15 @@ export class AgentRuntime {
    * or the agent is deleted, paused when the owner pauses it. Nothing the session reports after
    * this point changes the status.
    */
-  async dispose(final: "offline" | "paused" = "offline"): Promise<void> {
+  async dispose(final: "offline" | "paused" = "offline", abortWork = false): Promise<void> {
     this.disposed = true;
     clearTimeout(this.timer);
+    this.unblock(false);
     this.pending = [];
     // Written now, not after the session is gone: closing can wait on a session still opening.
     this.deps.store.setAgentStatus(this.agentId, final);
     // Pausing ends the work in hand; the session is closed right after.
-    if (final === "paused" && this.running) await this.session?.abort().catch(() => {});
+    if (abortWork || (final === "paused" && this.running)) await this.session?.abort().catch(() => {});
     await this.chain.catch(() => {});
     await this.session?.dispose().catch(() => {});
     this.session = undefined;
@@ -205,8 +271,24 @@ export class AgentRuntime {
     const taken = this.running ? this.pending.filter((p) => p.kind === "message") : this.pending.slice();
     this.pending = this.running ? this.pending.filter((p) => p.kind !== "message") : [];
     // A message settled while it waited (answered, or queued twice) is not delivered again.
-    const batch = taken.filter((p) => p.kind === "text" || this.deps.store.message(p.id)?.state === "received");
+    let batch = taken.filter((p) => p.kind === "text" || this.deps.store.message(p.id)?.state === "received");
     if (batch.length === 0) return;
+    if (this.blocked && Date.now() >= this.blocked.until) this.unblock();
+    if (this.blocked) {
+      // The usage limit is still used up: delivering would only fail again. Messages wait for the
+      // reset; reminders and notes stay pending until then.
+      const { until, why } = this.blocked;
+      const held = this.deps.store.moveInbound(
+        batch.flatMap((p) => (p.kind === "message" ? [p.id] : [])),
+        "hold",
+        undefined,
+        until,
+      );
+      if (held.length > 0) this.deps.onSettled?.(held, "waiting", { ...why, retryAt: until });
+      batch = batch.filter((p) => p.kind === "text");
+      this.pending.unshift(...batch);
+      return;
+    }
 
     let session: HarnessSession;
     try {
@@ -252,13 +334,59 @@ export class AgentRuntime {
    * hears about it instead of waiting; reminders and notes wait for the next turn.
    */
   private lose(batch: readonly Pending[], error: unknown): void {
+    if (this.disposed) return;
     this.pending.unshift(...batch.filter((p) => p.kind === "text"));
-    const ids = this.deps.store.moveInbound(
+    this.settleLost(
       batch.flatMap((p) => (p.kind === "message" ? [p.id] : [])),
-      "fail",
+      { failure: failureOf(error) },
     );
-    if (ids.length === 0) return;
-    this.deps.onSettled?.(ids, "failed", { failure: failureOf(error) });
+  }
+
+  /**
+   * Messages the agent could not answer because of `why`: each waits and is delivered again when
+   * the failure passes by itself, or fails for the owner to retry or ignore (docs/spec.md 4.3).
+   */
+  private settleLost(ids: readonly string[], why: FailureInfo): void {
+    if (this.disposed || ids.length === 0) return;
+    const now = Date.now();
+    const waits = new Map<number, string[]>();
+    const failing: string[] = [];
+    for (const id of ids) {
+      const at = holdUntil(why, this.deps.store.holds(id), now);
+      if (at === undefined) failing.push(id);
+      else waits.set(at, [...(waits.get(at) ?? []), id]);
+    }
+    for (const [at, group] of waits) {
+      const held = this.deps.store.moveInbound(group, "hold", undefined, at);
+      if (held.length > 0) this.deps.onSettled?.(held, "waiting", { ...why, retryAt: at });
+    }
+    // A usage limit holds for everything after it too, until the reset.
+    if (why.failure === "quota" && waits.size > 0) this.block(Math.max(...waits.keys()), why);
+    const failed = this.deps.store.moveInbound(failing, "fail");
+    if (failed.length > 0) this.deps.onSettled?.(failed, "failed", why);
+  }
+
+  private block(until: number, why: FailureInfo): void {
+    this.unblock(false);
+    this.blocked = { until, why };
+    // Persisted, so the hold still applies after Mingle or the session is recreated.
+    this.deps.store.setQuotaWait(this.agentId, { until, resetsAt: why.resetsAt ?? until });
+    // Reminders and notes held back meanwhile go out once the limit should have reset.
+    this.unblockTimer = setTimeout(
+      () => {
+        this.unblock();
+        if (this.pending.length > 0) this.flushSoon();
+      },
+      Math.max(0, until - Date.now()),
+    );
+    this.unblockTimer.unref?.();
+  }
+
+  private unblock(clearStored = true): void {
+    clearTimeout(this.unblockTimer);
+    this.unblockTimer = undefined;
+    this.blocked = undefined;
+    if (clearStored) this.deps.store.setQuotaWait(this.agentId);
   }
 
   private render(messageId: string): string {
@@ -300,6 +428,7 @@ export class AgentRuntime {
       },
       {
         onTurnStarted: (self) => {
+          if (this.disposed) return;
           if (self && this.stopped) {
             // The stopped work coming back (a background command ended and woke the agent).
             this.deps.log?.(`${this.agentId}: aborted a turn the harness began after a stop`);
@@ -310,6 +439,7 @@ export class AgentRuntime {
           this.deps.onActivity?.("thinking");
         },
         onTurnEnded: (outcome) => {
+          if (this.disposed) return;
           this.running = false;
           if (outcome.kind === "failed") {
             const failure = outcome.failure ?? "unknown";
@@ -319,9 +449,10 @@ export class AgentRuntime {
           } else {
             this.setStatus("idle");
           }
-          this.afterTurn();
+          this.afterTurn(outcome.kind === "completed");
         },
         onActivity: (kind, detail) => {
+          if (this.disposed) return;
           this.setStatus(kind === "tool" ? "working" : "thinking", detail ?? null);
           this.deps.onActivity?.(kind, detail);
         },
@@ -341,7 +472,8 @@ export class AgentRuntime {
   }
 
   /** After each turn: remind the agent once about messages it has not answered (docs/spec.md 4.3). */
-  private afterTurn(): void {
+  private afterTurn(completed = false): void {
+    if (this.disposed) return;
     const { store } = this.deps;
     const awaiting = store.awaitingReply(this.agentId);
     // After the owner's stop, a nudge would restart the work they stopped: what is
@@ -361,12 +493,24 @@ export class AgentRuntime {
         text: `[mingle] Not answered yet: ${ids}. Reply to each with "$MINGLE_CLI" message reply <id>, or send a short note if no reply is needed.`,
       });
     }
+    // Only after work that finished, with nothing else waiting: the hint never interrupts or joins other work.
+    if (completed && !this.stopped && this.pending.length === 0) this.checkMemory();
     if (this.stale) {
       // restart() delivers what is pending once the new process is up.
       void this.restart();
       return;
     }
     if (this.pending.length > 0) this.flushSoon();
+  }
+
+  /** Ask the agent to trim MEMORY.md when it has grown too large (docs/spec.md 4.5). */
+  private checkMemory(): void {
+    const size = memorySize(this.deps.homeDir);
+    const now = Date.now();
+    if (!memoryHintDue(size, this.deps.store.memoryHint(this.agentId), now)) return;
+    this.deps.store.setMemoryHint(this.agentId, now, size);
+    this.deps.log?.(`${this.agentId}: MEMORY.md is ${size} bytes; asked the agent to trim it`);
+    this.pending.push({ kind: "text", text: memoryHint(size) });
   }
 
   private agent(): Agent {
@@ -384,14 +528,12 @@ export class AgentRuntime {
     this.deps.store.setAgentStatus(this.agentId, status, detail, failure);
   }
 
-  /** Every message still waiting on this agent fails with `why`. */
+  /** Every message still waiting on this agent's answer was lost to `why`. */
   private settleAwaiting(why: FailureInfo): void {
-    const lost = this.deps.store.moveInbound(
+    this.settleLost(
       this.deps.store.awaitingReply(this.agentId).map((m) => m.id),
-      "fail",
+      why,
     );
-    if (lost.length === 0) return;
-    this.deps.onSettled?.(lost, "failed", why);
   }
 
   private fail(error: unknown): void {

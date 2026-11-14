@@ -31,6 +31,7 @@ const OPTIONS = {
   to: { type: "string" },
   limit: { type: "string" },
   before: { type: "string" },
+  around: { type: "string" },
   in: { type: "string" },
   out: { type: "string" },
   from: { type: "string" },
@@ -178,9 +179,12 @@ async function agentCommand(group: string, action: string | undefined, args: str
       const chat = need(
         args[0],
         "chat_required",
-        "usage: mingle message read <chat-id> [--limit 30] [--before <message-id>]",
+        "usage: mingle message read <chat-id> [--limit 30] [--before <message-id> | --around <message-id>]",
       );
-      const q = new URLSearchParams({ limit: flags.limit ?? "30", ...(flags.before ? { before: flags.before } : {}) });
+      const q = new URLSearchParams({
+        limit: flags.limit ?? (flags.around ? "11" : "30"),
+        ...(flags.around ? { around: flags.around } : flags.before ? { before: flags.before } : {}),
+      });
       const messages = await call()<{ id: string; text: string }[]>("GET", `/v1/agent/chats/${chat}/messages?${q}`);
       print(messages, () => messages.map((m) => m.text).join("\n\n") || "no messages");
       return true;
@@ -192,8 +196,17 @@ async function agentCommand(group: string, action: string | undefined, args: str
         ...(flags.in ? { in: flags.in } : {}),
         ...(flags.limit ? { limit: flags.limit } : {}),
       });
-      const messages = await call()<{ id: string; text: string }[]>("GET", `/v1/agent/messages/search?${q}`);
-      print(messages, () => messages.map((m) => m.text).join("\n\n") || "no matches");
+      const messages = await call()<{ id: string; chat: string; text: string }[]>(
+        "GET",
+        `/v1/agent/messages/search?${q}`,
+      );
+      // Each hit is a window around the match; the last line says how to open one.
+      const first = messages[0];
+      print(messages, () =>
+        first
+          ? `${messages.map((m) => m.text).join("\n\n")}\n\n${messages.length} match${messages.length === 1 ? "" : "es"}, newest first. "…" marks cut text. Read around one: "$MINGLE_CLI" message read ${first.chat} --around ${first.id}`
+          : "no matches",
+      );
       return true;
     }
     case "chat list": {
@@ -451,6 +464,18 @@ async function adminCommand(group: string, action: string | undefined, args: str
       );
       return true;
     }
+    case "agent reset": {
+      const id = need(args[0], "agent_required", "usage: mingle agent reset <agent>");
+      await adminClient()("POST", `/v1/admin/agents/${id}/reset`);
+      print({ ok: true }, () => "reset; it starts a new session from ROLE.md and MEMORY.md");
+      return true;
+    }
+    case "agent diagnostics": {
+      const id = need(args[0], "agent_required", "usage: mingle agent diagnostics <agent>");
+      const result = await adminClient()<{ text: string }>("GET", `/v1/admin/agents/${id}/diagnostics`);
+      print(result, () => result.text.trimEnd());
+      return true;
+    }
     case "agent delete": {
       const id = need(args[0], "agent_required", "usage: mingle agent delete <agent> [--remove-home]");
       await adminClient()("DELETE", `/v1/admin/agents/${id}${flags["remove-home"] ? "?removeHome=1" : ""}`);
@@ -622,6 +647,8 @@ For the owner:
   mingle agent stop <agent>                stop what it is doing now
   mingle agent pause <agent>               stop it and take no messages until resumed
   mingle agent resume <agent>              take messages again
+  mingle agent reset <agent>               start it over in a new session; memory and files stay
+  mingle agent diagnostics <agent>         versions, brain, session and status, to share when asking for help
   mingle agent delete <agent> [--remove-home]
   mingle connect <agent> telegram          bot token on standard input
   mingle disconnect <connection-id>

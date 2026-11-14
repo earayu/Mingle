@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { arch, release } from "node:os";
 import { join } from "node:path";
 import type {
   Channel,
@@ -14,12 +15,13 @@ import type {
 } from "../channels/channel.ts";
 import type { Harness, HarnessInfo, HarnessStatus } from "../harness/harness.ts";
 import type { SecretStore } from "../platform/secrets.ts";
-import { type Agent, type Connection, Store } from "../store/store.ts";
+import { type Agent, type Connection, type Message, Store } from "../store/store.ts";
+import { VERSION } from "../version.ts";
 import { Brains } from "./brains.ts";
 import { checkEnvName, checkEnvValue, decodeEnvValue, encodeEnvValue, envRef } from "./env.ts";
 import { MingleError, notFound } from "./errors.ts";
 import { formatReminder } from "./format.ts";
-import { createHome, writeRole } from "./home.ts";
+import { createHome, memorySize, writeRole } from "./home.ts";
 import { slugify } from "./ids.ts";
 import { BACKOFF_MS, type LinkEvent, type LinkState, step, stored } from "./link.ts";
 import { LiveReplies, pausedNote, stopNote } from "./live.ts";
@@ -144,7 +146,10 @@ export class Mingle {
     }
     await Promise.all(this.store.connections().map((c) => this.reconnect(c.id)));
     const tick = this.options.reminderTickMs ?? 10_000;
-    this.reminderTimer = setInterval(() => this.fireReminders(), tick);
+    this.reminderTimer = setInterval(() => {
+      this.fireReminders();
+      this.resumeWaiting();
+    }, tick);
     // Timers do not run while the computer sleeps: a tick that comes far later than due means it
     // slept, and its connections are likely dead without knowing it yet (docs/spec.md 7.1).
     const every = this.options.wakeCheckMs ?? 15_000;
@@ -166,6 +171,7 @@ export class Mingle {
       this.log(`${reason}: reconnecting the chat apps`);
       await Promise.all(this.store.connections().map((connection) => this.reconnect(connection.id)));
       this.fireReminders();
+      this.resumeWaiting();
     })().finally(() => {
       this.resuming = undefined;
     });
@@ -407,6 +413,79 @@ export class Mingle {
     return (await this.runtimes.get(agent.id)?.stop()) ?? false;
   }
 
+  /**
+   * Start the agent over in a new harness session (docs/spec.md 4.11), for a session that is
+   * stuck or too muddled to recover. A paused agent opens the new session when resumed.
+   */
+  async resetSession(idOrSlug: string): Promise<void> {
+    const agent = this.agent(idOrSlug);
+    const runtime = this.runtimes.get(agent.id);
+    const notes = runtime?.takePendingNotes() ?? [];
+    // The old session's token is retired with it: its background work cannot send any more.
+    this.revokeTokens(agent.id);
+    for (const id of this.replies.openFor(agent.id)) this.replies.settle(id, "stopped");
+    this.runtimes.delete(agent.id);
+    let closing = this.closing.get(agent.id);
+    if (runtime) {
+      const previous = closing;
+      const retiring = runtime.dispose("offline", true);
+      const done = Promise.all([previous, retiring])
+        .then(() => {})
+        .finally(() => {
+          if (this.closing.get(agent.id) === done) this.closing.delete(agent.id);
+        });
+      closing = done;
+      this.closing.set(agent.id, done);
+    }
+    // Already delivered work will not be answered by the retired session; queued and waiting
+    // messages stay for the replacement.
+    this.store.moveInbound(
+      this.store.awaitingReply(agent.id).map((m) => m.id),
+      "give_up",
+    );
+    this.store.setSessionId(agent.id, null);
+    if (!this.paused.has(agent.id)) {
+      const replacement = this.addRuntime(this.agent(agent.id));
+      // The old session may still be closing; the replacement opens only once it is gone.
+      replacement.start(closing);
+      for (const note of notes) replacement.enqueueText(note);
+    }
+    this.log(`${agent.name}: session reset`);
+  }
+
+  /**
+   * What someone helping needs to see why an agent misbehaves, as plain text to paste anywhere:
+   * versions, brain, session, status, bots and message counts. Never message text, names of the
+   * people it talks to, credentials or variable values.
+   */
+  async diagnostics(idOrSlug: string): Promise<string> {
+    const agent = this.agent(idOrSlug);
+    const harnesses = await this.availableHarnesses().catch(() => [] as readonly HarnessInfo[]);
+    const harness = harnesses.find((h) => h.id === agent.harness);
+    const now = Date.now();
+    const counts = this.store.inboundCounts(agent.id, now - 7 * 86_400_000);
+    const states = ["received", "delivered", "waiting", "replied", "unanswered", "failed", "ignored"];
+    // Only structured states belong in a shareable report; raw provider/adapter errors may
+    // contain request data.
+    const lines = [
+      "Mingle diagnostic info",
+      `time: ${new Date(now).toISOString()}`,
+      `mingle: ${VERSION} · node ${process.version} · ${process.platform} ${arch()} ${release()}`,
+      `agent: ${agent.id} · status ${agent.status}${agent.statusFailure ? ` (${agent.statusFailure})` : ""}`,
+      `brain: ${agent.harness}${harness?.version ? ` ${harness.version}` : ""}${harness ? "" : " (not found on this computer)"} · model ${agent.model ?? "default"}`,
+      `session: ${agent.sessionId ?? "none"}`,
+      `memory: MEMORY.md ${memorySize(this.homeDir(agent))} bytes`,
+      "chat apps:",
+      ...this.store.connections(agent.id).map((n) => {
+        const state = this.isLive(n.id) ? n.state : n.state === "connected" ? "reconnecting" : n.state;
+        return `  ${n.platform} ${n.id} · ${state}${n.ownerId ? "" : " · no owner"}`;
+      }),
+      `messages, last 7 days: ${states.map((k) => `${k} ${counts[k] ?? 0}`).join(" · ")}`,
+      `tasks open: ${this.store.tasks(agent.id, false).length} · reminders: ${this.store.reminders(agent.id).length}`,
+    ];
+    return `${lines.join("\n")}\n`;
+  }
+
   isPaused(agentId: string): boolean {
     return this.paused.has(agentId);
   }
@@ -437,7 +516,11 @@ export class Mingle {
       this.store.setAgentStatus(agent.id, "paused");
     }
     // What it had not answered yet will not be answered; failed and unanswered ones wait for the owner.
-    const awaiting = [...this.store.undelivered(agent.id), ...this.store.awaitingReply(agent.id)];
+    const awaiting = [
+      ...this.store.undelivered(agent.id),
+      ...this.store.awaitingReply(agent.id),
+      ...this.store.waiting(agent.id),
+    ];
     this.store.moveInbound(
       awaiting.map((m) => m.id),
       "pause",
@@ -900,20 +983,49 @@ export class Mingle {
       }
       if (this.store.moveInbound([message.id], "retry").length === 0) continue;
       retried.push(message.id);
-      if (message.platformId) {
-        this.replies.open({
-          messageId: message.id,
-          agentId: agent.id,
-          platform: connection.platform,
-          chat: { platformId: chat.platformId, kind: chat.kind, ...(chat.name ? { name: chat.name } : {}) },
-          platformMessageId: message.platformId,
-          senderId: message.senderId ?? "",
-          connection: live,
-        });
-      }
+      this.reopenReply(agent.id, message, live);
     }
     runtime.retry(retried);
     return { retried, offline: [...offline] };
+  }
+
+  /** A message going back to the agent shows progress again, like a new one. */
+  private reopenReply(agentId: string, message: Message, live: ChannelConnection): void {
+    const chat = this.store.chat(message.chatId);
+    const connection = chat && this.store.connection(chat.connectionId);
+    if (!chat || !connection || !message.platformId) return;
+    this.replies.open({
+      messageId: message.id,
+      agentId,
+      platform: connection.platform,
+      chat: { platformId: chat.platformId, kind: chat.kind, ...(chat.name ? { name: chat.name } : {}) },
+      platformMessageId: message.platformId,
+      senderId: message.senderId ?? "",
+      connection: live,
+    });
+  }
+
+  /**
+   * Deliver again the messages whose wait for a passing failure is over (docs/spec.md 4.3). One
+   * whose chat app is offline keeps waiting: the agent could not reply there anyway; the next tick
+   * after it reconnects picks it up.
+   */
+  resumeWaiting(now = Date.now()): void {
+    const due = new Map<string, string[]>();
+    for (const message of this.store.dueWaiting(now)) {
+      const runtime = this.runtimes.get(message.agentId);
+      if (!runtime || this.paused.has(message.agentId)) continue;
+      const chat = this.store.chat(message.chatId);
+      const live = chat && this.live.get(chat.connectionId);
+      if (!live) continue;
+      if (this.store.moveInbound([message.id], "resume").length === 0) continue;
+      this.reopenReply(message.agentId, message, live);
+      due.set(message.agentId, [...(due.get(message.agentId) ?? []), message.id]);
+    }
+    for (const [agentId, ids] of due) {
+      this.log(`${agentId}: trying again on ${ids.join(",")} after waiting`);
+      this.runtimes.get(agentId)?.resume(ids, now);
+    }
   }
 
   /** Dismiss selected failed or unanswered inbound messages without waking the agent or sending a reply. */
