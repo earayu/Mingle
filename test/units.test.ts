@@ -41,6 +41,19 @@ describe("excerpt", () => {
     const body = `${"山".repeat(50)}徒步路线${"水".repeat(50)}`;
     expect(excerpt(body, "徒步", 5, 5)).toBe(`…${"山".repeat(5)}<match>徒步</match>路线${"水".repeat(3)}…`);
   });
+
+  it("keeps the original match offset after Unicode case conversion changes length", () => {
+    expect(excerpt("İ Ridge route", "ridge")).toBe("İ <match>Ridge</match> route");
+    expect(excerpt("İstanbul ridge", "İstanbul")).toBe("<match>İstanbul</match> ridge");
+  });
+
+  it("keeps the match offset after an astral character", () => {
+    expect(excerpt("𐐷 ridge route", "ridge")).toBe("𐐷 <match>ridge</match> route");
+  });
+
+  it("finds a query that is only punctuation", () => {
+    expect(excerpt("try a+b ridge", "a+b")).toBe("try <match>a+b</match> ridge");
+  });
 });
 
 describe("formatMessage", () => {

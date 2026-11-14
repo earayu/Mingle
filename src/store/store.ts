@@ -267,6 +267,21 @@ export class Store {
       .run(wait?.until ?? null, wait?.resetsAt ?? null, id);
   }
 
+  /**
+   * Pull every waiting inbound message's retry time of this agent forward to `now`, so a check
+   * for due messages picks them up even while their chat app is offline. Only the timestamp
+   * moves: terminal states, holds and content are untouched.
+   */
+  readyWaiting(agentId: string, now: number): void {
+    this.db
+      .prepare(
+        `UPDATE messages SET retry_at = min(retry_at, ?)
+         WHERE direction = 'in' AND state = 'waiting' AND chat_id IN
+         (SELECT c.id FROM chats c JOIN connections n ON n.id = c.connection_id WHERE n.agent_id = ?)`,
+      )
+      .run(now, agentId);
+  }
+
   setSessionId(id: string, sessionId: string | null): void {
     this.db.prepare("UPDATE agents SET session_id = ?, updated_at = ? WHERE id = ?").run(sessionId, this.now(), id);
   }
