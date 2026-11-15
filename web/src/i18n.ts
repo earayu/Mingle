@@ -214,7 +214,7 @@ const en = {
   "github.account": "Sign in to GitHub as {name}'s account",
   "github.accountWhy": "Not your own: people mention {name} by this account's username.",
   "github.accountHow":
-    "No account yet? Sign up with the username `{handle}`. GitHub allows one extra account per person for automation. Signed in as yourself? Use a private window, or switch accounts from your avatar menu.",
+    "No account yet? Sign up with the username `{handle}`. GitHub allows one extra account per person for automation. Signed in as yourself? Use a private window, or switch accounts from your avatar menu. In that account's Settings → Notifications, keep `Participating, @mentions and custom` set to `On GitHub`, or {name} never sees mentions.",
   "github.signup": "Sign up on GitHub",
   "github.code": "Enter this code on GitHub",
   "github.openCode": "Copy code and open GitHub",
@@ -230,7 +230,7 @@ const en = {
     "Connected as {bot}. Mention {bot} in an issue or pull request to try it. In a private repository, add {bot} as a collaborator first.",
   "github.token": "Token",
   "github.steps":
-    "Sign in to GitHub as {name}'s own account, not yours. No account yet? Sign up with the username `{handle}`; a private window keeps you signed in as yourself elsewhere.\nCreate a classic token: the link fills in its name and the notifications and repo scopes. Pick an expiration and click Generate token.",
+    "Sign in to GitHub as {name}'s own account, not yours. No account yet? Sign up with the username `{handle}`; a private window keeps you signed in as yourself elsewhere.\nCreate a classic token: the link fills in its name and the notifications and repo scopes. Pick an expiration and click Generate token.\nIn that account's Settings → Notifications, keep `Participating, @mentions and custom` set to `On GitHub`, or {name} never sees mentions.",
   "github.setup": "Create the token",
   "github.form": "Paste the token (starts with ghp_). Mingle connects on its own.",
   "imessage.how": "Talk to it in your chat with yourself",
@@ -847,7 +847,7 @@ const zh: Record<MessageKey, string> = {
   "github.account": "用 {name} 的账号登录 GitHub",
   "github.accountWhy": "不是你自己的账号：大家通过这个账号的用户名 @ {name}。",
   "github.accountHow":
-    "还没有账号？用用户名 `{handle}` 注册一个，GitHub 允许每人额外注册一个用于自动化的账号。浏览器里登录的是你自己？用无痕窗口，或在头像菜单里切换账号。",
+    "还没有账号？用用户名 `{handle}` 注册一个，GitHub 允许每人额外注册一个用于自动化的账号。浏览器里登录的是你自己？用无痕窗口，或在头像菜单里切换账号。在这个账号的 Settings → Notifications 里，`Participating, @mentions and custom` 要保持 `On GitHub`，否则 {name} 看不到 @。",
   "github.signup": "去 GitHub 注册",
   "github.code": "在 GitHub 上输入这个验证码",
   "github.openCode": "复制验证码并打开 GitHub",
@@ -862,7 +862,7 @@ const zh: Record<MessageKey, string> = {
   "github.done": "已连接为 {bot}。在 issue 或 PR 里提到 {bot} 试试。私有仓库要先把 {bot} 加为协作者。",
   "github.token": "Token",
   "github.steps":
-    "用 {name} 自己的账号登录 GitHub，不是你的账号。还没有？用用户名 `{handle}` 注册一个；在无痕窗口里操作，不影响你自己的登录。\n创建一个 classic token：链接已填好名字和 notifications、repo 两项权限。选好有效期，点 Generate token。",
+    "用 {name} 自己的账号登录 GitHub，不是你的账号。还没有？用用户名 `{handle}` 注册一个；在无痕窗口里操作，不影响你自己的登录。\n创建一个 classic token：链接已填好名字和 notifications、repo 两项权限。选好有效期，点 Generate token。\n在这个账号的 Settings → Notifications 里，`Participating, @mentions and custom` 要保持 `On GitHub`，否则 {name} 看不到 @。",
   "github.setup": "创建 token",
   "github.form": "粘贴 token（以 ghp_ 开头），Mingle 会自动连接。",
   "imessage.how": "在给自己发消息的对话里和它聊",
