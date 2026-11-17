@@ -90,10 +90,11 @@ export interface ConnectionView {
 
 /**
  * A permission the owner grants the bot on the platform itself (docs/spec.md 4.2). `group_messages`:
- * every message in its groups, not only the ones that @ it. `grant.steps` picks the instructions.
+ * every message in its groups, not only the ones that @ it. `bot_messages`: what other bots send in
+ * its groups (Feishu only). `grant.steps` picks the instructions.
  */
 export interface BotPermission {
-  id: "group_messages";
+  id: "group_messages" | "bot_messages";
   granted: boolean;
   grant?: { url: string; steps?: "telegram" | "discord" };
 }

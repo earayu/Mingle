@@ -6,6 +6,7 @@ import * as sdk from "@larksuiteoapi/node-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ChannelEvents, ConnectionState, InboundMessage, OnboardingEvent } from "../src/channels/channel.ts";
 import {
+  BOT_MESSAGES_SCOPES,
   FEISHU_SCOPES,
   type FeishuApi,
   feishuChannel,
@@ -42,6 +43,7 @@ function fakeLark() {
   const reactions: string[] = [];
   const streams: { to: string; opts: unknown; contents: string[] }[] = [];
   const memberCalls: { chatId: string; pageToken: string | undefined }[] = [];
+  const contactGets: string[] = [];
   let connected = false;
   let failNext: string | undefined;
   let history: unknown[] | undefined;
@@ -120,7 +122,14 @@ function fakeLark() {
         },
       },
       contact: {
-        v3: { user: { get: async () => ({ data: { user: { name: "李四" } } }) } },
+        v3: {
+          user: {
+            get: async ({ path }: { path: { user_id: string } }) => {
+              contactGets.push(path.user_id);
+              return { data: { user: { name: "李四" } } };
+            },
+          },
+        },
       },
     },
     botIdentity: { openId: "ou_bot", name: "Alex" },
@@ -129,6 +138,7 @@ function fakeLark() {
     channel,
     sent,
     memberCalls,
+    contactGets,
     isConnected: () => connected,
     reactions,
     streams,
@@ -362,6 +372,8 @@ describe("feishu group messages permission", () => {
 
   it("asks for every group message when the app is created, and lets them through the SDK", async () => {
     expect(FEISHU_SCOPES).toContain(GROUP_MESSAGES_SCOPE);
+    // A member also sees what other bots say: Feishu pushes those only with the include_bot variants.
+    expect(FEISHU_SCOPES).toEqual(expect.arrayContaining([...BOT_MESSAGES_SCOPES]));
     const lark = fakeLark();
     let options: LarkChannelOptions | undefined;
     const channel = feishuChannel({
@@ -373,6 +385,35 @@ describe("feishu group messages permission", () => {
     });
     const connection = await channel.connect({ appId: "cli_1", appSecret: "s" }, events);
     expect(options?.policy).toMatchObject({ requireMention: false });
+    // sender_type lives on the raw event, which the SDK drops unless asked to keep it.
+    expect(options?.includeRawEvent).toBe(true);
+    await connection.close();
+  });
+
+  it("marks other bots' live messages, without looking them up in contacts", async () => {
+    const lark = fakeLark();
+    const channel = feishuChannel({ api: fakeApi({ activated: () => true }), createChannel: () => lark.channel });
+    const received: InboundMessage[] = [];
+    const connection = await channel.connect(
+      { appId: "cli_1", appSecret: "s" },
+      { onMessage: (m) => received.push(m), onState: () => {}, onMembership: () => {} },
+    );
+    const raw = (senderType: string) => ({
+      sender: { sender_id: { open_id: "ou_x" }, sender_type: senderType },
+      message: {},
+    });
+    const unnamed = (partial: Partial<NormalizedMessage>) => {
+      const m = message(partial);
+      delete m.senderName;
+      return m;
+    };
+    await lark.emit("message", unnamed({ senderId: "ou_ci", raw: raw("app") }));
+    await lark.emit("message", unnamed({ senderId: "ou_li", raw: raw("user") }));
+    await until(() => received.length === 2, 2000);
+    expect(received[0]?.sender).toEqual({ id: "ou_ci", name: "", isBot: true });
+    expect(received[1]?.sender).toMatchObject({ id: "ou_li", name: "李四", isBot: false });
+    // The contact lookup cannot resolve a bot, so only the person was looked up.
+    expect(lark.contactGets).toEqual(["ou_li"]);
     await connection.close();
   });
 
@@ -428,11 +469,28 @@ describe("feishu group messages permission", () => {
       });
       const connection = await channel.connect({ appId: "cli_1", appSecret: "s", domain: "lark" }, events);
       // No link: Feishu adds it to the same app by scanning again from the bot's settings.
-      expect(await connection.permissions?.()).toEqual([{ id: "group_messages", granted: false }]);
+      expect(await connection.permissions?.()).toEqual([
+        { id: "group_messages", granted: false },
+        { id: "bot_messages", granted: false },
+      ]);
       granted = new Map([[GROUP_MESSAGES_SCOPE, true]]);
       expect((await connection.permissions?.())?.[0]?.granted).toBe(false);
       clock.at += 20_000;
-      expect(await connection.permissions?.()).toEqual([{ id: "group_messages", granted: true }]);
+      // group_msg alone is not enough to hear other bots; both include_bot scopes count as one.
+      expect(await connection.permissions?.()).toEqual([
+        { id: "group_messages", granted: true },
+        { id: "bot_messages", granted: false },
+      ]);
+      clock.at += 20_000;
+      granted = new Map([
+        [GROUP_MESSAGES_SCOPE, true],
+        [BOT_MESSAGES_SCOPES[0], true],
+        [BOT_MESSAGES_SCOPES[1], true],
+      ]);
+      expect(await connection.permissions?.()).toEqual([
+        { id: "group_messages", granted: true },
+        { id: "bot_messages", granted: true },
+      ]);
       await connection.close();
     } finally {
       Date.now = realNow;

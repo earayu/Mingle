@@ -550,6 +550,7 @@ const en = {
   "connection.claimExpired": "Get a code, then send it to the bot from your own account to become its owner.",
   "connection.claimNew": "Get a code",
   "permission.groupMessages": "In groups it only sees messages that @ it, so it misses the conversation around them.",
+  "permission.botMessages": "In groups it doesn't see what other bots say, so it misses part of the conversation.",
   "permission.steps.rescan": "Scan again to add the permission to the same app.",
   "permission.steps.telegram":
     "Send /setprivacy to BotFather, pick this bot and choose Disable, then add it to its groups again.",
@@ -1277,6 +1278,7 @@ const zh: Record<MessageKey, string> = {
   "connection.claimExpired": "获取验证码，再用你自己的账号私聊发给它，你就成为它的 owner。",
   "connection.claimNew": "获取验证码",
   "permission.groupMessages": "在群里只看得到 @ 它的消息，看不到前后的对话。",
+  "permission.botMessages": "在群里看不到其他机器人发的消息，会漏掉一部分对话。",
   "permission.steps.rescan": "再扫一次码，把这项权限补到同一个应用上。",
   "permission.steps.telegram": "给 BotFather 发送 /setprivacy，选这个机器人，选 Disable，再把它重新拉进群。",
   "permission.steps.discord": "在 Developer Portal 这个机器人的 Bot 页面打开 Message Content Intent 并保存。",

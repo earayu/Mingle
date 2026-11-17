@@ -159,7 +159,7 @@ function BotPermissions({
   const { value: platforms } = useCached<PlatformInfo[]>("platforms", api.platforms, []);
   const [updating, setUpdating] = useState(false);
   const [read, setRead] = useState(0);
-  const missing = useMissingGroupMessages(connection.id, connection.state === "connected", read);
+  const missing = useMissingPermission(connection.id, connection.state === "connected", read);
   const info = platforms?.find((p) => p.platform === connection.platform);
   const rescan = Boolean(info?.reauthorize);
   const grant = missing?.grant;
@@ -189,10 +189,10 @@ function BotPermissions({
             {missing
               ? steps
                 ? t("permission.missingWithSteps", {
-                    missing: t("permission.groupMessages"),
+                    missing: t(`permission.${PERMISSION_COPY[missing.id]}` as MessageKey),
                     steps: t(`permission.steps.${steps}` as MessageKey),
                   })
-                : t("permission.groupMessages")
+                : t(`permission.${PERMISSION_COPY[missing.id]}` as MessageKey)
               : t("connection.permissionsHint")}
           </p>
           {rescan ? (
@@ -443,11 +443,14 @@ function ConnectionRow({
   );
 }
 
+/** Message-catalog key for each permission's missing copy, in the order they matter. */
+const PERMISSION_COPY = { group_messages: "groupMessages", bot_messages: "botMessages" } as const;
+
 /**
- * The group-messages permission the bot still lacks on its platform, read live (docs/spec.md 4.2),
- * or null. Read again whenever the window comes back, since the owner grants it on the platform.
+ * The first permission the bot still lacks on its platform, read live (docs/spec.md 4.2), or null.
+ * Read again whenever the window comes back, since the owner grants it on the platform.
  */
-function useMissingGroupMessages(connectionId: string, connected: boolean, again: number): BotPermission | null {
+function useMissingPermission(connectionId: string, connected: boolean, again: number): BotPermission | null {
   const [missing, setMissing] = useState<BotPermission | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `again` asks for a fresh read after a rescan.
   useEffect(() => {
@@ -460,7 +463,12 @@ function useMissingGroupMessages(connectionId: string, connected: boolean, again
       api
         .permissions(connectionId)
         .then(({ permissions }) => {
-          if (live) setMissing(permissions.find((p) => p.id === "group_messages" && !p.granted) ?? null);
+          if (!live) return;
+          setMissing(
+            (Object.keys(PERMISSION_COPY) as (keyof typeof PERMISSION_COPY)[])
+              .map((id) => permissions.find((p) => p.id === id))
+              .find((p) => p && !p.granted) ?? null,
+          );
         })
         .catch(() => {});
     void read();

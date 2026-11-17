@@ -168,9 +168,9 @@ erDiagram
 - 触发消息的来源行带 `unseen=N`：这个群里，从 Agent 上次在这里发言到这条消息之间，有 N 条没 @ 它的消息。N 为 0 时不写。在投递时计算，之后再来的消息不改变已投递的来源行。
 - **线程有所属的群。** Slack 的线程是一个独立聊天，背景却在频道里。适配器给线程聊天报上所属的群（`ChatRef.parent`，存为 `chats.parent_id`），来源行带 `in=<群聊天ID>`。线程的 `unseen` 同时数线程自己和所属的群，"上次发言"以这个频道里任一处为准：Agent 在频道的任一线程里说过话，之前的频道消息就不算没看到。
 - 操作指南只给一条规则：`unseen` 不为 0 且问题依赖前文时，先 `message read`（线程读 `in=` 指向的聊天）；否则直接回答，不必每条都回读。
-- **权限尽量对齐一个真人（MING-89）。** Agent 在群里是个普通成员，默认该有群成员有的权限：看得到群里所有消息，进群能往上翻，能看到群成员。Mingle 是私聊加群聊的 Agent，只看得到 @ 它的消息时，问"你怎么看"它没有前文，很难用。所以能在创建时就要的权限默认就要：飞书扫码建应用时直接申请"获取群组中所有消息"（`im:message.group_msg`，敏感权限；有它才能收到没 @ 的群消息，也才能用接口读群的历史消息）。飞书 SDK 的 `LarkChannel` 默认丢掉没 @ 机器人的群消息（`policy.requireMention`），适配器关掉它，交给核心存为背景；@所有人 的消息同样存为背景。之前飞书的这一条其实从未生效。
+- **权限尽量对齐一个真人（MING-89）。** Agent 在群里是个普通成员，默认该有群成员有的权限：看得到群里所有消息，进群能往上翻，能看到群成员。Mingle 是私聊加群聊的 Agent，只看得到 @ 它的消息时，问"你怎么看"它没有前文，很难用。所以能在创建时就要的权限默认就要：飞书扫码建应用时直接申请"获取群组中所有消息"（`im:message.group_msg`，敏感权限；有它才能收到没 @ 的群消息，也才能用接口读群的历史消息），以及两个 `*.include_bot` 变体（`im:message.group_at_msg.include_bot:readonly`、`im:message.group_msg.include_bot:read`，仅自建应用）——成员在群里看得到其他机器人说什么，Agent 也一样，没有它们飞书不推任何机器人发的消息。飞书 SDK 的 `LarkChannel` 默认丢掉没 @ 机器人的群消息（`policy.requireMention`），适配器关掉它，交给核心存为背景；@所有人 的消息同样存为背景。之前飞书的这一条其实从未生效。
 - **进群先看前文。** 人被拉进群可以往上翻；机器人也一样：飞书机器人被拉进群时，适配器用 `im/v1/messages` 读这个群最近 50 条消息（需要上面这项权限，没有就什么都不读，从现在开始），以 `InboundMessage.earlier` 交给核心。核心把它们存为背景：不触发、不进熔断计数、不论里面有没有 @ 它，都不会去回答过去的话；它们计入之后第一条触发消息的 `unseen`，Agent 需要时 `message read` 就能看到。系统消息（某人进群、改群名）和已撤回的不读。其他平台待做：Telegram 的 Bot API 读不了历史；Discord、Slack 有读历史的接口和权限（`Read Message History`、`channels:history`），进服务器或频道时的回读另行实现。
-- **创建后补开。** 更早创建、没有这项权限的飞书应用（包括手填凭据接入的），在机器人设置的"权限"一节再扫一次码补到同一个应用上（6.1）。建好以后才能在平台上开的（Telegram 的隐私模式、Discord 的 Message Content Intent），同一节说明"在群里只看得到 @ 它的消息"，给出平台上对应的操作和"去开启"按钮：Telegram 打开 BotFather，`/setprivacy` 选 Disable，已在的群要把机器人重新拉进去才生效；Discord 打开 Developer Portal 这个应用的 Bot 页。权限按机器人实例实时读（`ChannelConnection.permissions()`，`GET /v1/admin/connections/:id/permissions`）：飞书读 `GET /open-apis/application/v6/scopes`（不需要额外权限），Telegram 读 `getMe` 的 `can_read_all_group_messages`，Discord 读应用的 flags；每个结果缓存 15 秒，控制台在窗口重新获得焦点、补权限扫码完成后再读一次，开好了提示自己消失。Discord 发现 intent 新开了就重新 identify，不用手动重连。读不出来时只显示原来的说明。钉钉、企业微信、QQ 平台只把 @ 机器人的群消息给机器人，没有可开的权限；Slack 建应用时已带 `channels:history`、`groups:history`。
+- **创建后补开。** 更早创建、没有这些权限的飞书应用（包括手填凭据接入的），在机器人设置的"权限"一节再扫一次码补到同一个应用上（6.1）；只缺 `include_bot` 时这一节提示"在群里看不到其他机器人发的消息"。建好以后才能在平台上开的（Telegram 的隐私模式、Discord 的 Message Content Intent），同一节说明"在群里只看得到 @ 它的消息"，给出平台上对应的操作和"去开启"按钮：Telegram 打开 BotFather，`/setprivacy` 选 Disable，已在的群要把机器人重新拉进去才生效；Discord 打开 Developer Portal 这个应用的 Bot 页。权限按机器人实例实时读（`ChannelConnection.permissions()`，`GET /v1/admin/connections/:id/permissions`）：飞书读 `GET /open-apis/application/v6/scopes`（不需要额外权限），Telegram 读 `getMe` 的 `can_read_all_group_messages`，Discord 读应用的 flags；每个结果缓存 15 秒，控制台在窗口重新获得焦点、补权限扫码完成后再读一次，开好了提示自己消失。Discord 发现 intent 新开了就重新 identify，不用手动重连。读不出来时只显示原来的说明。钉钉、企业微信、QQ 平台只把 @ 机器人的群消息给机器人，没有可开的权限；Slack 建应用时已带 `channels:history`、`groups:history`。
 
 ```text
 [msg=m9c1d chat=c31 im=slack group="C0123:1731.42" in=c30 from="张三" user=u7k2p time=2026-11-15T10:20+08:00 unseen=7]
@@ -185,7 +185,7 @@ erDiagram
 
 **怎么认出机器人**（联系人的 `is_bot`，迁移 014）：
 
-- 平台的标记：Discord 的 `author.bot`、Telegram 的 `is_bot`、GitHub 的 `type: Bot`、Slack 的 `bot_id` 和 `bot_message`（Slack 适配器以前自己丢掉这些消息，现在照常报给核心）。
+- 平台的标记：Discord 的 `author.bot`、Telegram 的 `is_bot`、GitHub 的 `type: Bot`、Slack 的 `bot_id` 和 `bot_message`（Slack 适配器以前自己丢掉这些消息，现在照常报给核心）、飞书事件和消息列表里的 `sender_type`（`"app"`；机器人发送者通讯录接口查不到，名字暂留空）。
 - 本机所有在线 Agent 的机器人身份：发送者是本机另一个连接的机器人（`BotIdentity.id`，或 `senderId`：GitHub 上消息里的是登录名，`id` 是数字 ID）。这补上了 GitHub 用户账号的缺口，也覆盖本机多个 Agent 同在一个群。飞书的 open_id 按应用区分，同一个机器人在两个应用眼里 ID 不同，认不出来。
 - owner 在控制台手动标记（`PATCH /v1/admin/agents/:id/contacts/:contactId`，参数 `{ bot }`），用于别人家的 Agent 用的是普通账号的情况。
 - 前两种认出后自动记到联系人上，之后一直算机器人。owner 永远是人：不能被标记，也不会按机器人处理；机器人也不会因为先发私聊而成为 owner。
@@ -1248,7 +1248,7 @@ docs/             文档
 
 两套实例分别运行 `node scripts/im-smoke-check.mjs --minutes 60`（以各自 home 为目标），均输出 `Smoke: all inbound messages answered`。该检查只覆盖已入站消息，不能把 Slack 未成功上传的附件算作通过。补测截图及脱敏结果随 MING-38 交付；测试专用 Mingle 已关闭，共享实例及用户客户端保留。
 
-**2026-11-17（UTC+8），MING-97 飞书同群多机器人去重真机回归。** 源码运行主干 `1a72226`（含 PR #111 修复），macOS 14.5，Node 24.15.0，飞书 SDK 1.76.0，复用本机 `~/.mingle` 数据目录。同一进程两个飞书连接：Agent `Smoke`（Claude Code）的机器人 Smoke 和 Agent `Regression2`（Pi）的机器人「Mingle 测试」，同群 `dedup-regression`。测试消息以 owner 的真实用户身份经 OpenAPI 发送（lark-cli 设备流授权，post 格式 at 标签）。一个前提发现：Mingle 建的飞书应用只有 `im:message.group_msg` / `im:message.group_at_msg` 权限，群里**其他机器人**发的消息（包括 @ 它的）不会推给它们——需要 `*.include_bot` 变体权限，所以测试消息必须由真人发。
+**2026-11-17（UTC+8），MING-97 飞书同群多机器人去重真机回归。** 源码运行主干 `1a72226`（含 PR #111 修复），macOS 14.5，Node 24.15.0，飞书 SDK 1.76.0，复用本机 `~/.mingle` 数据目录。同一进程两个飞书连接：Agent `Smoke`（Claude Code）的机器人 Smoke 和 Agent `Regression2`（Pi）的机器人「Mingle 测试」，同群 `dedup-regression`。测试消息以 owner 的真实用户身份经 OpenAPI 发送（lark-cli 设备流授权，post 格式 at 标签）。一个前提发现：当时 Mingle 建的飞书应用只有 `im:message.group_msg` / `im:message.group_at_msg` 权限，群里**其他机器人**发的消息（包括 @ 它的）不会推给它们——需要 `*.include_bot` 变体权限（已默认申请，见 4.2），所以测试消息必须由真人发。
 
 | 用例 | 结果 |
 |---|---|
@@ -1265,7 +1265,7 @@ docs/             文档
 | 长期单会话 | 持续数周的会话在压缩后的表现，`MEMORY.md` 恢复是否足够 | 实际使用一段时间 |
 | 交接（4.12） | 真实 Claude Code / Codex 按提示词写出交接并运行命令；接收的 Agent 读完后把要点合并进 `MEMORY.md`、建任务、不在 IM 里回复 | 有额度的真实 harness |
 | 飞书管理员审核 | 需要审核的租户里的实际表现 | 一个开启了应用审核的飞书租户 |
-| 飞书群消息权限（MING-89） | 扫码建应用时带上敏感权限 `im:message.group_msg` 后，免审核租户是否仍即时可用；没 @ 的群消息是否进 `message read`；旧应用再扫一次码补权限后，`scopes` 接口和收消息是否立即反映；拉进有历史的群时是否读到最近的消息 | 真机扫码新建一个飞书应用，以及一个缺这项权限的旧应用 |
+| 飞书群消息权限（MING-89） | 扫码建应用时带上敏感权限 `im:message.group_msg` 和两个 `*.include_bot` 变体后，免审核租户是否仍即时可用，还是会触发管理员审核；没 @ 的群消息和其他机器人发的消息是否进 `message read`；旧应用再扫一次码补权限后，`scopes` 接口和收消息是否立即反映；拉进有历史的群时是否读到最近的消息 | 真机扫码新建一个飞书应用，以及一个缺这项权限的旧应用 |
 | 飞书回归：回执转换 | 完整 OnIt → DONE 转换 | 在可观察的客户端复测完整转换；收 PNG/PDF、实时卡片更新和发文件已有实测结论（12.1） |
 | `/stop` 后后台任务仍回复 | 飞书真机上叫停后不再收到原任务的完成回复 | MING-43 已修复（4.3）。2026-11-14 用真实 Claude Code 2.1.322 + 模拟聊天复测：修复前叫停后约 30 秒仍发 `TASK-DONE`，修复后不再发送，之后的新消息照常回复（`test/e2e.test.ts`）。还需飞书真机按 12.1 的 #6 步骤复测 |
 | 个人微信端到端 | 扫码、验证码、私聊收发、"正在输入"、图片和文件收发 | 手机微信扫码及可能的验证码；2026-11-14 出码成功，本轮未提供 Pinky 操作入口 |
@@ -1282,7 +1282,7 @@ docs/             文档
 | Windows、Linux 实机 | 安装、托盘（左键开窗、右键菜单、首次关窗提示）、开机自启、保持唤醒、自动更新；凭据走 DPAPI、Secret Service；Codex 在 PowerShell 里按指南调用 `mingle` | 一台 Windows 和一台 Linux 桌面机 |
 | 自动更新未覆盖路径 | 更早正式版（含 0.1.0）的升级、原生更新器实际选择增量包、界面“重启以更新”按钮；0.1.6 → 0.1.7 的 macOS 下载、验签、退出替换和数据保留已通过；0.1.7 → 0.1.8、0.1.8 → 0.1.9、0.1.9 → 0.1.10、0.1.10 → 0.1.11 的签名增量包重建与旧数据启动已通过，这四次原生自动更新流程未测（12.1） | 保留旧版的隔离安装和可操作原生窗口的测试环境 |
 | GitHub 组织成员关联 | 组织成员关系不公开时，成员的 `author_association` 是否仍为 `MEMBER` | 一套带非公开组织成员的仓库和账号（机器账号双账号收发已验证，见 12.1） |
-| 其他机器人的消息 | 钉钉、企业微信、QQ 会不会把群里其他机器人的消息推给机器人；会的话在适配器里报告正确的 `isBot`（目前写死 `false`，依赖本机身份和 owner 标记）。飞书已实测（2026-11-17，12.1）：`im:message.group_msg` / `group_at_msg` 权限下其他机器人发的消息（含 @ 自己的）不推送，要收到需申请 `*.include_bot` 变体权限。Telegram 据官方文档机器人收不到其他机器人的消息，Slack 其他应用的消息是否都带 `bot_id`，也待真机确认（4.2） | 各平台的群里放两个机器人 |
+| 其他机器人的消息 | 钉钉、企业微信、QQ 会不会把群里其他机器人的消息推给机器人；会的话在适配器里报告正确的 `isBot`（目前写死 `false`，依赖本机身份和 owner 标记）。飞书已实测（2026-11-17，12.1）：`im:message.group_msg` / `group_at_msg` 权限下其他机器人发的消息（含 @ 自己的）不推送，现已默认申请 `*.include_bot` 变体权限；真机上另一机器人发的消息是否实际送达、`isBot` 标记是否正确，以及机器人发送者的显示名（通讯录接口查不到机器人，名字暂留空），都待真机确认。Telegram 据官方文档机器人收不到其他机器人的消息，Slack 其他应用的消息是否都带 `bot_id`，也待真机确认（4.2） | 各平台的群里放两个机器人 |
 | 离线补推 | Telegram、Discord、个人微信、QQ、企业微信、钉钉断开期间是否补推；飞书和 Slack 的更多断连条件 | 各平台已接入的机器人；飞书一次约 5 分钟恢复补推、Slack 一次约 2 分钟断连未补推但恢复后新消息可回复，均见 12.1，不外推为平台保证 |
 | 冷启动重建上下文（MING-64） | 一个真实 Agent 连续数日的冷轮 cache-write 与回答质量对照，以及实际触发的频率；截断提示改动后，Agent 是否会自己去读原文 | 用 `MINGLE_COLD_START=<agent>` 在日常使用的 Agent 上跑几天，按 `cold turn` 日志对比。一次短时对照见 12.1：缓存写入少 88%，但长文档里的细节会丢，所以保持默认关闭 |
 

@@ -375,9 +375,11 @@ export interface ChannelConnection {
  * A permission the owner grants a bot on the platform itself.
  * `group_messages`: every message in the bot's groups, not only the ones that @ it; on Feishu also
  * the group's earlier messages.
+ * `bot_messages`: what other bots send in the bot's groups. Feishu only; other platforms do not
+ * report it.
  */
 export interface BotPermission {
-  readonly id: "group_messages";
+  readonly id: "group_messages" | "bot_messages";
   readonly granted: boolean;
   /**
    * How the owner grants it on the platform's site. Absent where it cannot be granted there, or

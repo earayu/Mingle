@@ -34,6 +34,16 @@ import { withTextSent } from "../channel.ts";
 export const GROUP_MESSAGES_SCOPE = "im:message.group_msg";
 
 /**
+ * What other bots say in the bot's groups: messages where users and other bots @ this bot, and
+ * every group message from users and other bots (not this bot's own). Without these, Feishu pushes
+ * nothing a bot sent. Self-built apps only.
+ */
+export const BOT_MESSAGES_SCOPES = [
+  "im:message.group_at_msg.include_bot:readonly",
+  "im:message.group_msg.include_bot:read",
+] as const;
+
+/**
  * Tenant scopes requested when the app is created: the same reach a person has in a chat. An app
  * created before `im:message.group_msg` was added gets it by scanning again from the bot's settings
  * page, which runs the update flow (docs/spec.md 6.1).
@@ -42,6 +52,8 @@ export const FEISHU_SCOPES = [
   "im:message.p2p_msg:readonly",
   "im:message.group_at_msg:readonly",
   GROUP_MESSAGES_SCOPE,
+  // A member sees what other bots say too (docs/spec.md 4.2 "机器人之间").
+  ...BOT_MESSAGES_SCOPES,
   "im:message:readonly",
   "im:message:send_as_bot",
   "im:message.reactions:write_only",
@@ -271,8 +283,8 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
             const normalized = await lark.normalize(raw, { botIdentity, stripBotMentions: true });
             const app = item.sender?.sender_type === "app";
             const senderName = app ? undefined : await userName(normalized.senderId);
-            const inbound = toInbound(senderName ? { ...normalized, senderName } : normalized, bot, name);
-            if (inbound) events.onMessage({ ...inbound, sender: { ...inbound.sender, isBot: app }, earlier: true });
+            const inbound = toInbound(senderName ? { ...normalized, senderName } : normalized, bot, name, app);
+            if (inbound) events.onMessage({ ...inbound, earlier: true });
           }
         } catch {
           // Not allowed to read the group's messages, or offline: the bot starts from now.
@@ -295,14 +307,19 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
           // bots in one group get the same message ID, so whichever finished first made the other
           // drop the message as already seen. Each connection keeps its own.
           cache: new lark.DefaultCache(),
+          // The event's sender_type marks other bots' messages (docs/spec.md 4.2 "怎么认出机器人").
+          includeRawEvent: true,
         });
         channel = instance;
         instance.on("message", async (message) => {
-          const senderName = message.senderName ?? (await userName(message.senderId));
+          const isBot = (message.raw as lark.RawMessageEvent | undefined)?.sender?.sender_type === "app";
+          // A contact lookup resolves only people; other bots stay unnamed.
+          const senderName = message.senderName ?? (isBot ? undefined : await userName(message.senderId));
           const inbound = toInbound(
             senderName ? { ...message, senderName } : message,
             bot,
             message.chatType === "group" ? await chatName(message.chatId) : undefined,
+            isBot,
           );
           if (inbound) events.onMessage(inbound);
         });
@@ -343,9 +360,12 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
       let scopes: { at: number; read: Promise<readonly BotPermission[]> } | undefined;
       const readPermissions = async (): Promise<readonly BotPermission[]> => {
         try {
-          const granted = (await api.scopes(credentials)).get(GROUP_MESSAGES_SCOPE) === true;
-          // Granted by scanning again from the bot's settings (`reauthorize`), not on Feishu's site.
-          return [{ id: "group_messages", granted }];
+          const granted = await api.scopes(credentials);
+          // Both granted by scanning again from the bot's settings (`reauthorize`), not on Feishu's site.
+          return [
+            { id: "group_messages", granted: granted.get(GROUP_MESSAGES_SCOPE) === true },
+            { id: "bot_messages", granted: BOT_MESSAGES_SCOPES.every((s) => granted.get(s) === true) },
+          ];
         } catch {
           return [];
         }
@@ -554,6 +574,7 @@ export function toInbound(
   message: lark.NormalizedMessage,
   bot: BotIdentity,
   chatName: string | undefined,
+  isBot = false,
 ): InboundMessage | undefined {
   if (message.senderId === bot.id) return undefined;
   const dm = message.chatType === "p2p";
@@ -577,7 +598,7 @@ export function toInbound(
       ...(dm ? (message.senderName ? { name: message.senderName } : {}) : chatName ? { name: chatName } : {}),
     },
     // An empty name means unknown; the console labels such senders without showing the open_id.
-    sender: { id: message.senderId, name: message.senderName ?? "", isBot: false },
+    sender: { id: message.senderId, name: message.senderName ?? "", isBot },
     text,
     attachments,
     ...(message.replyToMessageId ? { replyTo: message.replyToMessageId } : {}),
