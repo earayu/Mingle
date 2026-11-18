@@ -83,6 +83,10 @@ chat channel; real-host integration remains to be verified.
 - [Interface design](DESIGN.md) (Chinese)
 - [AGENTS.md](AGENTS.md): working notes for coding agents (Chinese)
 
+## Contributing
+
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
 [MIT](LICENSE)

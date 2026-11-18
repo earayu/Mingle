@@ -23,6 +23,10 @@ macOS、Windows、Linux 的桌面应用在 [Releases](https://github.com/earayu/
 - [界面设计规范](DESIGN.md)
 - [AGENTS.md](AGENTS.md)：给 coding agent 的工作说明
 
+## 参与贡献
+
+欢迎提 issue 和 PR，见 [CONTRIBUTING.md](CONTRIBUTING.md)（英文），issue 用中文写也可以。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
+
 ## 许可证
 
 [MIT](LICENSE)
