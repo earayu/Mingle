@@ -179,6 +179,7 @@ export const copy = {
       disclaimer:
         "Mingle is not affiliated with the chat apps or model providers named here. Their names and marks belong to their owners.",
       changelog: "Changelog",
+      contact: "Contact",
     },
     langName: "English",
   },
@@ -347,6 +348,7 @@ export const copy = {
     footer: {
       disclaimer: "Mingle 与本页提到的聊天软件和模型服务商没有关联，相关名称和标识归其所有者。",
       changelog: "更新日志",
+      contact: "联系",
     },
     langName: "中文",
   },

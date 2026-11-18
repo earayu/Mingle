@@ -27,6 +27,7 @@ const SITE = join(ROOT, "site");
 const OUT = values.out ? resolve(values.out) : join(SITE, "dist");
 const ORIGIN = "https://mingle.build";
 const REPO = "https://github.com/earayu/Mingle";
+const EMAIL = "earayu@gmail.com";
 const latest = `${REPO}/releases/latest/download`;
 
 const downloads = {
@@ -476,7 +477,7 @@ ${demoSection(key, t)}
 <footer class="footer">
   <div class="wrap footer-inner">
     <div>© ${new Date().getFullYear()} Mingle · MIT</div>
-    <nav><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a>${other
+    <nav><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a><a href="mailto:${EMAIL}">${t.footer.contact}</a>${other
       .map(([, v]) => `<a href="${v.path}" lang="${v.lang}">${v.langName}</a>`)
       .join("")}</nav>
     <p class="disclaimer">${t.footer.disclaimer}</p>
@@ -502,6 +503,7 @@ Key facts:
 - Install on macOS or Linux: \`${installSh}\`
 - Install on Windows (PowerShell): \`${installPs}\`
 - Price: free. No account, no Mingle server, no telemetry.
+- Contact: ${EMAIL}; bugs and questions go to ${REPO}/issues
 
 ## What it does
 
@@ -536,6 +538,7 @@ Build from source (Node.js 24, pnpm): \`git clone ${REPO}.git && cd Mingle && pn
 - [README](${REPO}#readme): status, install, quick start
 - [Product design and architecture](${REPO}/blob/main/docs/spec.md) (Chinese)
 - [Interface design](${REPO}/blob/main/DESIGN.md) (Chinese)
+- [AGENTS.md](${REPO}/blob/main/AGENTS.md): code map and working rules for coding agents working on the repository (Chinese)
 - [Changelog](${REPO}/blob/main/CHANGELOG.md)
 - [Releasing](${REPO}/blob/main/docs/releasing.md)
 

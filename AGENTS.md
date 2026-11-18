@@ -91,6 +91,7 @@ docs/           文档
 
 - 目前直接提交到 `main`。提交前 `pnpm check` 必须通过。
 - 提交信息用英文，祈使句，说明做了什么和原因。
+- `README.md` 和 `README_CN.md` 内容保持一致，改一份就同步另一份。
 - 设计文档用中文；代码、标识符、注释、提交信息、CLI 输出、`src/cli/manual.md`、`README.md` 用英文。
 - 提交前确认不包含任何凭据、token 或个人数据。
 
