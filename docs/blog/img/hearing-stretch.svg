@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="250" viewBox="0 0 720 250" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif">
+  <rect width="720" height="250" rx="12" fill="#FFFFFF" stroke="#EBEBEF"/>
+  <text x="24" y="34" font-size="14" font-weight="600" fill="#1D1D22">一段是怎么攒出来的（V1 默认节奏）</text>
+  <!-- axis: 0..180s mapped to x 40..680 => 3.555px/s -->
+  <line x1="40" y1="170" x2="690" y2="170" stroke="#D9D9E0"/>
+  <g font-size="11" fill="#8A8A93" text-anchor="middle">
+    <text x="40" y="190">0s</text><text x="147" y="190">30s</text><text x="253" y="190">60s</text><text x="360" y="190">90s</text><text x="467" y="190">120s</text><text x="573" y="190">150s</text><text x="680" y="190">180s</text>
+  </g>
+  <!-- messages of stretch 1 at 0,6,14,25 -->
+  <g fill="#5B5B64"><circle cx="40" cy="120" r="5"/><circle cx="61" cy="120" r="5"/><circle cx="90" cy="120" r="5"/><circle cx="129" cy="120" r="5"/></g>
+  <text x="40" y="104" font-size="12" fill="#5B5B64">有人说话，开始等</text>
+  <!-- quiet window 25..45 -->
+  <rect x="129" y="112" width="71" height="16" rx="4" fill="#FFF7ED" stroke="#F4DCBC"/>
+  <text x="164" y="146" text-anchor="middle" font-size="11" fill="#975800">安静 20s</text>
+  <!-- hand off at 45s -->
+  <line x1="200" y1="88" x2="200" y2="170" stroke="#5450D6" stroke-width="2"/>
+  <text x="206" y="84" font-size="12" font-weight="600" fill="#5450D6">交出第 1 段</text>
+  <!-- maxwait marker at 60 -->
+  <line x1="253" y1="150" x2="253" y2="170" stroke="#8A8A93" stroke-dasharray="3 3"/>
+  <text x="253" y="214" text-anchor="middle" font-size="11" fill="#8A8A93">一直有人说：最多等到 60s</text>
+  <!-- gap 45..165 -->
+  <rect x="200" y="52" width="427" height="14" rx="4" fill="#F7F7F8" stroke="#EBEBEF"/>
+  <text x="413" y="47" text-anchor="middle" font-size="11" fill="#5B5B64">同一个聊天两段之间至少隔 2 分钟（HEAR_GAP_MS）</text>
+  <!-- stretch 2 messages at 70, 80 -->
+  <g fill="#5B5B64"><circle cx="289" cy="120" r="5"/><circle cx="324" cy="120" r="5"/></g>
+  <text x="306" y="104" text-anchor="middle" font-size="12" fill="#5B5B64">又有人说了</text>
+  <rect x="324" y="112" width="71" height="16" rx="4" fill="#FFF7ED" stroke="#F4DCBC"/>
+  <path d="M395 120 H620" stroke="#C32C18" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <text x="508" y="114" text-anchor="middle" font-size="11" fill="#C32C18">本该交了，被 2 分钟间隔压住</text>
+  <line x1="627" y1="88" x2="627" y2="170" stroke="#5450D6" stroke-width="2"/>
+  <text x="621" y="84" text-anchor="end" font-size="12" font-weight="600" fill="#5450D6">交出第 2 段</text>
+  <text x="24" y="236" font-size="11" fill="#8A8A93">交出 ≠ 开始回复：上一轮还在跑时，这一段要等它结束（enqueueText 不插话），之后才是 harness 自己的一轮。</text>
+</svg>

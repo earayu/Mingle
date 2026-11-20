@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="300" viewBox="0 0 720 300" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif">
+  <rect width="720" height="300" rx="12" fill="#FFFFFF" stroke="#EBEBEF"/>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8A8A93"/></marker>
+  <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5450D6"/></marker></defs>
+  <text x="24" y="34" font-size="14" font-weight="600" fill="#1D1D22">V2：每个群一个"在不在聊"的状态</text>
+  <!-- cold -->
+  <rect x="40" y="96" width="200" height="96" rx="12" fill="#F7F7F8" stroke="#D9D9E0"/>
+  <text x="140" y="124" text-anchor="middle" font-size="15" font-weight="600" fill="#1D1D22">旁听</text>
+  <text x="140" y="146" text-anchor="middle" font-size="12" fill="#5B5B64">安静 20s · 最多 60s</text>
+  <text x="140" y="164" text-anchor="middle" font-size="12" fill="#5B5B64">间隔 2min，不答就退避</text>
+  <text x="140" y="182" text-anchor="middle" font-size="11" fill="#8A8A93">= V1 默认节奏</text>
+  <!-- hot -->
+  <rect x="480" y="96" width="200" height="96" rx="12" fill="#F1F0FD" stroke="#5450D6"/>
+  <text x="580" y="124" text-anchor="middle" font-size="15" font-weight="600" fill="#1D1D22">在聊</text>
+  <text x="580" y="146" text-anchor="middle" font-size="12" fill="#5B5B64">安静 4s · 最多 15s</text>
+  <text x="580" y="164" text-anchor="middle" font-size="12" fill="#5B5B64">无间隔 · 可插话</text>
+  <text x="580" y="182" text-anchor="middle" font-size="11" fill="#8A8A93">像真人一样秒回</text>
+  <!-- arrows -->
+  <path d="M240 120 C330 80 390 80 476 120" fill="none" stroke="#5450D6" stroke-width="1.5" marker-end="url(#b)"/>
+  <text x="358" y="76" text-anchor="middle" font-size="12" fill="#5450D6">它在这里开口 / 被叫到名字</text>
+  <path d="M480 172 C390 212 330 212 244 172" fill="none" stroke="#8A8A93" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="362" y="222" text-anchor="middle" font-size="12" fill="#5B5B64">它上次开口后 3 分钟没再开口</text>
+  <text x="362" y="240" text-anchor="middle" font-size="12" fill="#5B5B64">或连续 2 段没开口</text>
+  <!-- muted/every -->
+  <rect x="40" y="236" width="200" height="40" rx="8" fill="#FFFFFF" stroke="#EBEBEF"/>
+  <text x="140" y="261" text-anchor="middle" font-size="12" fill="#8A8A93">chat hear 设的节奏照旧优先</text>
+</svg>

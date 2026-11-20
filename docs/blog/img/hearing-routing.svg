@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="300" viewBox="0 0 720 300" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif">
+  <rect width="720" height="300" rx="12" fill="#FFFFFF" stroke="#EBEBEF"/>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8A8A93"/></marker>
+  <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5450D6"/></marker></defs>
+  <rect x="24" y="118" width="136" height="64" rx="8" fill="#F7F7F8" stroke="#D9D9E0"/>
+  <text x="92" y="145" text-anchor="middle" font-size="14" font-weight="600" fill="#1D1D22">群里来了一条话</text>
+  <text x="92" y="165" text-anchor="middle" font-size="12" fill="#8A8A93">存库 · 先过 gate()</text>
+  <path d="M160 150 H190" stroke="#8A8A93" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="194" y="118" width="156" height="64" rx="8" fill="#FFFFFF" stroke="#D9D9E0"/>
+  <text x="272" y="145" text-anchor="middle" font-size="14" font-weight="600" fill="#1D1D22">是对它说的吗？</text>
+  <text x="272" y="165" text-anchor="middle" font-size="12" fill="#8A8A93">@ 它 / 回复它 / 话题续聊</text>
+  <path d="M350 138 C400 138 410 58 456 58" fill="none" stroke="#5450D6" stroke-width="1.5" marker-end="url(#b)"/>
+  <text x="372" y="96" font-size="12" fill="#5450D6">是</text>
+  <path d="M350 150 H456" stroke="#8A8A93" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="403" y="142" text-anchor="middle" font-size="12" fill="#5B5B64">否 · 听所有</text>
+  <path d="M350 162 C400 162 410 242 456 242" fill="none" stroke="#8A8A93" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="362" y="214" font-size="12" fill="#5B5B64">否 · 不听</text>
+  <rect x="460" y="28" width="236" height="60" rx="8" fill="#F1F0FD" stroke="#5450D6"/>
+  <text x="476" y="52" font-size="14" font-weight="600" fill="#1D1D22">触发：立即投递</text>
+  <text x="476" y="72" font-size="12" fill="#5B5B64">1 秒合并 · 实时回复 · 必须回应</text>
+  <rect x="460" y="120" width="236" height="60" rx="8" fill="#FFF7ED" stroke="#F4DCBC"/>
+  <text x="476" y="144" font-size="14" font-weight="600" fill="#1D1D22">旁听：攒成一段再交</text>
+  <text x="476" y="164" font-size="12" fill="#5B5B64">安静 20s · 最多 60s · 隔 ≥ 2min</text>
+  <rect x="460" y="212" width="236" height="60" rx="8" fill="#F7F7F8" stroke="#EBEBEF"/>
+  <text x="476" y="236" font-size="14" font-weight="600" fill="#1D1D22">背景：只存下来</text>
+  <text x="476" y="256" font-size="12" fill="#5B5B64">计入下次的 unseen=N</text>
+</svg>

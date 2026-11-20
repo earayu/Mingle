@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="230" viewBox="0 0 720 230" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif">
+  <rect width="720" height="230" rx="12" fill="#FFFFFF" stroke="#EBEBEF"/>
+  <text x="24" y="34" font-size="14" font-weight="600" fill="#1D1D22">热聊中，人说完一句到 Agent 开口要多久</text>
+  <text x="24" y="54" font-size="12" fill="#8A8A93">场景：Agent 刚回了一句，人 15 秒后接着说（没 @、没引用）。上一段在 Agent 回复前 30 秒交出。</text>
+  <!-- scale 5px/s, start x=120 -->
+  <text x="24" y="98" font-size="13" font-weight="600" fill="#1D1D22">V1</text>
+  <rect x="120" y="82" width="100" height="24" rx="4" fill="#F4DCBC"/>
+  <rect x="220" y="82" width="275" height="24" fill="#975800"/>
+  <rect x="495" y="82" width="150" height="24" rx="4" fill="#D9D9E0"/>
+  <text x="170" y="99" text-anchor="middle" font-size="11" fill="#975800">安静 20s</text>
+  <text x="357" y="99" text-anchor="middle" font-size="11" fill="#FFFFFF">等 2 分钟间隔走完 55s</text>
+  <text x="570" y="99" text-anchor="middle" font-size="11" fill="#1D1D22">harness 一轮 ~30s</text>
+  <text x="652" y="99" font-size="13" font-weight="600" fill="#C32C18">≈105s</text>
+  <text x="24" y="148" font-size="13" font-weight="600" fill="#1D1D22">V2</text>
+  <rect x="120" y="132" width="20" height="24" rx="4" fill="#F4DCBC"/>
+  <rect x="140" y="132" width="125" height="24" rx="4" fill="#D9D9E0"/>
+  <text x="203" y="149" text-anchor="middle" font-size="11" fill="#1D1D22">harness 一轮 ~25s</text>
+  <text x="272" y="149" font-size="13" font-weight="600" fill="#2F9E5A">≈30s</text>
+  <text x="120" y="176" font-size="11" fill="#975800">热聊：安静 4s · 不受 2 分钟间隔约束 · 可插进正在跑的一轮</text>
+  <line x1="120" y1="190" x2="645" y2="190" stroke="#EBEBEF"/>
+  <g font-size="11" fill="#8A8A93" text-anchor="middle"><text x="120" y="206">0</text><text x="270" y="206">30s</text><text x="420" y="206">60s</text><text x="570" y="206">90s</text></g>
+</svg>
