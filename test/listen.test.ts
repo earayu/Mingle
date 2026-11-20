@@ -332,13 +332,12 @@ describe("a group that hears everything", () => {
     r.channel.receive({ text: "two", addressedToBot: false });
     await sleep(600);
     expect(r.turns).toHaveLength(1);
-    // The owner puts it back on the usual pace: the next stretch comes.
+    // The owner puts it back on the usual pace: what waited comes at that pace, no longer two hours on.
     expect((await r.admin("DELETE", `/v1/admin/agents/${r.agentId}/chats/${chat}/hearing`)).json).toMatchObject({
       pace: "auto",
     });
-    r.channel.receive({ text: "three", addressedToBot: false });
     await until(() => r.turns.length === 2);
-    expect(r.turns[1]?.input).toContain("three");
+    expect(r.turns[1]?.input).toContain("two");
   });
 
   it("does not let the agent set a pace where the owner did not turn hearing on", async () => {
@@ -483,6 +482,28 @@ describe("a group that hears everything", () => {
     await until(() => r.turns.length === 2, 5_000);
     expect(r.turns[1]?.input).toContain("and bring water?");
     expect(r.turns[1]?.input).not.toContain("which way to the top?");
+  });
+
+  it("times what waits again when the pace gets shorter", async () => {
+    let set: { code: number } | undefined;
+    const r = await setup({
+      hearing: { quietMs: 150, maxWaitMs: 2_000, gapMs: 600 },
+      heard: async (chat) => {
+        set ??= await runCli(env, ["chat", "hear", chat, "--every", "1h"]);
+      },
+    });
+    const chat = await groupOf(r);
+    await r.admin("PUT", `/v1/admin/agents/${r.agentId}/chats/${chat}/listen`, { listen: true });
+    r.channel.receive({ text: "which way to the top?", addressedToBot: false });
+    await until(() => r.turns.length === 1 && set?.code === 0);
+    // Waits for the hour the agent chose...
+    r.channel.receive({ text: "anyone?", addressedToBot: false });
+    await sleep(1_000);
+    expect(r.turns).toHaveLength(1);
+    // ...until the owner puts the usual pace back: then it comes at that pace, with no new message.
+    await r.admin("DELETE", `/v1/admin/agents/${r.agentId}/chats/${chat}/hearing`);
+    await until(() => r.turns.length === 2, 3_000);
+    expect(r.turns[1]?.input).toContain("anyone?");
   });
 
   it("says whom it is in a conversation with", async () => {

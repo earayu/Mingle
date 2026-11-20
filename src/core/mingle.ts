@@ -1896,7 +1896,11 @@ export class Mingle {
     return this.hearingView(this.store.chat(chat.id) ?? chat);
   }
 
-  /** A group's pace changed: the slowing from unanswered stretches ends, and muted drops what waits. */
+  /**
+   * A group's pace changed: the slowing from unanswered stretches ends, and muted drops what waits.
+   * Otherwise what the group and its threads wait to hand over is timed again at the new pace, so a
+   * stretch put off by a long `--every` does not keep waiting for it once the pace is shorter.
+   */
   private forgetHearing(agentId: string, groupId: string, drop: boolean): void {
     const ids = [
       groupId,
@@ -1906,7 +1910,18 @@ export class Mingle {
         .map((c) => c.id),
     ];
     this.book.forget(ids, drop);
-    if (drop) for (const id of ids) this.unhear(id);
+    if (drop) {
+      for (const id of ids) this.unhear(id);
+      return;
+    }
+    const pace = this.store.chat(groupId)?.hearPace;
+    const everyMs = pace?.kind === "every" ? pace.ms : undefined;
+    const now = Date.now();
+    for (const id of ids) {
+      const waiting = this.hearing.get(id);
+      const dueAt = waiting ? this.book.retime(id, everyMs) : undefined;
+      if (waiting && dueAt !== undefined) this.hearAt(waiting.agentId, id, dueAt, now);
+    }
   }
 
   /** Drop the stretch a chat was waiting to hand over. */
@@ -1929,8 +1944,8 @@ export class Mingle {
     const chat = this.store.chat(chatId);
     const group = chat?.parentId ? this.store.chat(chat.parentId) : chat;
     const runtime = this.runtimes.get(waiting.agentId);
-    // Turned off, paused or gone meanwhile: nothing to hear.
-    if (!chat || !group?.listen || !runtime || this.paused.has(waiting.agentId)) {
+    // Turned off, muted, paused or gone meanwhile: nothing to hear.
+    if (!chat || !group?.listen || group.hearPace.kind === "muted" || !runtime || this.paused.has(waiting.agentId)) {
       this.book.drop(chatId);
       return;
     }
@@ -2010,7 +2025,10 @@ export class Mingle {
         const lastSpoke = spoke === undefined ? undefined : this.store.lastSpokeAt(chatId);
         // Steered in as the turn was ending, and not answered: it may never have been read.
         if (stretch.lane === "steer" && spoke === undefined && this.book.late(turn ?? at, at)) {
-          const dueAt = this.book.resend(stretch, Date.now());
+          const group = this.store.chat(stretch.groupId);
+          // Muted or turned off since it was steered in: it is not handed over again.
+          const hearing = group?.listen === true && group.hearPace.kind !== "muted";
+          const dueAt = hearing ? this.book.resend(stretch, Date.now()) : undefined;
           if (dueAt !== undefined && !this.paused.has(agentId)) {
             this.log(`${agentId}: heard ${chatId} steer: the turn ended ${secs(at)}, handing it over again`);
             this.hearAt(agentId, chatId, dueAt, Date.now());

@@ -100,6 +100,26 @@ describe("steering a follow-up into the running turn", () => {
     expect(r.turns).toHaveLength(2);
   });
 
+  it("does not hand a follow-up over again once the agent muted the group", async () => {
+    const lines: string[] = [];
+    const r = await setup(
+      async (t) => {
+        await until(() => t.steered.length > 0, 5_000);
+        // Steered in, then the agent mutes the group and the turn ends at once, without a word on it.
+        const chat = /Heard in (c\w+)/.exec(t.steered.join("\n"))?.[1] as string;
+        await runCli(env(t), ["chat", "hear", chat, "--mute"]);
+      },
+      (line) => lines.push(line),
+    );
+    r.channel.receive({ text: "plan the route for Sunday" });
+    await until(() => r.channel.sent.length === 1);
+    r.channel.receive({ text: "make it Saturday, not Sunday", addressedToBot: false });
+    await until(() => lines.some((l) => / hears nothing until addressed$/.test(l)), 5_000);
+    await sleep(1_000);
+    expect(r.turns).toHaveLength(1);
+    expect(lines.some((l) => /handing it over again$/.test(l))).toBe(false);
+  });
+
   it("does not hand it over again when the turn ran on after it", async () => {
     const lines: string[] = [];
     const r = await setup(

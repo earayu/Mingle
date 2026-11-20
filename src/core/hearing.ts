@@ -149,6 +149,8 @@ interface Pending {
   readonly engaged: Set<string>;
   readonly heard: Set<string>;
   last: string;
+  /** When its latest line came. */
+  lastAt: number;
 }
 
 interface ChatHearing {
@@ -217,10 +219,12 @@ export class HearingBook {
       engaged: new Set(),
       heard: new Set(),
       last: o.senderId,
+      lastAt: now,
     };
     const pending = chat.pending;
     pending.heard.add(o.senderId);
     pending.last = o.senderId;
+    pending.lastAt = now;
     const every = o.everyMs !== undefined;
     // Someone else spoke into a follow-up waiting to go into the running turn: theirs is not
     // steered in, so the stretch goes as a stretch of its own, after the turn.
@@ -346,6 +350,7 @@ export class HearingBook {
       engaged: new Set(),
       heard: new Set(),
       last: [...stretch.engaged].at(-1) ?? "",
+      lastAt: now,
     };
     chat.pending = {
       ...pending,
@@ -455,6 +460,23 @@ export class HearingBook {
       chat.unanswered = 0;
       if (drop) chat.pending = undefined;
     }
+  }
+
+  /**
+   * The pace changed (the agent's `--every`, or the owner put it back): when a stretch waiting at
+   * the slow pace is due now, by the quiet window and the gap in force. One planned under a longer
+   * gap is not held to it any more. Fast, steered and riding stretches keep their own time; `--every`
+   * reaches those at hand-over.
+   */
+  retime(chatId: string, everyMs?: number): number | undefined {
+    const chat = this.chats.get(chatId);
+    const pending = chat?.pending;
+    if (!chat || !pending) return undefined;
+    if (pending.lane !== "slow") return pending.dueAt;
+    const p = this.pace();
+    const quiet = Math.min(pending.lastAt + p.quietMs, pending.since + p.maxWaitMs);
+    pending.dueAt = chat.heardAt === undefined ? quiet : Math.max(quiet, chat.heardAt + this.gap(chatId, everyMs));
+    return pending.dueAt;
   }
 
   /** Drop what a chat was waiting to hand over (someone addressed the agent meanwhile). */

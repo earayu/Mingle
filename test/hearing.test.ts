@@ -254,6 +254,19 @@ describe("the pace of a group that hears everything", () => {
     });
   });
 
+  it("times a waiting stretch again when the pace gets shorter", () => {
+    const b = book();
+    say(b, "u1", at(0));
+    b.settle(handOver(b, at(20)), false, at(30));
+    // Planned under `--every 1h`.
+    say(b, "u1", at(40));
+    expect(b.handOver("c1", at(60), 3_600_000)).toEqual({ dueAt: at(20) + 3_600_000 });
+    // Back to the usual pace: due by the usual gap, not the hour.
+    expect(b.retime("c1")).toBe(at(20) + 120_000);
+    // Or `--every 2m`: the same.
+    expect(b.retime("c1", 120_000)).toBe(at(20) + 120_000);
+  });
+
   it("has no fast lane where the agent chose its own pace", () => {
     const b = book();
     b.spoke("c1", "c1", ["u1"], 0);
