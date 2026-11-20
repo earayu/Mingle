@@ -319,7 +319,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
    */
   for (const method of ["post", "delete"] as const) {
     app[method]("/v1/agent/chats/:id/aliases", async (c) => {
-      const { alias } = await c.req.json<{ alias?: unknown }>();
+      const { alias } = objectBody(await c.req.json<unknown>());
       if (typeof alias !== "string") throw new MingleError("alias_invalid", 'send { "alias": "<name>" }');
       const { chat, aliases } = mingle.alias(c.get("agent").id, c.req.param("id"), alias, method === "post");
       return c.json({ chat: chat.id, aliases });
@@ -1169,7 +1169,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
    * `{ "tier": "save" | "balanced" | "fast" | null }`, null following the group's size.
    */
   app.put("/v1/admin/agents/:id/chats/:chatId/hearing", async (c) => {
-    const { tier } = await c.req.json<{ tier?: unknown }>();
+    const { tier } = objectBody(await c.req.json<unknown>());
     if (tier !== null && tier !== "save" && tier !== "balanced" && tier !== "fast")
       throw new MingleError("tier_invalid", 'send { "tier": "save" }, "balanced", "fast" or null');
     return c.json(mingle.setHearTier(c.req.param("id"), c.req.param("chatId"), tier));
@@ -1177,7 +1177,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
 
   /** The owner sets the other names a group calls the agent by: `{ "aliases": ["小跟班"] }`, all at once. */
   app.put("/v1/admin/agents/:id/chats/:chatId/aliases", async (c) => {
-    const { aliases } = await c.req.json<{ aliases?: unknown }>();
+    const { aliases } = objectBody(await c.req.json<unknown>());
     if (!Array.isArray(aliases) || !aliases.every((a) => typeof a === "string"))
       throw new MingleError("alias_invalid", 'send { "aliases": ["<name>", …] }');
     return c.json(mingle.setAliases(c.req.param("id"), c.req.param("chatId"), aliases));
@@ -1564,4 +1564,9 @@ function lineState(task: Task): "running" | "queued" | "waiting" | "done" | "err
   if (task.status === "done") return "done";
   if (task.lineState === "queued") return "queued";
   return task.lineState === "running" ? "running" : "waiting";
+}
+
+/** A JSON body as an object to read fields from: `null`, a list or a value reads as having none. */
+function objectBody(body: unknown): Record<string, unknown> {
+  return body !== null && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
 }

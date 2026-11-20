@@ -400,6 +400,9 @@ describe("a group that hears everything", () => {
     expect(bad.status).toBe(400);
     expect(JSON.stringify(bad.json)).toContain("tier_invalid");
     expect((await r.admin("PUT", path, { tier: null })).json).toMatchObject({ tier: null });
+    // A body of JSON null is a bad request, not a crash.
+    expect((await r.admin("PUT", path, null)).status).toBe(400);
+    expect((await r.admin("PUT", `/v1/admin/agents/${r.agentId}/chats/${chat}/aliases`, null)).status).toBe(400);
   });
 
   it("takes another name as a call, from the owner or the agent, and keeps it when hearing goes off", async () => {
@@ -445,6 +448,35 @@ describe("a group that hears everything", () => {
     expect(r.mingle.store.chat(chat)?.aliases).toEqual(["guide", "向导"]);
     const removed = await runCli(env, ["chat", "alias", chat, "remove", "guide"]);
     expect(removed.stdout).toContain("also called 向导");
+  });
+
+  it("hears a line said while it was still answering the last stretch", async () => {
+    let rig: Rig | undefined;
+    let once = false;
+    rig = await setup({
+      speak: true,
+      hearing: { quietMs: 150, maxWaitMs: 2_000, gapMs: 800 },
+      heard: async () => {
+        if (once) return;
+        once = true;
+        // Said after the stretch was handed over and before the agent's answer went out; its own
+        // stretch is handed over after that answer, past the gap.
+        // From someone else, so it is not steered into the running turn.
+        rig?.channel.receive({
+          text: "and bring water?",
+          addressedToBot: false,
+          sender: { id: "u9", name: "Wang Fang", isBot: false },
+        });
+        await sleep(200);
+      },
+    });
+    const r = rig;
+    const chat = await groupOf(r);
+    await r.admin("PUT", `/v1/admin/agents/${r.agentId}/chats/${chat}/listen`, { listen: true });
+    r.channel.receive({ text: "which way to the top?", addressedToBot: false });
+    await until(() => r.turns.length === 2, 5_000);
+    expect(r.turns[1]?.input).toContain("and bring water?");
+    expect(r.turns[1]?.input).not.toContain("which way to the top?");
   });
 
   it("says whom it is in a conversation with", async () => {

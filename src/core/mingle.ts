@@ -1819,6 +1819,7 @@ export class Mingle {
     const chat = this.store.agentChat(agent.id, chatId);
     if (chat?.kind !== "group") throw notFound("chat", chatId);
     this.store.setChatHearTier(chat.id, tier);
+    this.book.setTier(chat.id, tier ?? this.defaultTierOf(chat, Date.now()), Date.now());
     this.log(`${agent.name}: owner set ${chat.id} to keep up ${tier ?? "by its size"}`);
     return this.hearingView(this.store.chat(chat.id) ?? chat);
   }
@@ -1919,7 +1920,7 @@ export class Mingle {
   }
 
   /**
-   * Hand the agent what was said in the chat since it last spoke there, as input it may answer or
+   * Hand the agent what was said in the chat since the stretch began, as input it may answer or
    * leave be: no live reply, no reminder to answer, nothing for the owner (docs/spec.md 4.2).
    */
   private hear(chatId: string): void {
@@ -1949,7 +1950,10 @@ export class Mingle {
     }
     const { stretch } = handed;
     const spoke = this.store.lastSpokeAt(chat.id);
-    const from = spoke === undefined ? stretch.from : Math.max(stretch.from, spoke + 1);
+    // From the stretch's first line, not from when the agent last spoke: a line said while it was
+    // still answering the previous stretch reaches it after, so it has not seen it. (The stretch
+    // starts after the previous hand-over, and an @ or reply to it drops the stretch.)
+    const from = stretch.from;
     // Those in a conversation with the agent are never the ones left out.
     const messages = this.store.backgroundFor(chat.id, from, stretch.engaged, HEAR_MESSAGES);
     const omitted = messages.length < HEAR_MESSAGES ? 0 : this.store.backgroundCount(chat.id, from) - messages.length;

@@ -288,16 +288,23 @@ export class HearingBook {
     }
     let reserved = false;
     if (pending.lane === "fast" && group) {
-      if (this.groupTokens(group, now) < 1) {
+      // Checked again now, the person's bucket as well as the group's: the same person may have fast
+      // stretches waiting in several threads of the group, and each saw a token when it was planned.
+      const able = [...pending.engaged].filter((id) => {
+        const person = group.people.get(id);
+        return person !== undefined && this.personTokens(person, now) >= 1;
+      });
+      pending.engaged.clear();
+      if (this.groupTokens(group, now) < 1 || able.length === 0) {
         pending.lane = "slow";
-        pending.engaged.clear();
         pending.dueAt = this.slowDue(chat, pending, now, everyMs);
         if (pending.dueAt > now) return { dueAt: pending.dueAt };
       } else {
         group.tokens -= 1;
-        for (const id of pending.engaged) {
+        for (const id of able) {
+          pending.engaged.add(id);
           const person = group.people.get(id);
-          if (person) person.tokens = this.personTokens(person, now) - 1;
+          if (person) person.tokens -= 1;
         }
         reserved = true;
       }
@@ -441,6 +448,14 @@ export class HearingBook {
   drop(chatId: string): void {
     const chat = this.chats.get(chatId);
     if (chat) chat.pending = undefined;
+  }
+
+  /**
+   * The owner picked another tier: the group's bucket follows at once, so stretches already waiting
+   * are held to it. Tokens are cut to the new size, never refilled.
+   */
+  setTier(groupId: string, tier: HearTier, now: number): void {
+    if (this.groups.has(groupId)) this.group(groupId, tier, now);
   }
 
   // ------------------------------------------------------------------ internals

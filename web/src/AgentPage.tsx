@@ -11,6 +11,8 @@ import {
   type Conversation,
   type HandoffView,
   type Harness,
+  type Hearing,
+  type HearTier,
   type Reminder,
   type Task,
 } from "./api.ts";
@@ -44,6 +46,7 @@ import {
   Group,
   GroupRow,
   HarnessIcon,
+  Input,
   PageHeader,
   PauseIcon,
   PlayIcon,
@@ -2106,6 +2109,37 @@ function ListenSwitch({ agent, conversation }: { agent: AgentView; conversation:
           }}
         />
       </label>
+      {on && hearing ? (
+        <HearingRows
+          agent={agent}
+          chatId={conversation.chat.id}
+          hearing={hearing}
+          saving={saving}
+          onSave={async (save) => {
+            setSaving(true);
+            setFailure(null);
+            try {
+              setHearing(await save());
+              return true;
+            } catch (error) {
+              setFailure(errorText(t, error));
+              return false;
+            } finally {
+              setSaving(false);
+            }
+          }}
+        />
+      ) : null}
+      {on && hearing && !pace ? (
+        <p className="flex items-start gap-1.5 pr-7 text-caption text-ink2">
+          <span className="flex h-[1lh] shrink-0 items-center">
+            <StatusDot state={hearing.live.length > 0 ? "idle" : "offline"} />
+          </span>
+          {hearing.live.length > 0
+            ? t("listen.live", { names: hearing.live.join(t("listen.namesJoin")) })
+            : t("listen.overhearing")}
+        </p>
+      ) : null}
       {pace ? (
         <p className="pr-7 text-caption text-ink2">
           {pace}
@@ -2135,6 +2169,125 @@ function ListenSwitch({ agent, conversation }: { agent: AgentView; conversation:
         </p>
       ) : null}
       {failure ? <p className="text-caption text-red">{failure}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * Under "hear every message" (docs/spec.md 4.2): how fast it keeps up with a conversation, the owner's
+ * one knob on what that costs, and the names the group calls it by.
+ */
+function HearingRows({
+  agent,
+  chatId,
+  hearing,
+  saving,
+  onSave,
+}: {
+  agent: AgentView;
+  chatId: string;
+  hearing: Hearing;
+  saving: boolean;
+  onSave: (save: () => Promise<Hearing>) => Promise<boolean>;
+}) {
+  const { t } = useI18n();
+  const [adding, setAdding] = useState<string | null>(null);
+  const tier = hearing.tier ?? hearing.defaultTier;
+  const tiers: HearTier[] = ["save", "balanced", "fast"];
+  const save = (aliases: string[]) => onSave(() => api.setAliases(agent.id, chatId, aliases));
+  const add = async () => {
+    const name = adding?.trim();
+    if (!name) return setAdding(null);
+    if (await save([...hearing.aliases, name])) setAdding(null);
+  };
+  return (
+    <div className="mt-1 mb-0.5 flex flex-col gap-2">
+      <div className="flex min-w-0 flex-wrap items-start gap-x-3 gap-y-1.5">
+        <span className="flex min-w-0 flex-1 basis-56 flex-col gap-0.5">
+          <span className="text-small font-medium">{t("listen.tier.title")}</span>
+          <span className="text-caption text-ink2">
+            {t(`listen.tier.${tier}Text`)}
+            {hearing.tier === null
+              ? ` ${t(hearing.defaultTier === "fast" ? "listen.tier.smallDefault" : "listen.tier.bigDefault")}`
+              : ""}
+          </span>
+        </span>
+        <Segmented
+          label={t("listen.tier.title")}
+          value={tier}
+          options={tiers.map((value) => ({ value, label: t(`listen.tier.${value}`) }))}
+          onChange={(value) => {
+            if (saving || value === tier) return;
+            // The tier the group's size gives it is kept as "follow the size", so it moves with the group.
+            void onSave(() => api.setHearTier(agent.id, chatId, value === hearing.defaultTier ? null : value));
+          }}
+        />
+      </div>
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className="text-small font-medium">{t("listen.names.title")}</span>
+        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="max-w-full truncate rounded-full bg-bg3 px-2 py-0.5 text-caption text-ink2">
+            {agent.name}
+          </span>
+          {hearing.aliases.map((alias) => (
+            <span
+              key={alias}
+              className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-full border border-line2 py-0.5 pr-1 pl-2 text-caption"
+            >
+              <span className="truncate">{alias}</span>
+              <button
+                type="button"
+                aria-label={t("listen.names.remove", { name: alias })}
+                disabled={saving}
+                className="grid size-4 shrink-0 place-items-center rounded-full text-ink3 hover:bg-bg3 hover:text-ink disabled:opacity-45"
+                onClick={() => void save(hearing.aliases.filter((a) => a !== alias))}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          {adding === null ? (
+            hearing.aliases.length < 8 ? (
+              <button
+                type="button"
+                disabled={saving}
+                className="text-caption font-medium text-accent hover:underline disabled:opacity-45"
+                onClick={() => setAdding("")}
+              >
+                {t("listen.names.add")}
+              </button>
+            ) : null
+          ) : (
+            <form
+              className="flex min-w-0 flex-wrap items-center gap-1.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void add();
+              }}
+            >
+              <Input
+                autoFocus
+                aria-label={t("listen.names.new")}
+                placeholder={t("listen.names.new")}
+                maxLength={16}
+                value={adding}
+                className="h-7 w-36 text-small"
+                onChange={(e) => setAdding(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setAdding(null);
+                }}
+              />
+              <Button small variant="primary" type="submit" disabled={saving || !adding.trim()}>
+                {t("listen.names.add")}
+              </Button>
+              <Button small variant="ghost" onClick={() => setAdding(null)}>
+                {t("listen.names.cancel")}
+              </Button>
+            </form>
+          )}
+        </span>
+        <span className="text-caption text-ink2">{t("listen.names.caption")}</span>
+      </div>
     </div>
   );
 }

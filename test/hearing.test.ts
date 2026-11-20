@@ -136,6 +136,39 @@ describe("the pace of a group that hears everything", () => {
     expect(say(b, "a", at(21), { chat: "t0", tier: "save" }).lane).toBe("fast");
   });
 
+  it("holds one person to their own bucket across threads of the group, checked at hand-over", () => {
+    const b = book();
+    b.spoke("c1", "c1", ["joker"], 0);
+    const handed: Stretch[] = [];
+    const later: number[] = [];
+    // The same person, four threads at once: each saw their tokens when it was planned.
+    for (let i = 0; i < 4; i++) expect(say(b, "joker", at(1), { chat: `t${i}` }).lane).toBe("fast");
+    for (let i = 0; i < 4; i++) {
+      const r = b.handOver(`t${i}`, at(10));
+      if (r && "stretch" in r) handed.push(r.stretch);
+      else if (r) later.push(r.dueAt);
+    }
+    // Three tokens of their own: the fourth goes at the slow pace instead.
+    expect(handed.filter((s) => s.reserved)).toHaveLength(3);
+    expect(handed.filter((s) => s.reserved && s.lane === "fast")).toHaveLength(3);
+    expect(handed.length + later.length).toBe(4);
+  });
+
+  it("holds stretches already waiting to a tier the owner just lowered", () => {
+    const b = book();
+    for (const who of ["a", "b", "c", "d"]) b.spoke("c1", "c1", [who], 0);
+    // Four fast stretches waiting in four threads, planned under the fast tier (8 tokens).
+    for (const [i, who] of ["a", "b", "c", "d"].entries()) say(b, who, at(1), { chat: `t${i}` });
+    // The owner picks "save" (2 tokens) before any of them is due, and nobody speaks again.
+    b.setTier("c1", "save", at(2));
+    let reserved = 0;
+    for (let i = 0; i < 4; i++) {
+      const r = b.handOver(`t${i}`, at(10));
+      if (r && "stretch" in r && r.stretch.reserved) reserved++;
+    }
+    expect(reserved).toBe(2);
+  });
+
   it("never wastes more fast stretches than the group's bucket allows (property)", () => {
     let seed = 7;
     const random = () => {

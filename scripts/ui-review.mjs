@@ -126,7 +126,18 @@ try {
   conn("n4", long.id, "discord", "Wilhelmina#4242", "connected", null, null);
   conn("n9", alex.id, "telegram", "@alex_second_bot", "reconnecting", null, "u1");
   insert(
-    "INSERT INTO chats (id, connection_id, platform_id, kind, name, listen, hear_pace, created_at, updated_at) VALUES ('c1','n1','-1','group','周末徒步 · 北京西山与香山常走路线交流群',1,'muted',?,?)",
+    "INSERT INTO chats (id, connection_id, platform_id, kind, name, listen, hear_tier, aliases, created_at, updated_at) VALUES ('c1','n1','-1','group','周末徒步 · 北京西山与香山常走路线交流群',1,'save',?,?,?)",
+    // Every name a group may give it (docs/spec.md 4.2): eight, the longest 16 characters, so "Add" is gone.
+    JSON.stringify([
+      "小跟班",
+      "向导",
+      "trail buddy",
+      "Xiangshan Leader",
+      "北京西山香山常走路线向导小助手",
+      "Alexandrovna",
+      "老A",
+      "hiking helper",
+    ]),
     now,
     now,
   );
@@ -532,6 +543,12 @@ try {
     // Alex answered long ago (m02/m04): no onboarding card.
     agent: (dom, zh) => {
       assert.ok(dom.includes("Saturday") || dom.includes("周六晴"), "agent activity did not render");
+      // A group that hears everything: the tier the owner picked, the names it is called by, what it does now.
+      assert.ok(dom.includes(zh ? "在聊时回得多快" : "Keeping up in a conversation"), "hearing tier missing");
+      assert.ok(dom.includes(zh ? "省：慢一些" : "Save: a little slower"), "picked tier not explained");
+      assert.ok(dom.includes(zh ? "群里怎么叫它" : "What the group calls it"), "group names missing");
+      assert.ok(dom.includes("Xiangshan Leader"), "a group name is not shown");
+      assert.ok(dom.includes(zh ? "在旁听" : "Listening in"), "hearing status missing");
       assert.ok(dom.includes(zh ? "在做 2 件事" : "2 under way"), "work under way not counted");
       assert.ok(dom.includes(zh ? "排队中" : "Queued"), "queued work not shown");
       assert.ok(!dom.includes(zh ? "上手" : "Getting started"), "answered agent still shows onboarding");
