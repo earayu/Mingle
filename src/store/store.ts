@@ -557,7 +557,7 @@ export class Store {
     const id = this.mint("chats", "c", 4);
     this.db
       .prepare(
-        "INSERT INTO chats (id, connection_id, platform_id, kind, name, parent_id, peer_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO chats (id, connection_id, platform_id, kind, name, parent_id, peer_id, listen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         id,
@@ -567,6 +567,8 @@ export class Store {
         input.name ?? null,
         input.parentId ?? null,
         input.peerId ?? null,
+        // A group hears everything by default (docs/spec.md 4.2); the owner can turn it off.
+        input.kind === "group" ? 1 : 0,
         t,
         t,
       );

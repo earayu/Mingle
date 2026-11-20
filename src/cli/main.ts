@@ -137,7 +137,7 @@ function hearingText(h: Hearing): string {
 
 function minutes(ms: number): string {
   const m = Math.round(ms / 60_000);
-  return m % 60 === 0 ? `${m / 60}h` : `${m}m`;
+  return m % 1440 === 0 ? `${m / 1440}d` : m % 60 === 0 ? `${m / 60}h` : `${m}m`;
 }
 
 interface ContactRow {

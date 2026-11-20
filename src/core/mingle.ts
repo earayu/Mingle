@@ -145,9 +145,9 @@ const HEAR_MESSAGES = 30;
  */
 export const HEAR_BACKOFF_AFTER = 3;
 export const HEAR_BACKOFF_MAX_MS = 30 * 60_000;
-/** The gaps an agent may set for a group itself: no more often than Mingle's own pace, at most a day. */
+/** The gaps an agent may set for a group itself: no more often than Mingle's own pace, at most a week. */
 export const HEAR_EVERY_MIN_MS = HEAR_GAP_MS;
-export const HEAR_EVERY_MAX_MS = 24 * 60 * 60_000;
+export const HEAR_EVERY_MAX_MS = 7 * 24 * 60 * 60_000;
 
 /** A group's pace as the owner and the agent see it: what was set, and the gap in force now. */
 export interface HearingView {
@@ -1726,7 +1726,7 @@ export class Mingle {
       );
     }
     if (pace.kind === "every" && (pace.ms < HEAR_EVERY_MIN_MS || pace.ms > HEAR_EVERY_MAX_MS)) {
-      throw new MingleError("every_out_of_range", "pick a gap from 2m to 24h; to hear nothing at all, use --mute");
+      throw new MingleError("every_out_of_range", "pick a gap from 2m to 7d; to hear nothing at all, use --mute");
     }
     this.store.setChatHearPace(group.id, pace);
     this.forgetHearing(agentId, group.id, pace.kind === "muted");

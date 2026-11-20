@@ -164,7 +164,7 @@ export function formatHeard(store: Store, chat: Chat, messages: readonly Message
   // The pace is the group's: a thread's stretch names the group it belongs to.
   const hearId = chat.parentId ?? chat.id;
   return [
-    `[mingle] Heard in ${chat.id}: ${count} said there, none addressed to you. Your owner set this group to let you hear everything; speak only when you have something worth adding, or someone there clearly means you. Answer one with \`message reply <msg>\`, or the group with \`message send --to ${chat.id}\`. Saying nothing is fine, and then do not send anything to say so. If this group is mostly not for you, hear it less: \`chat hear ${hearId} --every 1h\`, or \`--mute\` to hear nothing until someone there addresses you.`,
+    `[mingle] Heard in ${chat.id}: ${count} said there, none addressed to you. This group lets you hear everything; speak only when you have something worth adding, or someone there clearly means you. Answer one with \`message reply <msg>\`, or the group with \`message send --to ${chat.id}\`. Saying nothing is fine, and then do not send anything to say so. If this group is mostly not for you, hear it less: \`chat hear ${hearId} --every 1h\`, or \`--mute\` to hear nothing until someone there addresses you.`,
     ...lines,
   ].join("\n\n");
 }

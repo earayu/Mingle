@@ -2058,6 +2058,7 @@ function ListenSwitch({ agent, conversation }: { agent: AgentView; conversation:
   useEffect(() => setHearing(conversation.hearing), [conversation.hearing]);
   const duration = (ms: number) => {
     const minutes = Math.max(1, Math.round(ms / 60_000));
+    if (minutes % 1440 === 0) return t("listen.days", { count: String(minutes / 1440) });
     return minutes % 60 === 0
       ? t("listen.hours", { count: String(minutes / 60) })
       : t("line.minutes", { count: String(minutes) });

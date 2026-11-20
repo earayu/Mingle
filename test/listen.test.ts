@@ -38,13 +38,36 @@ describe("a group that hears everything", () => {
     return current;
   }
 
+  /** A group set to hear only what is addressed to the agent, for each test to turn on when it needs to. */
   async function groupOf(r: Rig): Promise<string> {
     r.channel.receive({ text: "hi all", addressedToBot: false });
     const chat = await until(() => r.mingle.store.agentChats(r.agentId)[0]);
+    await r.admin("PUT", `/v1/admin/agents/${r.agentId}/chats/${chat.id}/listen`, { listen: false });
     return chat.id;
   }
 
-  it("keeps the rest of a group as background by default", async () => {
+  it("hears a new group by default", async () => {
+    const r = await setup();
+    r.channel.receive({ text: "shall we start at 8?", addressedToBot: false });
+    await until(() => r.turns.length === 1);
+    expect(r.turns[0]?.input).toMatch(/^\[mingle\] Heard in c\w+: 1 message said there/);
+    const chat = r.mingle.store.agentChats(r.agentId)[0]?.id as string;
+    const conversations = (await r.admin("GET", `/v1/admin/agents/${r.agentId}/conversations`)).json as {
+      chat: { id: string };
+      listen: boolean | null;
+    }[];
+    expect(conversations.find((c) => c.chat.id === chat)?.listen).toBe(true);
+  });
+
+  it("does not hear a new group the owner has not let in", async () => {
+    current = await rig(async () => {}, { hearing, trust: "public" });
+    const r = current;
+    r.channel.receive({ text: "free airdrop, click here", addressedToBot: false });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(r.turns).toHaveLength(0);
+  });
+
+  it("keeps the rest of a group as background once the owner turns hearing off", async () => {
     const r = await setup();
     const chat = await groupOf(r);
     r.channel.receive({ text: "shall we start at 8?", addressedToBot: false });
@@ -184,6 +207,8 @@ describe("a group that hears everything", () => {
       heard: async (chat) => {
         if (results.length > 0) return;
         results.push(await runCli(env, ["chat", "hear", chat, "--every", "1m"]));
+        results.push(await runCli(env, ["chat", "hear", chat, "--every", "8d"]));
+        results.push(await runCli(env, ["chat", "hear", chat, "--every", "7d"]));
         results.push(await runCli(env, ["chat", "hear", chat, "--every", "2h"]));
         results.push(await runCli(env, ["chat", "info", chat]));
       },
@@ -191,11 +216,13 @@ describe("a group that hears everything", () => {
     const chat = await groupOf(r);
     await r.admin("PUT", `/v1/admin/agents/${r.agentId}/chats/${chat}/listen`, { listen: true });
     r.channel.receive({ text: "one", addressedToBot: false });
-    await until(() => results.length === 3);
+    await until(() => results.length === 5);
     expect(results[0]?.code).not.toBe(0);
     expect(results[0]?.stderr).toContain("every_out_of_range");
-    expect(results[1]?.stdout).toContain("at most once every 2h");
-    expect(results[2]?.stdout).toContain("hears everything: you hear what was said here at most once every 2h");
+    expect(results[1]?.stderr).toContain("every_out_of_range");
+    expect(results[2]?.stdout).toContain("at most once every 7d");
+    expect(results[3]?.stdout).toContain("at most once every 2h");
+    expect(results[4]?.stdout).toContain("hears everything: you hear what was said here at most once every 2h");
     expect(await hearingOf(r, chat)).toEqual({ pace: "every", everyMs: 2 * 3_600_000 });
     // Not again within two hours.
     r.channel.receive({ text: "two", addressedToBot: false });
