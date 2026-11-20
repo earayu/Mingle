@@ -280,7 +280,7 @@ ALTER TABLE chats ADD COLUMN aliases TEXT;        -- JSON 数组，NULL = 没有
 |---|---|
 | `GET` 动态里每个群的 `hearing` | 加 `tier`（`null` 表示默认）、`defaultTier`、`live`（正在和谁聊，名字数组，最多 3 个）、`aliases` |
 | `PUT /v1/admin/agents/:id/chats/:chatId/hearing` | **新增**，`{ "tier": "save" \| "balanced" \| "fast" \| null }`。现在这条路径上只有 `DELETE`（恢复默认节奏），两者不冲突 |
-| `PUT /v1/admin/agents/:id/chats/:chatId/aliases` | **新增**，`{ "aliases": string[] }`，整组替换 |
+| `POST` / `DELETE /v1/admin/agents/:id/chats/:chatId/aliases` | **新增**，`{ "alias": "小跟班" }`，一次一个，在当前列表上改（原方案是整组替换的 `PUT`，会覆盖 Agent 刚加的名字，见第 14 节） |
 | `POST` / `DELETE /v1/agent/chats/:id/aliases` | **新增**，`{ "alias": "小跟班" }`，给 CLI 用。线程按所属的群处理 |
 | `GET /v1/agent/chats/:id`（`chat info`） | `hearing` 里带上 `tier` 和 `aliases` |
 
@@ -393,3 +393,7 @@ A、B、C 都合并后一起发一个版本：A 单独发也安全，但发版�
 - **owner 改档位立刻同步到内存里的桶**（6.3）。原来要等这个群的下一条话才换档，已经在等的快速段按旧档位预留。现在 `setHearTier` 直接调 `HearingBook.setTier`，余额只收紧、不补满。（麦哲伦 CR）
 - 别名每个最多 16 个字（第 6.2 节写的是 20）：控制台一行放得下，也不像一句话。
 - 控制台的"在旁听"一行写的是默认节奏的 2 分钟：接口不给当前间隔，放慢时这一行换成原来的"最近几次都没开口"说明。
+- **owner 增删别名改成一次一个**（6.3，麦哲伦复审）。整组替换时，控制台用轮询到的旧列表拼出新列表，会把 Agent 在两次轮询之间加的名字静默删掉。现在 owner 和 Agent 一样发 `POST` / `DELETE`，服务端在当时的列表上改。
+- **交出时按当前的 `--every` 处理已经在排队的段**（2.7，麦哲伦复审）。原来只在计划时看 `--every`，排着的快速段照样走 fast、扣令牌。
+- **控制台兼容旧主机**（6.5，麦哲伦复审）。SSH 主机上是 0.4.6 时 `hearing` 只有 `pace`，控制台按字段判断，只显示开关和节奏。
+- 档位的说明不再写"每小时最多多用几轮"和"几十秒内接话"：3/6/12 是每小时补充的快速查看次数，还有起始余额，开口了会退还；回得多快取决于 harness 一轮，不是档位。

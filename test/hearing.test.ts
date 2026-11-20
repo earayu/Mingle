@@ -230,6 +230,30 @@ describe("the pace of a group that hears everything", () => {
     expect(b.gap("c1", 3_600_000)).toBe(3_600_000);
   });
 
+  it("holds a stretch already waiting to a pace the agent set since, fast or slow", () => {
+    const b = book();
+    // A stretch handed over, answered; the next one is planned fast.
+    say(b, "u1", at(0));
+    const first = handOver(b, at(20));
+    b.settle(first, true, at(30));
+    b.spoke("c1", "c1", ["u1"], at(30));
+    expect(say(b, "u1", at(31)).lane).toBe("fast");
+    // Then the agent sets `--every 1h`: the waiting stretch neither goes fast nor holds a token, and
+    // it waits out the hour from the last hand-over.
+    const late = b.handOver("c1", at(40), 3_600_000);
+    expect(late).toEqual({ dueAt: at(20) + 3_600_000 });
+    const s = b.handOver("c1", at(20) + 3_600_000, 3_600_000);
+    expect(s && "stretch" in s ? { lane: s.stretch.lane, reserved: s.stretch.reserved } : s).toEqual({
+      lane: "slow",
+      reserved: false,
+    });
+    // A slow one whose timer was set before the new gap waits for it too.
+    say(b, "u2", at(20) + 3_600_000 + at(1));
+    expect(b.handOver("c1", at(20) + 3_600_000 + at(21), 7_200_000)).toEqual({
+      dueAt: at(20) + 3_600_000 + 7_200_000,
+    });
+  });
+
   it("has no fast lane where the agent chose its own pace", () => {
     const b = book();
     b.spoke("c1", "c1", ["u1"], 0);

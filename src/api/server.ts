@@ -1175,13 +1175,17 @@ export function createApi(mingle: Mingle): Hono<Env> {
     return c.json(mingle.setHearTier(c.req.param("id"), c.req.param("chatId"), tier));
   });
 
-  /** The owner sets the other names a group calls the agent by: `{ "aliases": ["小跟班"] }`, all at once. */
-  app.put("/v1/admin/agents/:id/chats/:chatId/aliases", async (c) => {
-    const { aliases } = objectBody(await c.req.json<unknown>());
-    if (!Array.isArray(aliases) || !aliases.every((a) => typeof a === "string"))
-      throw new MingleError("alias_invalid", 'send { "aliases": ["<name>", …] }');
-    return c.json(mingle.setAliases(c.req.param("id"), c.req.param("chatId"), aliases));
-  });
+  /**
+   * The owner adds or removes one name a group calls the agent by: `{ "alias": "小跟班" }`. One at a
+   * time, applied to the list as it is now, so a name the agent added meanwhile is kept.
+   */
+  for (const method of ["post", "delete"] as const) {
+    app[method]("/v1/admin/agents/:id/chats/:chatId/aliases", async (c) => {
+      const { alias } = objectBody(await c.req.json<unknown>());
+      if (typeof alias !== "string") throw new MingleError("alias_invalid", 'send { "alias": "<name>" }');
+      return c.json(mingle.ownerAlias(c.req.param("id"), c.req.param("chatId"), alias, method === "post"));
+    });
+  }
 
   /** The owner puts a group back on Mingle's own pace, whatever the agent set (docs/spec.md 4.2). */
   app.delete("/v1/admin/agents/:id/chats/:chatId/hearing", (c) =>

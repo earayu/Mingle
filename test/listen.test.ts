@@ -402,7 +402,7 @@ describe("a group that hears everything", () => {
     expect((await r.admin("PUT", path, { tier: null })).json).toMatchObject({ tier: null });
     // A body of JSON null is a bad request, not a crash.
     expect((await r.admin("PUT", path, null)).status).toBe(400);
-    expect((await r.admin("PUT", `/v1/admin/agents/${r.agentId}/chats/${chat}/aliases`, null)).status).toBe(400);
+    expect((await r.admin("POST", `/v1/admin/agents/${r.agentId}/chats/${chat}/aliases`, null)).status).toBe(400);
   });
 
   it("takes another name as a call, from the owner or the agent, and keeps it when hearing goes off", async () => {
@@ -437,15 +437,21 @@ describe("a group that hears everything", () => {
     });
     await until(() => r.turns.length === 2, 5_000);
     expect(r.turns[1]?.input).toContain("You are in a conversation here with");
-    // The owner replaces the names; too many is refused.
+    // The owner adds and removes one name at a time, on the list as it is now: a name the agent added
+    // since the console last looked is kept.
     const path = `/v1/admin/agents/${r.agentId}/chats/${chat}/aliases`;
-    expect((await r.admin("PUT", path, { aliases: ["guide", " guide ", "向导"] })).json).toMatchObject({
+    await runCli(env, ["chat", "alias", chat, "add", "guide"]);
+    expect((await r.admin("POST", path, { alias: " 向导 " })).json).toMatchObject({
+      aliases: ["trail buddy", "guide", "向导"],
+    });
+    expect((await r.admin("DELETE", path, { alias: "trail buddy" })).json).toMatchObject({
       aliases: ["guide", "向导"],
     });
-    const many = await r.admin("PUT", path, { aliases: Array.from({ length: 9 }, (_, i) => `name ${i}`) });
+    for (let i = 0; i < 6; i++) await r.admin("POST", path, { alias: `name ${i}` });
+    const many = await r.admin("POST", path, { alias: "one too many" });
     expect(JSON.stringify(many.json)).toContain("too_many_aliases");
     await r.admin("PUT", `/v1/admin/agents/${r.agentId}/chats/${chat}/listen`, { listen: false });
-    expect(r.mingle.store.chat(chat)?.aliases).toEqual(["guide", "向导"]);
+    expect(r.mingle.store.chat(chat)?.aliases).toHaveLength(8);
     const removed = await runCli(env, ["chat", "alias", chat, "remove", "guide"]);
     expect(removed.stdout).toContain("also called 向导");
   });

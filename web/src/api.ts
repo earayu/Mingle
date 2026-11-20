@@ -248,14 +248,43 @@ export interface Hearing {
   pace: "auto" | "every" | "muted";
   everyMs?: number;
   slowedMs?: number;
-  /** How fast it keeps up with a conversation, as the owner chose; null follows the group's size. */
-  tier: HearTier | null;
+  /**
+   * Since 0.4.7 (RFC 0001), absent from a host on an older Mingle: how fast it keeps up with a
+   * conversation as the owner chose (null follows the group's size). Read through `hearingSettings`.
+   */
+  tier?: HearTier | null;
   /** The tier the group's size gives it. */
-  defaultTier: HearTier;
+  defaultTier?: HearTier;
   /** The people it is in a conversation with now, by name. */
-  live: string[];
+  live?: string[];
   /** Other names that count as calling it in this group. */
+  aliases?: string[];
+}
+
+/** A group's tier, names and who it is talking with, as set from the console (docs/spec.md 4.2). */
+export interface HearingSettings {
+  tier: HearTier | null;
+  defaultTier: HearTier;
+  live: string[];
   aliases: string[];
+}
+
+const TIERS: readonly string[] = ["save", "balanced", "fast"];
+
+/**
+ * The settings in a group's hearing, or null when its host runs a Mingle from before them (an SSH
+ * host on 0.4.6 sends only the pace): then the console shows the switch and the pace as before.
+ */
+export function hearingSettings(h: Hearing | null | undefined): HearingSettings | null {
+  if (!h || !Array.isArray(h.aliases) || !Array.isArray(h.live)) return null;
+  if (typeof h.defaultTier !== "string" || !TIERS.includes(h.defaultTier)) return null;
+  const tier = h.tier === null || (typeof h.tier === "string" && TIERS.includes(h.tier)) ? h.tier : null;
+  return {
+    tier,
+    defaultTier: h.defaultTier,
+    live: h.live.filter((n): n is string => typeof n === "string"),
+    aliases: h.aliases.filter((n): n is string => typeof n === "string"),
+  };
 }
 
 /** One chat in the activity, with its latest messages (oldest first) and what still needs the owner. */
@@ -486,8 +515,9 @@ export const api = {
     call<Hearing>("DELETE", `/v1/admin/agents/${id}/chats/${chatId}/hearing`),
   setHearTier: (id: string, chatId: string, tier: HearTier | null) =>
     call<Hearing>("PUT", `/v1/admin/agents/${id}/chats/${chatId}/hearing`, { tier }),
-  setAliases: (id: string, chatId: string, aliases: string[]) =>
-    call<Hearing>("PUT", `/v1/admin/agents/${id}/chats/${chatId}/aliases`, { aliases }),
+  /** One name at a time, applied on the server to the list as it is now. */
+  alias: (id: string, chatId: string, alias: string, add: boolean) =>
+    call<Hearing>(add ? "POST" : "DELETE", `/v1/admin/agents/${id}/chats/${chatId}/aliases`, { alias }),
   access: (id: string) => call<AccessEntry[]>("GET", `/v1/admin/agents/${id}/access`),
   setAskAll: (id: string, on: boolean) => call<AgentView>("PUT", `/v1/admin/agents/${id}/ask-all`, { on }),
   setTidy: (id: string, on: boolean) => call<AgentView>("PUT", `/v1/admin/agents/${id}/tidy`, { on }),

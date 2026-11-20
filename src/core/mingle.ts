@@ -1824,13 +1824,12 @@ export class Mingle {
     return this.hearingView(this.store.chat(chat.id) ?? chat);
   }
 
-  /** The owner sets every other name a group calls the agent by, at once. */
-  setAliases(idOrSlug: string, chatId: string, aliases: readonly string[]): HearingView {
+  /** The owner adds or removes one name a group calls the agent by, on the list as it is now. */
+  ownerAlias(idOrSlug: string, chatId: string, alias: string, add: boolean): HearingView {
     const agent = this.agent(idOrSlug);
     const chat = this.store.agentChat(agent.id, chatId);
     if (chat?.kind !== "group") throw notFound("chat", chatId);
-    this.store.setChatAliases(chat.id, cleanAliases(aliases, this.ownNames(agent.id, chat)));
-    return this.hearingView(this.store.chat(chat.id) ?? chat);
+    return this.hearingView(this.alias(agent.id, chat.id, alias, add).chat);
   }
 
   /**

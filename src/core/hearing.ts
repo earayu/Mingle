@@ -286,6 +286,19 @@ export class HearingBook {
       // That turn ended meanwhile: this one starts a turn of its own.
       pending.lane = "fast";
     }
+    if (everyMs !== undefined) {
+      // The agent set its own pace (`chat hear --every`) after this stretch was planned: no fast lane
+      // any more, and the gap it chose holds for what is already waiting.
+      if (pending.lane !== "slow") {
+        pending.lane = "slow";
+        pending.engaged.clear();
+      }
+      const gapDue = chat.heardAt === undefined ? now : chat.heardAt + this.gap(chat.id, everyMs);
+      if (gapDue > now) {
+        pending.dueAt = gapDue;
+        return { dueAt: gapDue };
+      }
+    }
     let reserved = false;
     if (pending.lane === "fast" && group) {
       // Checked again now, the person's bucket as well as the group's: the same person may have fast

@@ -620,10 +620,12 @@ const en = {
   "listen.tier.save": "Save",
   "listen.tier.balanced": "Balanced",
   "listen.tier.fast": "Fast",
-  "listen.tier.saveText": "Save: a little slower, at most about 3 extra turns an hour.",
-  "listen.tier.balancedText": "Balanced: a little slower than Fast, at most about 6 extra turns an hour.",
+  "listen.tier.saveText":
+    "Save: up to 2 quick looks in reserve, 3 more each hour. One is used only when it looks and says nothing.",
+  "listen.tier.balancedText":
+    "Balanced: up to 4 quick looks in reserve, 6 more each hour. One is used only when it looks and says nothing.",
   "listen.tier.fastText":
-    "Fast: answers within a minute in a lively conversation, at most about 12 extra turns an hour.",
+    "Fast: up to 8 quick looks in reserve, 12 more each hour. One is used only when it looks and says nothing.",
   "listen.tier.smallDefault": "A small group, so this is the default.",
   "listen.tier.bigDefault": "A busy group, so this is the default.",
   "listen.names.title": "What the group calls it",
@@ -1420,9 +1422,9 @@ const zh: Record<MessageKey, string> = {
   "listen.tier.save": "省",
   "listen.tier.balanced": "均衡",
   "listen.tier.fast": "快",
-  "listen.tier.saveText": "省：慢一些，每小时最多多用约 3 轮。",
-  "listen.tier.balancedText": "均衡：比“快”慢一点，每小时最多多用约 6 轮。",
-  "listen.tier.fastText": "快：聊得正热时几十秒内接话，每小时最多多用约 12 轮。",
+  "listen.tier.saveText": "省：最多攒 2 次快速查看，每小时补 3 次。它看了没开口，才用掉一次。",
+  "listen.tier.balancedText": "均衡：最多攒 4 次快速查看，每小时补 6 次。它看了没开口，才用掉一次。",
+  "listen.tier.fastText": "快：最多攒 8 次快速查看，每小时补 12 次。它看了没开口，才用掉一次。",
   "listen.tier.smallDefault": "这个群人不多，默认用这一档。",
   "listen.tier.bigDefault": "这个群人多，默认用这一档。",
   "listen.names.title": "群里怎么叫它",

@@ -12,7 +12,9 @@ import {
   type HandoffView,
   type Harness,
   type Hearing,
+  type HearingSettings,
   type HearTier,
+  hearingSettings,
   type Reminder,
   type Task,
 } from "./api.ts";
@@ -2064,6 +2066,8 @@ function ListenSwitch({ agent, conversation }: { agent: AgentView; conversation:
   // What the agent set: shown until the next poll brings the owner's reset back.
   const [hearing, setHearing] = useState(conversation.hearing);
   useEffect(() => setHearing(conversation.hearing), [conversation.hearing]);
+  // Tier, names and status come from 0.4.7 on: a host on an older Mingle shows the switch and pace only.
+  const settings = hearingSettings(hearing);
   const duration = (ms: number) => {
     const minutes = Math.max(1, Math.round(ms / 60_000));
     if (minutes % 1440 === 0) return t("listen.days", { count: String(minutes / 1440) });
@@ -2109,11 +2113,11 @@ function ListenSwitch({ agent, conversation }: { agent: AgentView; conversation:
           }}
         />
       </label>
-      {on && hearing ? (
+      {on && settings ? (
         <HearingRows
           agent={agent}
           chatId={conversation.chat.id}
-          hearing={hearing}
+          hearing={settings}
           saving={saving}
           onSave={async (save) => {
             setSaving(true);
@@ -2130,13 +2134,13 @@ function ListenSwitch({ agent, conversation }: { agent: AgentView; conversation:
           }}
         />
       ) : null}
-      {on && hearing && !pace ? (
+      {on && settings && !pace ? (
         <p className="flex items-start gap-1.5 pr-7 text-caption text-ink2">
           <span className="flex h-[1lh] shrink-0 items-center">
-            <StatusDot state={hearing.live.length > 0 ? "idle" : "offline"} />
+            <StatusDot state={settings.live.length > 0 ? "idle" : "offline"} />
           </span>
-          {hearing.live.length > 0
-            ? t("listen.live", { names: hearing.live.join(t("listen.namesJoin")) })
+          {settings.live.length > 0
+            ? t("listen.live", { names: settings.live.join(t("listen.namesJoin")) })
             : t("listen.overhearing")}
         </p>
       ) : null}
@@ -2186,7 +2190,7 @@ function HearingRows({
 }: {
   agent: AgentView;
   chatId: string;
-  hearing: Hearing;
+  hearing: HearingSettings;
   saving: boolean;
   onSave: (save: () => Promise<Hearing>) => Promise<boolean>;
 }) {
@@ -2194,11 +2198,10 @@ function HearingRows({
   const [adding, setAdding] = useState<string | null>(null);
   const tier = hearing.tier ?? hearing.defaultTier;
   const tiers: HearTier[] = ["save", "balanced", "fast"];
-  const save = (aliases: string[]) => onSave(() => api.setAliases(agent.id, chatId, aliases));
   const add = async () => {
     const name = adding?.trim();
     if (!name) return setAdding(null);
-    if (await save([...hearing.aliases, name])) setAdding(null);
+    if (await onSave(() => api.alias(agent.id, chatId, name, true))) setAdding(null);
   };
   return (
     <div className="mt-1 mb-0.5 flex flex-col gap-2">
@@ -2240,7 +2243,7 @@ function HearingRows({
                 aria-label={t("listen.names.remove", { name: alias })}
                 disabled={saving}
                 className="grid size-4 shrink-0 place-items-center rounded-full text-ink3 hover:bg-bg3 hover:text-ink disabled:opacity-45"
-                onClick={() => void save(hearing.aliases.filter((a) => a !== alias))}
+                onClick={() => void onSave(() => api.alias(agent.id, chatId, alias, false))}
               >
                 ×
               </button>

@@ -545,7 +545,10 @@ try {
       assert.ok(dom.includes("Saturday") || dom.includes("周六晴"), "agent activity did not render");
       // A group that hears everything: the tier the owner picked, the names it is called by, what it does now.
       assert.ok(dom.includes(zh ? "在聊时回得多快" : "Keeping up in a conversation"), "hearing tier missing");
-      assert.ok(dom.includes(zh ? "省：慢一些" : "Save: a little slower"), "picked tier not explained");
+      assert.ok(
+        dom.includes(zh ? "省：最多攒 2 次快速查看" : "Save: up to 2 quick looks"),
+        "picked tier not explained",
+      );
       assert.ok(dom.includes(zh ? "群里怎么叫它" : "What the group calls it"), "group names missing");
       assert.ok(dom.includes("Xiangshan Leader"), "a group name is not shown");
       assert.ok(dom.includes(zh ? "在旁听" : "Listening in"), "hearing status missing");
