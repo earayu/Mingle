@@ -90,7 +90,7 @@ export const copy = {
         },
         {
           title: "Talk to it",
-          body: "Message it directly, or @ it in a group. It reacts as soon as it starts, and the reply fills in while it works. You're its owner: the one who scanned the code, or who sends it the 6-digit code the console shows.",
+          body: "Message it directly, or @ it in a group, or just call it by name. It reacts as soon as it starts, and the reply fills in while it works. You're its owner: the one who scanned the code, or who sends it the 6-digit code the console shows.",
           img: null,
         },
       ],
@@ -102,8 +102,8 @@ export const copy = {
       points: [
         ["Remembers across apps", "One agent, one memory, in every chat app it joins."],
         [
-          "Reads the room",
-          "In a group it keeps the conversation as background and catches up on what it missed before it answers.",
+          "Keeps up in a group",
+          "No need to @ it every time. Once someone is talking with it, it picks up when they finish, often with a quick line before the longer answer. Chatter that isn't for it, it just hears, without spending much.",
         ],
         [
           "Knows who's who",
@@ -290,7 +290,7 @@ export const copy = {
         },
         {
           title: "和它说话",
-          body: "私聊它，或在群里 @ 它。它一开始处理就会回应，回复边做边更新。你是它的 owner：扫码的人就是你，或者把控制台显示的 6 位验证码私聊发给它。",
+          body: "私聊它，或在群里 @ 它、叫它的名字。它一开始处理就会回应，回复边做边更新。你是它的 owner：扫码的人就是你，或者把控制台显示的 6 位验证码私聊发给它。",
           img: null,
         },
       ],
@@ -301,7 +301,10 @@ export const copy = {
       lead: "Alex 不是每个聊天软件里各自独立的机器人，而是同一个“人”：在它加入的每个聊天软件里，名字、头像、记忆都一样。你在一个软件里告诉它的事，到了另一个软件它也知道。没有 <code>/new</code>，也没有 <code>/switch</code>，唯一的命令是 <code>/stop</code>。",
       points: [
         ["跨软件记得事", "一个 Agent，一份记忆，加入的每个聊天软件都通用。"],
-        ["听得见群里在聊什么", "群里的对话它当作背景留着，回答前先补看错过的消息。"],
+        [
+          "跟得上群聊",
+          "不用每句都 @ 它。有人和它聊起来，对方说完它就接上，常常先回一句再去办；和它无关的闲聊，它只是听着，也不乱花额度。",
+        ],
         [
           "认得谁是谁",
           "说过话的人都记在通讯录里。把同一个人的账号关联起来，它就知道 Telegram 上的韩梅梅就是飞书上的韩梅梅。",

@@ -32,6 +32,7 @@ const copy = {
       ["github", "alex-hikes"],
     ],
     group: "Weekend hikers",
+    nickname: "trail buddy",
     dm: "Sam",
     status: "Bash: curl -s https://api.open-meteo.com/v1/forecast?latitude=39.99",
     messages: [
@@ -69,13 +70,15 @@ const copy = {
     locale: "zh-CN",
     role: "帮我们的周末徒步群规划路线、查天气，并在周五晚上提醒大家集合时间。",
     platforms: [
-      ["wechat", "Alex"],
+      // The group is on Feishu, which sends the bot every message: it hears the whole group there.
       ["feishu", "Alex"],
+      ["wechat", "Alex"],
       ["telegram", "@alex_hikes_bot"],
       ["dingtalk", "Alex"],
       ["github", "alex-hikes"],
     ],
     group: "周末徒步群",
+    nickname: "小跟班",
     dm: "张三",
     status: "Bash: curl -s https://api.open-meteo.com/v1/forecast?latitude=39.99",
     messages: [
@@ -293,8 +296,10 @@ for (const [lang, c] of Object.entries(copy)) {
       );
     for (const [i, [platform, bot]] of c.platforms.entries()) conn(`n${i + 1}`, platform, bot, "u1");
     insert(
-      "INSERT INTO chats (id, connection_id, platform_id, kind, name, created_at, updated_at) VALUES ('c1','n1','-1','group',?,?,?)",
+      "INSERT INTO chats (id, connection_id, platform_id, kind, name, listen, aliases, created_at, updated_at) VALUES ('c1','n1','-1','group',?,1,?,?,?)",
       c.group,
+      // It hears the whole group, which also calls it by a nickname (docs/spec.md 4.2).
+      JSON.stringify([c.nickname]),
       now,
       now,
     );
