@@ -89,6 +89,8 @@ const configs = [
   ["zh", "/zh/", "dark", 1440],
   ["en", "/", "dark", 390],
   ["zh", "/zh/", "light", 390],
+  ["en-slack", "/slack/", "light", 1440],
+  ["zh-feishu", "/zh/feishu/", "dark", 390],
 ];
 
 let failed = false;

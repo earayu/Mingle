@@ -13,6 +13,7 @@ import { assetURL, releaseVersion, validateRelease } from "../../scripts/release
 import { copy } from "./copy.mjs";
 import { demo } from "./demo.mjs";
 import { harnesses } from "./harnesses.mjs";
+import { integrationOrder, integrations, integrationsUi } from "./integrations.mjs";
 
 const { values } = parseArgs({ options: { release: { type: "string" }, out: { type: "string" } } });
 if (!values.release)
@@ -62,6 +63,8 @@ const marksSource = platformsSource
 const marks = new Function(marksSource)();
 const chatApps = ["wechat", "wecom", "feishu", "dingtalk", "qq", "slack", "discord", "telegram"];
 const platformOrder = [...chatApps, "github", "imessage"];
+const integrationSet = new Set(integrationOrder);
+const integrationPath = (key, id) => (key === "en" ? `/${id}/` : `/${key}/${id}/`);
 const platformIcon = (id, size = 40) => {
   const mark = marks[id];
   const inner = mark.path
@@ -100,6 +103,17 @@ const faqJsonLd = (items) =>
       "@type": "Question",
       name: q,
       acceptedAnswer: { "@type": "Answer", text: a },
+    })),
+  });
+const breadcrumbJsonLd = (items) =>
+  jsonLd({
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: items.map(([name, path], i) => ({
+      "@type": "ListItem",
+      position: i + 1,
+      name,
+      item: `${ORIGIN}${path}`,
     })),
   });
 const shot = (name, lang, alt, cls = "", eager = false) => `
@@ -213,7 +227,7 @@ const brainIcon = (id) =>
   `<span class="brain-icon"><img class="on-light" src="/icons/${id}-light.svg" alt=""><img class="on-dark" src="/icons/${id}-dark.svg" alt=""></span>`;
 
 // Under the hero: every harness and every chat app, as a plain list of marks and names.
-function logos(t) {
+function logos(key, t) {
   const row = (label, items) =>
     `<div class="logos-row"><p class="logos-label">${label}</p><ul>${items.join("")}</ul></div>`;
   return `
@@ -225,7 +239,12 @@ function logos(t) {
     )}
     ${row(
       t.logos.apps,
-      platformOrder.map((id) => `<li>${platformIcon(id, 22)}${t.platforms[id]}</li>`),
+      platformOrder.map((id) => {
+        const inner = `${platformIcon(id, 22)}${t.platforms[id]}`;
+        return integrationSet.has(id)
+          ? `<li><a href="${integrationPath(key, id)}">${inner}</a></li>`
+          : `<li>${inner}</li>`;
+      }),
     )}
   </div>
 </section>`;
@@ -415,7 +434,7 @@ ${faqJsonLd(t.faq.items)}
   </div>
 </section>
 
-${logos(t)}
+${logos(key, t)}
 
 ${demoSection(key, t)}
 
@@ -551,6 +570,167 @@ ${demoSection(key, t)}
 `;
 }
 
+function integrationPage(key, id) {
+  const t = copy[key];
+  const ui = integrationsUi[key];
+  const g = integrations[key][id];
+  const lang = key;
+  const path = integrationPath(key, id);
+  const other = Object.entries(copy).filter(([k]) => k !== key);
+  const langLinks = Object.entries(copy)
+    .map(
+      ([k, v]) =>
+        `<a href="${integrationPath(k, id)}" hreflang="${v.lang}" lang="${v.lang}"${k === key ? ' aria-current="page"' : ""}>${v.langName}</a>`,
+    )
+    .join("");
+  const dl = (os) =>
+    `<div class="dl"><b>${t.alsoFor[os]}</b><div>${downloads[os].map(([label, href]) => `<a href="${href}">${label}</a>`).join("")}</div></div>`;
+  const moreApps = integrationOrder
+    .filter((otherId) => otherId !== id)
+    .map(
+      (otherId) =>
+        `<li><a href="${integrationPath(key, otherId)}">${platformIcon(otherId, 24)}<span>${t.platforms[otherId]}</span></a></li>`,
+    )
+    .join("");
+
+  return `<!doctype html>
+<html lang="${t.lang}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(g.title)}</title>
+<meta name="description" content="${esc(g.description)}">
+<link rel="canonical" href="${ORIGIN}${path}">
+${Object.entries(copy)
+  .map(([k, v]) => `<link rel="alternate" hreflang="${v.lang}" href="${ORIGIN}${integrationPath(k, id)}">`)
+  .join("\n")}
+<link rel="alternate" hreflang="x-default" href="${ORIGIN}${integrationPath("en", id)}">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1C1C1F" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:title" content="${esc(g.title)}">
+<meta property="og:description" content="${esc(g.description)}">
+<meta property="og:url" content="${ORIGIN}${path}">
+<meta property="og:image" content="${ORIGIN}/img/connect-${lang}-light.png">
+<meta name="twitter:card" content="summary_large_image">
+${softwareJsonLd({ ...t, description: g.description }, lang, path)}
+${breadcrumbJsonLd([
+  [ui.breadcrumbHome, t.path],
+  [t.platforms[id], path],
+])}
+${faqJsonLd(g.faq)}
+<link rel="stylesheet" href="/styles.css?v=${version}">
+<script>document.documentElement.classList.add("js")</script>
+<script defer src="/main.js?v=${version}"></script>
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="${t.path}"><img src="/favicon.svg" alt="" width="26" height="26">Mingle</a>
+    <nav class="nav-links"><a href="${t.path}">${ui.backHome}</a><a href="#connect">${ui.howEyebrow}</a><a href="#works">${ui.worksEyebrow}</a><a href="#faq">${ui.faqEyebrow}</a></nav>
+    <div class="nav-end">
+      <div class="langs">${langLinks}</div>
+      <a class="icon-link" href="${REPO}" aria-label="GitHub">${githubIcon}</a>
+      <a class="btn btn-small btn-primary" href="#download">${t.download}</a>
+    </div>
+  </div>
+</header>
+
+<main>
+<section class="hero guide-hero">
+  <div class="wrap">
+    <div class="hero-head">
+      <nav class="crumb rise" aria-label="Breadcrumb"><a href="${t.path}">${ui.breadcrumbHome}</a><span aria-hidden="true">/</span><span>${t.platforms[id]}</span></nav>
+      <div class="guide-badge rise">${platformIcon(id, 44)}</div>
+      <p class="eyebrow rise">${g.eyebrow}</p>
+      <h1 class="rise">${g.h1}</h1>
+      <p class="lead rise">${g.lead}</p>
+      <div class="cta rise">
+        <a class="btn btn-primary" data-os-download data-os="mac" href="${downloads.mac[0][1]}"
+           data-mac="${downloads.mac[0][1]}" data-windows="${downloads.windows[0][1]}" data-linux="#download"
+           data-label-mac="${t.downloadFor.mac}" data-label-windows="${t.downloadFor.windows}" data-label-linux="${t.downloadFor.linux}" data-label-any="${t.downloadFor.any}">${osIcons}<span data-label>${t.downloadFor.mac}</span></a>
+        <a class="btn" href="${t.path}#cli">${t.installTerminal}</a>
+      </div>
+      <p class="meta rise">v${version} · ${esc(g.transportNote)}</p>
+    </div>
+    ${shot("connect", lang, ui.howImgAlt, "hero-shot rise", true)}
+  </div>
+</section>
+
+<section id="connect" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${ui.howEyebrow}</p>
+    <h2>${ui.howTitle}</h2>
+    <ol class="guide-steps reveal">
+      ${g.steps.map(([title, body], i) => `<li><span class="num">${i + 1}</span><h3>${esc(title)}</h3><p>${esc(body)}</p></li>`).join("")}
+    </ol>
+  </div>
+</section>
+
+<section id="works" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${ui.worksEyebrow}</p>
+    <h2>${g.worksTitle}</h2>
+    <ul class="table table-2 reveal">
+      ${g.highlights.map(([h, p]) => `<li><h3>${esc(h)}</h3><p>${esc(p)}</p></li>`).join("")}
+    </ul>
+  </div>
+</section>
+
+<section id="faq" class="section">
+  <div class="wrap split faq-split">
+    <div>
+      <p class="eyebrow">${ui.faqEyebrow}</p>
+      <h2>${ui.faqTitle}</h2>
+    </div>
+    <dl class="faq reveal">
+      ${g.faq.map(([q, a]) => `<div><dt>${esc(q)}</dt><dd>${esc(a)}</dd></div>`).join("")}
+    </dl>
+  </div>
+</section>
+
+<section id="more" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${ui.moreEyebrow}</p>
+    <h2>${ui.moreTitle}</h2>
+    <p class="lead">${ui.moreLead}</p>
+    <ul class="related-apps reveal">${moreApps}</ul>
+    <p class="note"><a href="${t.path}">${ui.seeAll} →</a></p>
+  </div>
+</section>
+
+<section id="download" class="section end">
+  <div class="wrap">
+    <img class="end-icon" src="/favicon.svg" alt="" width="64" height="64">
+    <h2>${t.end.title}</h2>
+    <p class="lead">${t.end.lead}</p>
+    <div class="cta">
+      <a class="btn btn-primary" data-os-download data-os="mac" href="${downloads.mac[0][1]}"
+         data-mac="${downloads.mac[0][1]}" data-windows="${downloads.windows[0][1]}" data-linux="#download"
+         data-label-mac="${t.downloadFor.mac}" data-label-windows="${t.downloadFor.windows}" data-label-linux="${t.downloadFor.linux}" data-label-any="${t.downloadFor.any}">${osIcons}<span data-label>${t.downloadFor.mac}</span></a>
+      <a class="btn" href="${REPO}">${githubIcon}${t.end.github}</a>
+    </div>
+    <div class="dls">${dl("mac")}${dl("windows")}${dl("linux")}</div>
+    <p class="note">${t.end.installation} <a href="${releaseURL}">${t.end.releaseNotes} →</a></p>
+  </div>
+</section>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <div>© ${new Date().getFullYear()} Mingle · MIT</div>
+    <nav><a href="${t.path}">${ui.breadcrumbHome}</a><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a><a href="mailto:${EMAIL}">${t.footer.contact}</a>${other
+      .map(([k, v]) => `<a href="${integrationPath(k, id)}" lang="${v.lang}">${v.langName}</a>`)
+      .join("")}</nav>
+    <p class="disclaimer">${t.footer.disclaimer}</p>
+  </div>
+</footer>
+</body>
+</html>
+`;
+}
+
 function llms() {
   const t = copy.en;
   const strip = (s) => s.replace(/<[^>]+>/g, "").replaceAll("&amp;", "&");
@@ -596,6 +776,10 @@ Build from source (Node.js 24, pnpm): \`git clone ${REPO}.git && cd Mingle && pn
 - Inside a session, agents use \`mingle message reply|send|read|search\`, \`mingle chat list|info\`, \`mingle contact list|info|name|link|note\`, \`mingle file get\`, \`mingle task create|list|update\`, \`mingle reminder set|list|snooze|cancel\` (\`set --every 5m --check <command>\` to wait for a change), and \`mingle manual\` for their full guide.
 - Add \`--json\` for machine-readable output.
 
+## Integration guides
+
+${integrationOrder.map((id) => `- [${t.platforms[id]}](${ORIGIN}${integrationPath("en", id)}): ${integrations.en[id].transportNote} (Chinese: ${ORIGIN}${integrationPath("zh", id)})`).join("\n")}
+
 ## Docs
 
 - [README](${REPO}#readme): status, install, quick start
@@ -619,6 +803,15 @@ for (const asset of ["img", "icons", "styles.css", "main.js", "favicon.svg", "_h
   cpSync(join(SITE, asset), join(OUT, asset), { recursive: true });
 writeFileSync(join(OUT, "index.html"), page("en"));
 writeFileSync(join(OUT, "zh/index.html"), page("zh"));
+const sitemapPaths = Object.values(copy).map((v) => v.path);
+for (const key of Object.keys(copy)) {
+  for (const id of integrationOrder) {
+    const dir = key === "en" ? join(OUT, id) : join(OUT, key, id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "index.html"), integrationPage(key, id));
+    sitemapPaths.push(integrationPath(key, id));
+  }
+}
 writeFileSync(join(OUT, "llms.txt"), llms());
 writeFileSync(
   join(OUT, "404.html"),
@@ -626,10 +819,8 @@ writeFileSync(
 );
 writeFileSync(
   join(OUT, "sitemap.xml"),
-  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${Object.values(
-    copy,
-  )
-    .map((v) => `  <url><loc>${ORIGIN}${v.path}</loc></url>`)
+  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${sitemapPaths
+    .map((p) => `  <url><loc>${ORIGIN}${p}</loc></url>`)
     .join("\n")}\n</urlset>\n`,
 );
 console.log(`site in ${OUT}`);

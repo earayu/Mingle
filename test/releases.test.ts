@@ -815,6 +815,39 @@ describe("site build", () => {
       expect(faq).toBeDefined();
       expect((must(faq).mainEntity as unknown[]).length).toBeGreaterThanOrEqual(4);
     }
+    // Bilingual integration landing pages, internal links, sitemap.xml, and llms.txt.
+    const sitemap = readFileSync(join(out, "sitemap.xml"), "utf8");
+    const apps = ["slack", "discord", "telegram", "imessage", "feishu", "wechat"];
+    expect(sitemap.match(/<url>/g)).toHaveLength(2 + apps.length * 2);
+    for (const app of apps) {
+      expect(en).toContain(`href="/${app}/"`);
+      expect(zh).toContain(`href="/zh/${app}/"`);
+      expect(llms).toContain(`https://mingle.build/${app}/`);
+      for (const [lang, relPath, filePath] of [
+        ["en", `/${app}/`, join(out, app, "index.html")],
+        ["zh-CN", `/zh/${app}/`, join(out, "zh", app, "index.html")],
+      ] as const) {
+        expect(sitemap).toContain(`<loc>https://mingle.build${relPath}</loc>`);
+        const html = readFileSync(filePath, "utf8");
+        expect(html).toContain(`<link rel="canonical" href="https://mingle.build${relPath}">`);
+        expect(html).toContain(`href="https://mingle.build/${app}/"`);
+        expect(html).toContain(`href="https://mingle.build/zh/${app}/"`);
+        expect(html).toContain(`${dl}/mingle-${VERSION}-arm64.dmg`);
+        expect(html).not.toContain(`mingle-${pkg.version}-`);
+        expect(html).not.toContain("aren't signed");
+        expect(html).not.toContain("暂未签名");
+        const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map(
+          (m) => JSON.parse(must(m[1])) as Record<string, unknown>,
+        );
+        const appLd = blocks.find((b) => b["@type"] === "SoftwareApplication");
+        const crumbLd = blocks.find((b) => b["@type"] === "BreadcrumbList");
+        const faqLd = blocks.find((b) => b["@type"] === "FAQPage");
+        expect(appLd?.inLanguage).toBe(lang);
+        expect(appLd?.softwareVersion).toBe(VERSION);
+        expect(crumbLd).toBeDefined();
+        expect((must(faqLd).mainEntity as unknown[]).length).toBeGreaterThanOrEqual(3);
+      }
+    }
   });
 
   it("fails without --release instead of using package.json", async () => {

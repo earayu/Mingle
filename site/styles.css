@@ -403,6 +403,17 @@ h2 span {
   color: var(--ink2);
   font-size: 15px;
 }
+.logos a {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: inherit;
+  text-decoration: none;
+  transition: color 120ms var(--ease);
+}
+.logos a:hover {
+  color: var(--ink);
+}
 .logos .app-icon {
   border-radius: 6px;
 }
@@ -1629,6 +1640,76 @@ html:not(.js) .phone-static .rx .chip {
   font-size: 15px;
 }
 
+/* Integration landing pages */
+.guide-hero {
+  padding-top: 64px;
+}
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+  color: var(--ink3);
+  font-size: 13px;
+}
+.crumb a {
+  color: var(--ink2);
+  text-decoration: none;
+}
+.crumb a:hover {
+  color: var(--ink);
+}
+.guide-badge {
+  margin-bottom: 16px;
+}
+.guide-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  margin-top: 48px;
+}
+.guide-steps li {
+  padding: 26px 24px 28px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+.guide-steps h3 {
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+.guide-steps p {
+  margin: 10px 0 0;
+  color: var(--ink2);
+  font-size: 15px;
+}
+.related-apps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 32px;
+}
+.related-apps a {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    border-color 120ms var(--ease),
+    background 120ms var(--ease);
+}
+.related-apps a:hover {
+  border-color: var(--line2);
+  background: var(--bg2);
+}
+
 /* CLI */
 .cli-grid > * {
   min-width: 0;
@@ -1907,7 +1988,8 @@ html:not(.js) .phone-static .rx .chip {
   }
   .split,
   .cli-grid,
-  .dls {
+  .dls,
+  .guide-steps {
     grid-template-columns: 1fr;
   }
   .split {
