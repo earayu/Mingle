@@ -71,12 +71,43 @@ const platformIcon = (id, size = 40) => {
 };
 
 const esc = (s) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-const shot = (name, lang, alt, cls = "") => `
+const jsonLd = (data) =>
+  `<script type="application/ld+json">${JSON.stringify(data).replaceAll("<", "\\u003c")}</script>`;
+const softwareJsonLd = (t, lang, path) =>
+  jsonLd({
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "Mingle",
+    applicationCategory: "DeveloperApplication",
+    operatingSystem: "macOS, Windows, Linux",
+    softwareVersion: version,
+    url: `${ORIGIN}${path}`,
+    downloadUrl: releaseURL,
+    license: "https://opensource.org/licenses/MIT",
+    isAccessibleForFree: true,
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    description: t.description,
+    screenshot: `${ORIGIN}/img/agent-${lang}-light.png`,
+    inLanguage: t.lang,
+    codeRepository: REPO,
+    sameAs: [REPO],
+  });
+const faqJsonLd = (items) =>
+  jsonLd({
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: items.map(([q, a]) => ({
+      "@type": "Question",
+      name: q,
+      acceptedAnswer: { "@type": "Answer", text: a },
+    })),
+  });
+const shot = (name, lang, alt, cls = "", eager = false) => `
   <figure class="window ${cls}">
     <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i></div>
     <picture>
       <source srcset="/img/${name}-${lang}-dark.png" media="(prefers-color-scheme: dark)">
-      <img src="/img/${name}-${lang}-light.png" alt="${esc(alt)}" width="2560" height="1600" loading="lazy" decoding="async">
+      <img src="/img/${name}-${lang}-light.png" alt="${esc(alt)}" width="2560" height="1600" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">
     </picture>
   </figure>`;
 const githubIcon = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 0-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.2.5-2.3 1.2-3.1 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.1 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>`;
@@ -347,6 +378,8 @@ ${Object.values(copy)
 <meta property="og:url" content="${ORIGIN}${t.path}">
 <meta property="og:image" content="${ORIGIN}/img/agent-${lang}-light.png">
 <meta name="twitter:card" content="summary_large_image">
+${softwareJsonLd(t, lang, t.path)}
+${faqJsonLd(t.faq.items)}
 <link rel="stylesheet" href="/styles.css?v=${version}">
 <script>document.documentElement.classList.add("js")</script>
 <script defer src="/main.js?v=${version}"></script>
@@ -378,7 +411,7 @@ ${Object.values(copy)
       </div>
       <p class="meta rise">v${version} · <a href="${REPO}">${t.hero.open}</a><span data-intel> · <a href="${downloads.mac[1][1]}">${t.alsoFor.intel}</a></span> · <a href="#download" data-also data-pair="${esc(t.alsoFor.pair)}" data-mac="${t.alsoFor.mac}" data-windows="${t.alsoFor.windows}" data-linux="${t.alsoFor.linux}">${t.alsoFor.pair.replace("{a}", t.alsoFor.windows).replace("{b}", t.alsoFor.linux)}</a></p>
     </div>
-    ${shot("agent", lang, t.hero.alt, "hero-shot rise")}
+    ${shot("agent", lang, t.hero.alt, "hero-shot rise", true)}
   </div>
 </section>
 
@@ -472,6 +505,18 @@ ${demoSection(key, t)}
       </div>
     </div>
     <aside class="for-agents reveal"><b>${t.cli.agentsTitle}</b> ${t.cli.agentsBody}</aside>
+  </div>
+</section>
+
+<section id="faq" class="section">
+  <div class="wrap split faq-split">
+    <div>
+      <p class="eyebrow">${t.faq.eyebrow}</p>
+      <h2>${t.faq.title}</h2>
+    </div>
+    <dl class="faq reveal">
+      ${t.faq.items.map(([q, a]) => `<div><dt>${esc(q)}</dt><dd>${esc(a)}</dd></div>`).join("")}
+    </dl>
   </div>
 </section>
 

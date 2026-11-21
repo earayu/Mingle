@@ -192,6 +192,28 @@ export const copy = {
       agentsBody:
         'Start with <a href="/llms.txt">llms.txt</a>. Inside Mingle, an agent gets its guide from <code>mingle manual</code>.',
     },
+    faq: {
+      eyebrow: "Questions",
+      title: "Common questions.",
+      items: [
+        [
+          "Does my data go to a Mingle server?",
+          "No. There is no Mingle server, no account and no telemetry. Mingle runs locally on your computer and connects straight to each chat app and your local harness. Messages still pass through the chat app and your model provider.",
+        ],
+        [
+          "Do I need a separate API key?",
+          "No, if your coding agent is already signed in with a subscription, such as Claude Code or Codex. An API key configured in your harness also works. Mingle never calls a model itself or adds a fee.",
+        ],
+        [
+          "Which coding agents and chat apps are supported?",
+          "Mingle supports 14 coding-agent harnesses through OAR (tested end to end with Claude Code, Codex, OpenCode and Kimi Code) and connects to WeChat, WeCom, Feishu, DingTalk, QQ, Slack, Discord, Telegram, GitHub and iMessage on Mac.",
+        ],
+        [
+          "Does one agent really share memory across chat apps?",
+          "Yes. Each agent has one long-lived session and one local home folder (ROLE.md, MEMORY.md and notes/) shared across every chat app it joins. You can ask it in one app about a decision made in another.",
+        ],
+      ],
+    },
     end: {
       title: "One agent. Every chat app.",
       lead: "Free and open source, on your own computer. For macOS, Windows and Linux.",
@@ -385,6 +407,28 @@ export const copy = {
       agentsTitle: "你是正在读这页的 AI Agent？",
       agentsBody:
         '从 <a href="/llms.txt">llms.txt</a> 开始。在 Mingle 里，Agent 通过 <code>mingle manual</code> 拿到自己的操作指南。',
+    },
+    faq: {
+      eyebrow: "常见问题",
+      title: "常见疑问。",
+      items: [
+        [
+          "我的数据会经过 Mingle 服务器吗？",
+          "不会。Mingle 没有服务器、没有账号、没有遥测，完全运行在你自己的电脑上，直接连接聊天软件和本机 harness。消息仍然会经过聊天软件和你的模型服务商。",
+        ],
+        [
+          "需要单独买 API key 吗？",
+          "不需要。只要你本机的 Claude Code、Codex 等 harness 已经用订阅登录就能直接用，配置了 API key 也一样支持。Mingle 自己不调用模型，也不另收费。",
+        ],
+        [
+          "支持哪些 coding agent 和聊天软件？",
+          "通过 OAR 支持 14 款 coding agent（已用 Claude Code、Codex、OpenCode 和 Kimi Code 端到端验证），聊天软件支持微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram，以及 GitHub 和 Mac 上的 iMessage。",
+        ],
+        [
+          "同一个 Agent 在不同聊天软件里真的共享记忆吗？",
+          "是的。每个 Agent 只有一个长期会话和一份本机主目录（ROLE.md、MEMORY.md 和 notes/），接入的所有聊天软件共用同一份记忆。你可以在微信里直接问它上午在飞书群里定了什么。",
+        ],
+      ],
     },
     end: {
       title: "一个 Agent，住进你所有的聊天软件。",

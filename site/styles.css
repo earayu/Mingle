@@ -1604,6 +1604,31 @@ html:not(.js) .phone-static .rx .chip {
   font-weight: 650;
 }
 
+/* FAQ: ruled Q&A list matching the monochrome hairlines. */
+.faq-split {
+  align-items: start;
+}
+.faq {
+  margin: 0;
+}
+.faq > div {
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+}
+.faq > div:last-child {
+  border-bottom: 1px solid var(--line);
+}
+.faq dt {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 650;
+}
+.faq dd {
+  margin: 8px 0 0;
+  color: var(--ink2);
+  font-size: 15px;
+}
+
 /* CLI */
 .cli-grid > * {
   min-width: 0;

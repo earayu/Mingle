@@ -792,6 +792,29 @@ describe("site build", () => {
     expect(llms).toContain("v9.8.7");
     expect(llms).toContain("release notes");
     expect(en).toContain("/releases/latest/download/install.sh");
+    // Hero LCP image loads eagerly with fetchpriority="high"; below-the-fold screenshots stay lazy.
+    expect(en).toContain('src="/img/agent-en-light.png"');
+    expect(en).toMatch(/<img src="\/img\/agent-en-light\.png"[^>]*fetchpriority="high"/);
+    expect(en).not.toMatch(/<img src="\/img\/agent-en-light\.png"[^>]*loading="lazy"/);
+    expect(en).toMatch(/<img src="\/img\/new-en-light\.png"[^>]*loading="lazy"/);
+    // Structured data: SoftwareApplication + FAQPage in both languages, using the snapshot version.
+    for (const [html, lang, path] of [
+      [en, "en", "/"],
+      [zh, "zh-CN", "/zh/"],
+    ] as const) {
+      const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map(
+        (m) => JSON.parse(must(m[1])) as Record<string, unknown>,
+      );
+      const app = blocks.find((b) => b["@type"] === "SoftwareApplication");
+      const faq = blocks.find((b) => b["@type"] === "FAQPage");
+      expect(app).toBeDefined();
+      expect(app?.softwareVersion).toBe(VERSION);
+      expect(app?.inLanguage).toBe(lang);
+      expect(app?.url).toBe(`https://mingle.build${path}`);
+      expect(app?.downloadUrl).toBe(`${REPO_URL}/releases/tag/${TAG}`);
+      expect(faq).toBeDefined();
+      expect((must(faq).mainEntity as unknown[]).length).toBeGreaterThanOrEqual(4);
+    }
   });
 
   it("fails without --release instead of using package.json", async () => {
