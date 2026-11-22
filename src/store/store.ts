@@ -1734,7 +1734,7 @@ export class Store {
     input: Omit<Reminder, "id" | "createdAt" | "lastFiredAt" | "sourceMessageId" | "check"> & {
       sourceMessageId?: string | null;
       /** A reminder that fires on change, with the hash of its first run as the baseline. */
-      check?: { command: string; once: boolean; hash: string; until: number } | null;
+      check?: { command: string; once: boolean; hash: string; until: number | null } | null;
     },
   ): Reminder {
     const id = this.mint("reminders", "r", 3);
@@ -1787,7 +1787,8 @@ export class Store {
     const rows = this.db
       .prepare(
         `SELECT r.* FROM reminders r JOIN agents a ON a.id = r.agent_id
-         WHERE r.next_fire_at IS NOT NULL AND (r.next_fire_at <= ? OR (r.check_command IS NOT NULL AND r.check_until <= ?))
+         WHERE r.next_fire_at IS NOT NULL
+           AND (r.next_fire_at <= ? OR (r.check_command IS NOT NULL AND r.check_until IS NOT NULL AND r.check_until <= ?))
            AND a.status != 'paused' ORDER BY r.next_fire_at`,
       )
       .all(at, at) as Row[];

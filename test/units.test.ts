@@ -6,7 +6,14 @@ import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toInbound } from "../src/channels/telegram/telegram.ts";
-import { changedText, checkCommand, outcome } from "../src/core/check.ts";
+import {
+  CHECK_DEFAULT_FOR_MS,
+  CHECK_MAX_FOR_MS,
+  changedText,
+  checkCommand,
+  checkUntil,
+  outcome,
+} from "../src/core/check.ts";
 import { excerpt, formatMessage, formatReminder } from "../src/core/format.ts";
 import { split } from "../src/core/outbox.ts";
 import { nextFire, parseDuration } from "../src/core/schedule.ts";
@@ -253,6 +260,18 @@ describe("reminder checks", () => {
     expect(() => checkCommand("  ")).toThrow(/check_required|shell command/);
     expect(() => checkCommand("x".repeat(5000))).toThrow(/4000/);
     expect(checkCommand(" gh pr checks 1 ")).toBe("gh pr checks 1");
+  });
+
+  it("parses --for: 7d by default, up to 90d, or forever with no deadline", () => {
+    const now = 1_700_000_000_000;
+    expect(checkUntil(undefined, now)).toBe(now + CHECK_DEFAULT_FOR_MS);
+    expect(checkUntil("3d", now)).toBe(now + 3 * 86_400_000);
+    expect(checkUntil("90d", now)).toBe(now + CHECK_MAX_FOR_MS);
+    expect(checkUntil("forever", now)).toBeNull();
+    expect(checkUntil(" FOREVER ", now)).toBeNull();
+    for (const bad of ["91d", "0m", "0d", "", "never", null, 42]) {
+      expect(() => checkUntil(bad, now)).toThrow(/check_for_invalid|forever/);
+    }
   });
 
   it("gives a check only the allowlisted variables, Windows names case-insensitively", () => {

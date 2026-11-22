@@ -7,7 +7,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import QRCode from "qrcode";
 import type { CredentialField, OnboardingMethod, PermissionId, Platform, Trust } from "../channels/channel.ts";
-import { CHECK_DEFAULT_FOR_MS, CHECK_MAX_FOR_MS, CHECK_MIN_INTERVAL_MS, checkCommand } from "../core/check.ts";
+import { CHECK_MIN_INTERVAL_MS, checkCommand, checkUntil } from "../core/check.ts";
 import { sendTarget } from "../core/direct.ts";
 import { contactAlias, MingleError, notFound } from "../core/errors.ts";
 import { excerpt, renderMessage } from "../core/format.ts";
@@ -603,23 +603,21 @@ export function createApi(mingle: Mingle): Hono<Env> {
       throw new MingleError("when_required", "pass one of --in 30m, --at <time> or --every daily@09:00");
     }
     // A check runs once now: a broken command fails here, and the agent sees where things stand.
-    let check: { command: string; once: boolean; hash: string; until: number } | null = null;
+    let check: { command: string; once: boolean; hash: string; until: number | null } | null = null;
     // The first run's output goes back in this response only; only its hash is kept.
     let checkOutput: string | null = null;
     if (body.check !== undefined) {
       const command = checkCommand(body.check);
       if (rule.startsWith("every:") && nextFire(rule, now) - now < CHECK_MIN_INTERVAL_MS)
         throw new MingleError("check_too_often", "check at most once a minute: --every 1m or longer");
-      const runFor = body.for === undefined ? CHECK_DEFAULT_FOR_MS : parseDuration(body.for);
-      if (runFor > CHECK_MAX_FOR_MS || runFor <= 0)
-        throw new MingleError("check_for_invalid", "keep checking for at most 90d: --for 3d, --for 30d");
+      const until = checkUntil(body.for, now);
       const result = await mingle.probeCheck(agent.id, command);
       if (!result.ok)
         throw new MingleError(
           "check_failed",
           `the check ${result.error}. Fix the command and set the reminder again; it must exit 0`,
         );
-      check = { command, once: body.once === true, hash: result.hash, until: now + runFor };
+      check = { command, once: body.once === true, hash: result.hash, until };
       checkOutput = result.output;
     }
     const reminder = store.createReminder({

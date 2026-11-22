@@ -240,7 +240,7 @@ To wait for something outside the chats, give a recurring reminder a `--check` c
 - For CI, emit one stable waiting value until all reported checks finish. If you need specific jobs, wait for those jobs to appear and finish.
 - Print only a non-sensitive state, version, or fingerprint. Do not put credentials in the command or print them. This is a local shell command, not a sandbox; tools may still use their own sign-in. Setting the reminder runs the command once and shows the baseline. If the condition already holds, act now.
 - `--once` ends it after the first change; otherwise each change can wake you. Checks run at most once a minute. When it fires, `check=changed` includes the current output. Mingle saves the comparison hash, not the output.
-- A check ends after 7 days, or after `--for` (up to `90d`), even if its next poll is later. `check=expired` tells you it stopped.
+- A check ends after 7 days, or after `--for` (up to `90d`), even if its next poll is later; `check=expired` tells you it stopped. For ongoing monitoring until cancelled, pass `--for forever`.
 - A failed command is refused at setup. Later, Mingle retries failures quietly, and `check=failing` tells you once after three in a row. To change a command, cancel the reminder and set it again.
 
 ## When a command fails

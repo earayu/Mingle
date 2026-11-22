@@ -1122,6 +1122,101 @@ setTimeout(() => {}, 30000);`,
     expect(existsSync(join(home, "probe-survived.txt"))).toBe(false);
   });
 
+  it("keeps a --for forever check running past 90d until cancelled", async () => {
+    const outputs: Record<string, string> = {};
+    const woken: string[] = [];
+    let env: Record<string, string> = {};
+    current = await rig(async (t) => {
+      env = t.options.env as Record<string, string>;
+      if (t.input.includes("[reminder=")) {
+        woken.push(t.input);
+        return;
+      }
+      const id = messageIds(t.input)[0];
+      const set = (...args: string[]) => runCli(env, ["reminder", "set", ...args]);
+      outputs.forever = (
+        await set(
+          "Watch repo updates",
+          "--every",
+          "5m",
+          "--check",
+          "node state.js",
+          "--for",
+          "forever",
+          "--from",
+          id as string,
+        )
+      ).stdout;
+      outputs.onceForever = (
+        await set(
+          "Watch rare release",
+          "--every",
+          "5m",
+          "--check",
+          "node state.js",
+          "--once",
+          "--for",
+          "forever",
+          "--from",
+          id as string,
+        )
+      ).stdout;
+      outputs.foreverAlone = (await set("x", "--every", "5m", "--for", "forever")).stderr;
+      outputs.badFor = (await set("x", "--every", "5m", "--check", "node state.js", "--for", "never")).stderr;
+      outputs.list = (await runCli(env, ["reminder", "list"])).stdout;
+      await runCli(env, ["message", "reply", id as string], "Watching indefinitely.");
+    });
+    const { channel, mingle, agentId } = current;
+    const home = mingle.homeDir(mingle.store.agent(agentId) as { slug: string });
+    writeFileSync(
+      join(home, "state.js"),
+      `console.log("state: " + require("fs").readFileSync("state.txt", "utf8").trim());`,
+    );
+    writeFileSync(join(home, "state.txt"), "v1");
+    channel.receive({ text: "watch this forever" });
+    await until(() => channel.sent.length === 1);
+    await until(() => !mingle.runtime(agentId)?.busy);
+
+    expect(outputs.forever).toMatch(
+      /^set r\w+, next check at .+, checking forever; it fires when the output changes from:\nstate: v1\n$/,
+    );
+    expect(outputs.onceForever).toMatch(
+      /^set r\w+, next check at .+, checking forever; it fires when the output changes from:\nstate: v1\n$/,
+    );
+    expect(outputs.foreverAlone).toMatch(/^error: check_required/);
+    expect(outputs.badFor).toMatch(/^error: check_for_invalid\nnext: .*--for forever/);
+    expect(outputs.list).toMatch(/Watch repo updates {2}\(from m\w+\)\n {4}check forever: node state\.js/);
+    expect(outputs.list).toMatch(/Watch rare release {2}\(from m\w+\)\n {4}check \(once\) forever: node state\.js/);
+
+    const repoWatch = mingle.store.reminders(agentId).find((r) => r.body === "Watch repo updates");
+    const rareWatch = mingle.store.reminders(agentId).find((r) => r.body === "Watch rare release");
+    expect(repoWatch?.check?.until).toBeNull();
+    expect(rareWatch?.check?.until).toBeNull();
+
+    // Far past the 90d cap (one year later): neither expires, unchanged output stays quiet.
+    const start = Date.now();
+    mingle.fireReminders(start + 365 * 86_400_000);
+    await mingle.checksSettled();
+    expect(woken).toEqual([]);
+    expect(mingle.store.reminders(agentId)).toHaveLength(2);
+
+    // Snoozing keeps it running without expiring; when output changes even later, it fires.
+    expect((await runCli(env, ["reminder", "snooze", repoWatch?.id as string, "--by", "30m"])).code).toBe(0);
+    writeFileSync(join(home, "state.txt"), "v2");
+    mingle.fireReminders(start + 400 * 86_400_000);
+    await mingle.checksSettled();
+    const heard = () => woken.join("\n\n");
+    await until(() => heard().includes("Watch repo updates") && heard().includes("Watch rare release"));
+    expect(heard()).not.toContain("check=expired");
+    expect(heard()).toMatch(/check=changed\]\nWatch repo updates\nCheck output now:\nstate: v2/);
+    // The --once forever check ended after firing once; the repeating forever check stays active.
+    expect(mingle.store.reminders(agentId).map((r) => r.id)).toEqual([repoWatch?.id]);
+
+    // Explicitly cancelling stops it.
+    expect((await runCli(env, ["reminder", "cancel", repoWatch?.id as string])).code).toBe(0);
+    expect(mingle.store.reminders(agentId)).toEqual([]);
+  });
+
   it("refuses to run without an agent session", async () => {
     current = await rig(async () => {});
     const result = await runCli({ MINGLE_CLI: current.mingle.cliPath, MINGLE_API: "", MINGLE_TOKEN: "" }, [

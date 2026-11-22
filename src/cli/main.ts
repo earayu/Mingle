@@ -573,7 +573,7 @@ async function agentCommand(group: string, action: string | undefined, args: str
       const text = need(
         args.join(" "),
         "text_required",
-        'usage: mingle reminder set "text" --in 6h | --at <time> | --every daily@09:00 [--check <command> [--once] [--for 7d]]',
+        'usage: mingle reminder set "text" --in 6h | --at <time> | --every daily@09:00 [--check <command> [--once] [--for 7d|forever]]',
       );
       const reminder = await call()<{
         id: string;
@@ -594,7 +594,7 @@ async function agentCommand(group: string, action: string | undefined, args: str
       });
       print(reminder, () =>
         reminder.check
-          ? `set ${reminder.id}, next check at ${time(reminder.nextFireAt)}, checking until ${time(reminder.check.until ?? 0)}; it fires when the output changes from:\n${reminder.checkOutput || "(empty)"}`
+          ? `set ${reminder.id}, next check at ${time(reminder.nextFireAt)}, checking ${reminder.check.until === null ? "forever" : `until ${time(reminder.check.until)}`}; it fires when the output changes from:\n${reminder.checkOutput || "(empty)"}`
           : `set ${reminder.id}, next at ${time(reminder.nextFireAt)}`,
       );
       return true;
@@ -617,7 +617,7 @@ async function agentCommand(group: string, action: string | undefined, args: str
         }[]
       >("GET", "/v1/agent/reminders");
       const checkLine = (c: NonNullable<(typeof reminders)[number]["check"]>) =>
-        `\n    check${c.once ? " (once)" : ""} until ${time(c.until ?? 0)}: ${c.command}${c.failures ? `\n    failing ${c.failures}x: ${c.error}` : ""}`;
+        `\n    check${c.once ? " (once)" : ""} ${c.until === null ? "forever" : `until ${time(c.until)}`}: ${c.command}${c.failures ? `\n    failing ${c.failures}x: ${c.error}` : ""}`;
       print(reminders, () =>
         reminders.length
           ? reminders
