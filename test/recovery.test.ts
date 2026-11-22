@@ -1231,4 +1231,23 @@ describe("the account limit ledger", () => {
     await mingle.resumeAgent(peer.id);
     expect(mingle.runtime(peer.id)?.limit).toBeUndefined();
   });
+
+  it("reopens a fresh session on the next message after runtime_exited", async () => {
+    const { opens, wrap } = recording();
+    const state = { fails: 1 };
+    const inputs: string[] = [];
+    current = await rig(answeringUnless(state, inputs), {
+      wrap: wrap(flaky(state, "runtime_exited")),
+    });
+    const { mingle, channel, agentId } = current;
+
+    channel.receive({ text: "first" });
+    await until(() => mingle.store.agent(agentId)?.status === "error" && !mingle.runtime(agentId)?.busy);
+    expect(opens).toHaveLength(1);
+
+    channel.receive({ text: "second" });
+    await until(() => inputs.length === 2 && !mingle.runtime(agentId)?.busy);
+    expect(opens).toHaveLength(2);
+    expect(mingle.store.agent(agentId)?.status).toBe("idle");
+  });
 });

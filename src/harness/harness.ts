@@ -794,6 +794,8 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
       let turn: "prompted" | "self" | undefined;
       /** The open turn showed the model working: reasoning, text or a tool call. */
       let worked = false;
+      /** Mingle itself closed the session: its exit event is expected, not a crash. */
+      let disposed = false;
       /** Tasks running beside the turns, which an abort of the turn leaves running. */
       const tasks = new Set<string>();
       /** The root agent's tool calls in flight, with the latest input reported for each. */
@@ -824,6 +826,22 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
         });
       };
       session.events((event) => {
+        if (event.kind === "exited") {
+          const running = turn;
+          const hadTasks = tasks.size > 0;
+          turn = undefined;
+          tasks.clear();
+          calls.clear();
+          // An unexpected exit while a turn or background work was open ends it immediately:
+          // OAR emits `exited` without `turn_ended`, so otherwise a line or runtime waits forever.
+          if (!disposed && (running || hadTasks)) {
+            reportTurnUsage();
+            const reason =
+              event.reason ?? (event.code !== null ? `the harness exited (code ${event.code})` : "the harness exited");
+            events.onTurnEnded({ kind: "failed", failure: "runtime_exited", reason });
+          }
+          return;
+        }
         events.onProgress?.();
         switch (event.kind) {
           case "task_started":
@@ -854,8 +872,8 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
             break;
           }
         }
-        // Work with no turn open: the harness began a turn on its own (Claude Code wakes the
-        // agent when a background command ends). OAR reports turn starts for prompts only.
+        // Work with no turn open: fallback for harnesses that begin a turn on their own without
+        // emitting `turn_active` first.
         const work = event.kind === "tool_call_started" || event.kind === "reasoning" || event.kind === "text_delta";
         if (!turn && work) {
           turn = "self";
@@ -869,6 +887,17 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
             worked = false;
             turnBase = totals();
             events.onTurnStarted();
+            break;
+          case "turn_active":
+            // Native active-turn report (e.g. Claude Code waking on a completed background command
+            // before the model emits its first token, or a queued input starting its own turn).
+            if (!turn) {
+              const self = !event.inputId;
+              turn = self ? "self" : "prompted";
+              worked = false;
+              turnBase = totals();
+              events.onTurnStarted(self);
+            }
             break;
           case "turn_ended": {
             const empty = turn === "prompted" && !worked;
@@ -933,6 +962,7 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
           return Boolean(running) || stopping.length > 0;
         },
         async dispose() {
+          disposed = true;
           await session.dispose();
         },
       };

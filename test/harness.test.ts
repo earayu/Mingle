@@ -639,6 +639,102 @@ describe("stopping work", () => {
     expect(await session.abort()).toBe(true);
     expect(seen).toEqual(["self", "ended:aborted"]);
   });
+
+  it("opens a self-initiated turn immediately on turn_active before the model emits tokens", async () => {
+    const { opening, emit, seen } = driven();
+    await opening;
+    emit({ kind: "turn_started" });
+    // Normal prompted turn: turn_active must not fire a second onTurnStarted.
+    emit({ kind: "turn_active", inputId: "in-1" });
+    emit({ kind: "text_delta" });
+    emit({ kind: "turn_ended", outcome: { kind: "completed" } });
+    // Background task finishes and the harness starts a turn on its own (system/init → turn_active).
+    emit({ kind: "turn_active" });
+    expect(seen).toEqual(["prompted", "ended:completed", "self"]);
+    // First model token arrives later (slow TTFT): still the same turn, no duplicate start.
+    emit({ kind: "reasoning" });
+    emit({ kind: "text_delta" });
+    emit({ kind: "turn_ended", outcome: { kind: "completed" } });
+    // A queued input whose turn starts natively (turn_active with inputId) is prompted, not self.
+    emit({ kind: "turn_active", inputId: "in-2" });
+    emit({ kind: "turn_ended", outcome: { kind: "completed" } });
+    expect(seen).toEqual(["prompted", "ended:completed", "self", "ended:completed", "prompted", "ended:completed"]);
+  });
+
+  it("keeps empty-turn detection accurate when a prompted turn emits turn_active without model output", async () => {
+    let emit: (event: Record<string, unknown>) => void = () => {};
+    const session = {
+      ...fakeSession(),
+      events: (observer: (event: Record<string, unknown>) => void) => {
+        emit = (event) => observer({ agentPath: [], ...event });
+        return () => {};
+      },
+    } as unknown as Session;
+    const runtime = {
+      ...scriptedRuntime({ id: "claude", turn: () => {} }),
+      installation: async () => ({ kind: "available", via: "bundled" }),
+      session: async () => session,
+    } as unknown as Runtime;
+    const ended: unknown[] = [];
+    await oarHarness({ require: () => runtime }).open(
+      { harness: "claude", cwd: cwd(), appendSystemPrompt: PROMPT, env: ENV },
+      {
+        onTurnStarted: () => {},
+        onTurnEnded: (outcome) => ended.push(outcome),
+        onActivity: () => {},
+      },
+    );
+    emit({ kind: "turn_started" });
+    emit({ kind: "turn_active", inputId: "in-1" });
+    emit({ kind: "turn_ended", outcome: { kind: "completed" } });
+    expect(ended).toEqual([{ kind: "completed", empty: true }]);
+  });
+
+  it("ends an open turn or background wait with runtime_exited on unexpected exit, but not on dispose", async () => {
+    let emit: (event: Record<string, unknown>) => void = () => {};
+    const session = {
+      ...fakeSession(),
+      events: (observer: (event: Record<string, unknown>) => void) => {
+        emit = (event) => observer({ agentPath: [], ...event });
+        return () => {};
+      },
+      dispose: async () => {
+        emit({ kind: "exited", code: 0 });
+      },
+    } as unknown as Session;
+    const runtime = {
+      ...scriptedRuntime({ id: "claude", turn: () => {} }),
+      installation: async () => ({ kind: "available", via: "bundled" }),
+      session: async () => session,
+    } as unknown as Runtime;
+    const ended: unknown[] = [];
+    const opened = await oarHarness({ require: () => runtime }).open(
+      { harness: "claude", cwd: cwd(), appendSystemPrompt: PROMPT, env: ENV },
+      {
+        onTurnStarted: () => {},
+        onTurnEnded: (outcome) => ended.push(outcome),
+        onActivity: () => {},
+      },
+    );
+    // Crash mid-turn: immediately reports runtime_exited and clears background tasks.
+    emit({ kind: "turn_started" });
+    emit({ kind: "task_started", taskId: "t1", taskType: "shell", background: true });
+    emit({ kind: "exited", code: 137 });
+    expect(opened.background?.()).toBe(0);
+    expect(ended).toEqual([{ kind: "failed", failure: "runtime_exited", reason: "the harness exited (code 137)" }]);
+
+    // Crash while waiting on background work after a turn ended: also reports runtime_exited.
+    emit({ kind: "task_started", taskId: "t2", taskType: "shell", background: true });
+    emit({ kind: "exited", code: null, reason: "killed" });
+    expect(opened.background?.()).toBe(0);
+    expect(ended).toHaveLength(2);
+    expect(ended[1]).toEqual({ kind: "failed", failure: "runtime_exited", reason: "killed" });
+
+    // Normal dispose emits exited: must not report a failure.
+    emit({ kind: "turn_started" });
+    await opened.dispose();
+    expect(ended).toHaveLength(2);
+  });
 });
 
 describe("turn usage", () => {

@@ -1,9 +1,10 @@
 import { join } from "node:path";
-import type { ScriptedTurn } from "@botiverse/oar/testing";
+import type { Runtime, Session } from "@botiverse/oar";
+import { type ScriptedTurn, scriptedRuntime } from "@botiverse/oar/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { Lines, MAX_LINES } from "../src/core/lines.ts";
 import { renderManual } from "../src/core/manual.ts";
-import type { Harness, HarnessEvents } from "../src/harness/harness.ts";
+import { type Harness, type HarnessEvents, oarHarness } from "../src/harness/harness.ts";
 import { messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
 
 /** Several things at once (docs/spec.md 4.13): lines beside the main session. */
@@ -461,6 +462,138 @@ describe("lines", () => {
     background = 0;
     await until(() => mingle.store.taskById(task.id)?.lineState === "idle");
     expect(disposed).toBe(1);
+    await lines.close();
+  });
+
+  it("keeps a line open across slow TTFT when turn_active follows background work completion (MING-140)", async () => {
+    current = await rig(async () => {});
+    const { channel, mingle, agentId } = current;
+    channel.receive({ text: "@Alex hi" });
+    await until(() => mingle.store.agentChats(agentId).length > 0);
+    const chat = mingle.store.agentChats(agentId)[0];
+    const from = mingle.store.chatMessages(chat?.id as string, 1)[0]?.id as string;
+    let emit: (event: Record<string, unknown>) => void = () => {};
+    let disposed = 0;
+    let delivered = 0;
+    const rawSession = {
+      id: "s-bg",
+      events: (observer: (event: Record<string, unknown>) => void) => {
+        emit = (event) => observer({ agentPath: [], ...event });
+        return () => {};
+      },
+      deliver: async () => {
+        delivered++;
+        emit({ kind: "turn_started" });
+        return { landed: "prompted" as const };
+      },
+      abort: async () => ({ kind: "accepted" as const }),
+      dispose: async () => {
+        disposed++;
+      },
+    } as unknown as Session;
+    const runtime = {
+      ...scriptedRuntime({ id: "pi", turn: () => {} }),
+      installation: async () => ({ kind: "available", via: "bundled" }),
+      session: async () => rawSession,
+    } as unknown as Runtime;
+    const lines = new Lines({
+      store: mingle.store,
+      harness: oarHarness({ require: () => runtime }),
+      dir: () => join(current?.home as string, "lines-ttft"),
+      manual: () => "",
+      env: () => ({}),
+      agentEnv: () => undefined,
+      note: () => {},
+      unanswered: () => [],
+      paused: () => false,
+      settleMs: 100,
+    });
+    const task = mingle.store.createLineTask({
+      agentId,
+      title: "Render video",
+      fromMessage: from,
+      fromChat: chat?.id as string,
+      brief: "render",
+    });
+    lines.start(task);
+    await until(() => delivered === 1);
+    // Turn 1 moves a long command into the background and ends.
+    emit({ kind: "task_started", taskId: "bg1", taskType: "shell", background: true });
+    emit({ kind: "turn_ended", outcome: { kind: "completed" } });
+    // Background command finishes: background() drops to 0 and Claude emits system/init -> turn_active
+    // before the model starts returning tokens.
+    emit({ kind: "task_updated", taskId: "bg1", status: "completed" });
+    emit({ kind: "task_ended", taskId: "bg1", status: "completed" });
+    emit({ kind: "turn_active" });
+    // Wait well past settleMs with no model tokens yet (slow TTFT): the session must NOT be disposed.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(disposed).toBe(0);
+    expect(mingle.store.taskById(task.id)?.lineState).toBe("running");
+    // Model finally replies and completes the turn: now the line rests cleanly.
+    emit({ kind: "text_delta" });
+    emit({ kind: "turn_ended", outcome: { kind: "completed" } });
+    await until(() => mingle.store.taskById(task.id)?.lineState === "idle");
+    expect(disposed).toBe(1);
+    await lines.close();
+  });
+
+  it("marks a line errored and notifies the main session if its harness exits unexpectedly", async () => {
+    current = await rig(async () => {});
+    const { channel, mingle, agentId } = current;
+    channel.receive({ text: "@Alex hi" });
+    await until(() => mingle.store.agentChats(agentId).length > 0);
+    const chat = mingle.store.agentChats(agentId)[0];
+    const from = mingle.store.chatMessages(chat?.id as string, 1)[0]?.id as string;
+    let emit: (event: Record<string, unknown>) => void = () => {};
+    let delivered = 0;
+    const notes: string[] = [];
+    const rawSession = {
+      id: "s-crash",
+      events: (observer: (event: Record<string, unknown>) => void) => {
+        emit = (event) => observer({ agentPath: [], ...event });
+        return () => {};
+      },
+      deliver: async () => {
+        delivered++;
+        emit({ kind: "turn_started" });
+        return { landed: "prompted" as const };
+      },
+      abort: async () => ({ kind: "accepted" as const }),
+      dispose: async () => {},
+    } as unknown as Session;
+    const runtime = {
+      ...scriptedRuntime({ id: "pi", turn: () => {} }),
+      installation: async () => ({ kind: "available", via: "bundled" }),
+      session: async () => rawSession,
+    } as unknown as Runtime;
+    const lines = new Lines({
+      store: mingle.store,
+      harness: oarHarness({ require: () => runtime }),
+      dir: () => join(current?.home as string, "lines-crash"),
+      manual: () => "",
+      env: () => ({}),
+      agentEnv: () => undefined,
+      note: (_id, body) => notes.push(body),
+      unanswered: () => [],
+      paused: () => false,
+      settleMs: 100,
+    });
+    const task = mingle.store.createLineTask({
+      agentId,
+      title: "Job",
+      fromMessage: from,
+      fromChat: chat?.id as string,
+      brief: "go",
+    });
+    lines.start(task);
+    await until(() => delivered === 1);
+    emit({ kind: "task_started", taskId: "bg1", taskType: "shell", background: true });
+    emit({ kind: "turn_ended", outcome: { kind: "completed" } });
+    // Harness crashes while background work is still running.
+    emit({ kind: "exited", code: 1 });
+    await until(() => mingle.store.taskById(task.id)?.lineState === "error");
+    expect(mingle.store.taskById(task.id)?.lineError).toContain("exited");
+    expect(notes.some((n) => n.includes(task.id))).toBe(true);
     await lines.close();
   });
 

@@ -893,6 +893,14 @@ export class AgentRuntime {
           if (outcome.kind === "failed") {
             const failure = outcome.failure ?? "unknown";
             this.deps.log?.(`${this.agentId}: turn failed (${failure}${outcome.reason ? `: ${outcome.reason}` : ""})`);
+            if (failure === "runtime_exited") {
+              // The child process is gone: drop the dead handle so the next turn opens a fresh one.
+              this.generation++;
+              const dead = this.session;
+              this.session = undefined;
+              this.queued.clear();
+              void dead?.dispose().catch(() => {});
+            }
             this.setStatus("error", outcome.reason ?? "the turn failed", failure);
             // The agent did not get to answer: say so now rather than nudge it into the same failure.
             this.settleAwaiting({ failure, ...(outcome.resetsAt ? { resetsAt: outcome.resetsAt } : {}) });

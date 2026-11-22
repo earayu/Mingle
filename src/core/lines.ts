@@ -406,6 +406,7 @@ export class Lines {
       quietSince ??= Date.now();
       if (Date.now() - quietSince < settle) return;
       this.unwatch(line);
+      this.deps.log?.(`line ${line.taskId}: background work ended without starting a new turn; resting`);
       void this.rest(line);
     }, every);
     line.watch.unref?.();
