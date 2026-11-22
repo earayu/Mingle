@@ -829,10 +829,11 @@ describe("site build", () => {
     expect(readFileSync(join(out, "7f4c9a2e8b1d4f6a9c3e5b7d2a8f4c1e.txt"), "utf8").trim()).toBe(
       "7f4c9a2e8b1d4f6a9c3e5b7d2a8f4c1e",
     );
-    // Bilingual integration landing pages, internal links, sitemap.xml, and llms.txt.
+    // Bilingual integration, harness, security, and compare pages + sitemap.xml + llms.txt.
     const sitemap = readFileSync(join(out, "sitemap.xml"), "utf8");
     const apps = ["slack", "discord", "telegram", "imessage", "feishu", "wechat", "wecom", "dingtalk", "qq", "github"];
-    expect(sitemap.match(/<url>/g)).toHaveLength(2 + apps.length * 2);
+    const harnessSlugs = ["claude-code", "codex", "opencode", "kimi-code"];
+    expect(sitemap.match(/<url>/g)).toHaveLength(2 + apps.length * 2 + harnessSlugs.length * 2 + 4);
     expect(sitemap).toContain('xmlns:xhtml="http://www.w3.org/1999/xhtml"');
     expect(sitemap).toContain("<lastmod>");
     expect(sitemap).toContain('xhtml:link rel="alternate" hreflang="zh-CN"');
@@ -865,6 +866,52 @@ describe("site build", () => {
         expect(appLd?.softwareVersion).toBe(VERSION);
         expect(crumbLd).toBeDefined();
         expect((must(faqLd).mainEntity as unknown[]).length).toBeGreaterThanOrEqual(3);
+      }
+    }
+    for (const slug of harnessSlugs) {
+      expect(en).toContain(`href="/${slug}/"`);
+      expect(zh).toContain(`href="/zh/${slug}/"`);
+      expect(llms).toContain(`https://mingle.build/${slug}/`);
+      for (const [lang, ogLang, relPath, filePath] of [
+        ["en", "en", `/${slug}/`, join(out, slug, "index.html")],
+        ["zh-CN", "zh", `/zh/${slug}/`, join(out, "zh", slug, "index.html")],
+      ] as const) {
+        expect(sitemap).toContain(`<loc>https://mingle.build${relPath}</loc>`);
+        const html = readFileSync(filePath, "utf8");
+        expect(html).toContain(`<link rel="canonical" href="https://mingle.build${relPath}">`);
+        expect(html).toContain(`property="og:image" content="https://mingle.build/img/og/${slug}-${ogLang}.png"`);
+        expect(html).toContain(`${dl}/mingle-${VERSION}-arm64.dmg`);
+        const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map(
+          (m) => JSON.parse(must(m[1])) as Record<string, unknown>,
+        );
+        expect(blocks.find((b) => b["@type"] === "SoftwareApplication")?.inLanguage).toBe(lang);
+        expect(blocks.find((b) => b["@type"] === "BreadcrumbList")).toBeDefined();
+        expect(
+          (must(blocks.find((b) => b["@type"] === "FAQPage")).mainEntity as unknown[]).length,
+        ).toBeGreaterThanOrEqual(3);
+      }
+    }
+    for (const slug of ["security", "compare"] as const) {
+      expect(en).toContain(`href="/${slug}/"`);
+      expect(zh).toContain(`href="/zh/${slug}/"`);
+      expect(llms).toContain(`https://mingle.build/${slug}/`);
+      expect(llmsFull).toContain(`https://mingle.build/${slug}/`);
+      for (const [lang, ogLang, relPath, filePath] of [
+        ["en", "en", `/${slug}/`, join(out, slug, "index.html")],
+        ["zh-CN", "zh", `/zh/${slug}/`, join(out, "zh", slug, "index.html")],
+      ] as const) {
+        expect(sitemap).toContain(`<loc>https://mingle.build${relPath}</loc>`);
+        const html = readFileSync(filePath, "utf8");
+        expect(html).toContain(`<link rel="canonical" href="https://mingle.build${relPath}">`);
+        expect(html).toContain(`property="og:image" content="https://mingle.build/img/og/${slug}-${ogLang}.png"`);
+        const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map(
+          (m) => JSON.parse(must(m[1])) as Record<string, unknown>,
+        );
+        expect(blocks.find((b) => b["@type"] === "TechArticle")?.inLanguage).toBe(lang);
+        expect(blocks.find((b) => b["@type"] === "BreadcrumbList")).toBeDefined();
+        expect(
+          (must(blocks.find((b) => b["@type"] === "FAQPage")).mainEntity as unknown[]).length,
+        ).toBeGreaterThanOrEqual(3);
       }
     }
   });

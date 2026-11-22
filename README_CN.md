@@ -22,7 +22,7 @@
 | | |
 | --- | --- |
 | **聊天软件** | [微信](https://mingle.build/zh/wechat/)、[企业微信](https://mingle.build/zh/wecom/)、[飞书](https://mingle.build/zh/feishu/)、[钉钉](https://mingle.build/zh/dingtalk/)、[QQ](https://mingle.build/zh/qq/)、[Slack](https://mingle.build/zh/slack/)、[Discord](https://mingle.build/zh/discord/)、[Telegram](https://mingle.build/zh/telegram/)；[GitHub](https://mingle.build/zh/github/) 的 issue 和 PR（用 Agent 自己的账号）；Mac 上的 [iMessage](https://mingle.build/zh/imessage/)（给自己发消息） |
-| **Harness** | Claude Code、Codex、Cursor、OpenCode、Kimi Code、Grok Build、Qwen Code、Qoder、CodeBuddy Code、DeepSeek Harness、Pi、Antigravity、Devin、Factory Droid，通过 [OAR](https://github.com/botiverse/oar) 接入 |
+| **Harness** | [Claude Code](https://mingle.build/zh/claude-code/)、[Codex](https://mingle.build/zh/codex/)、Cursor、[OpenCode](https://mingle.build/zh/opencode/)、[Kimi Code](https://mingle.build/zh/kimi-code/)、Grok Build、Qwen Code、Qoder、CodeBuddy Code、DeepSeek Harness、Pi、Antigravity、Devin、Factory Droid，通过 [OAR](https://github.com/botiverse/oar) 接入 |
 | **系统** | macOS、Windows、Linux |
 
 Mingle 处于早期开发阶段。核心流程已用 Claude Code、Codex、OpenCode、Kimi Code 端到端跑通。飞书在真实租户上验证过，其余聊天软件对着平台接口和测试验证。
@@ -74,6 +74,7 @@ flowchart LR
 
 ## 文档
 
+- [架构与安全说明](https://mingle.build/zh/security/) · [方案对比与 10 渠道能力矩阵](https://mingle.build/zh/compare/)
 - [产品设计与技术架构](docs/spec.md)
 - [界面设计规范](DESIGN.md)
 - [Remote SSH](docs/remote-ssh_CN.md)：在另一台机器上运行 Agent（开发中）

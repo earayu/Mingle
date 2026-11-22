@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { copy } from "./copy.mjs";
 import { integrationOrder, integrations } from "./integrations.mjs";
+import { comparePage, harnessPageOrder, harnessPages, securityPage } from "./topics.mjs";
 
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -33,6 +34,11 @@ function platformIcon(id, size = 56) {
     ? `<svg viewBox="0 0 24 24" width="58%" height="58%" fill="#fff"><path d="${mark.path}"/></svg>`
     : `<svg viewBox="${mark.svg.viewBox}" width="62%" height="62%">${mark.svg.body}</svg>`;
   return `<span style="display:inline-grid;place-items:center;width:${size}px;height:${size}px;border-radius:${Math.round(size * 0.26)}px;background:${mark.color};color:#fff;flex:none;">${inner}</span>`;
+}
+
+function harnessBadge(iconId, size = 54) {
+  const svg = readFileSync(join(SITE, "icons", `${iconId}-light.svg`), "utf8");
+  return `<span style="display:inline-grid;place-items:center;width:${size}px;height:${size}px;border-radius:${Math.round(size * 0.26)}px;background:#ffffff;border:1px solid #e2e2e6;padding:10px;flex:none;">${svg.replace("<svg ", '<svg style="width:100%;height:100%;display:block;" ')}</span>`;
 }
 
 function ogHtml({ badge, eyebrow, h1, sub, meta, url }) {
@@ -277,6 +283,38 @@ for (const lang of ["en", "zh"]) {
       url: lang === "en" ? `mingle.build/${id}/` : `mingle.build/zh/${id}/`,
     });
   }
+  for (const slug of harnessPageOrder) {
+    const h = harnessPages[lang][slug];
+    cards.push({
+      file: `${slug}-${lang}.png`,
+      badge: harnessBadge(h.icon, 54),
+      eyebrow: h.eyebrow,
+      h1: h.h1,
+      sub: h.lead,
+      meta: h.metaNote,
+      url: lang === "en" ? `mingle.build/${slug}/` : `mingle.build/zh/${slug}/`,
+    });
+  }
+  const sec = securityPage[lang];
+  cards.push({
+    file: `security-${lang}.png`,
+    badge: "",
+    eyebrow: sec.eyebrow,
+    h1: sec.h1,
+    sub: sec.lead,
+    meta: sec.metaNote,
+    url: `mingle.build${sec.path}`,
+  });
+  const cmp = comparePage[lang];
+  cards.push({
+    file: `compare-${lang}.png`,
+    badge: "",
+    eyebrow: cmp.eyebrow,
+    h1: cmp.h1,
+    sub: cmp.lead,
+    meta: cmp.metaNote,
+    url: `mingle.build${cmp.path}`,
+  });
 }
 
 for (const card of cards) {

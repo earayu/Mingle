@@ -22,7 +22,7 @@ Create an agent on your own computer: it has a name, a role, a memory and a home
 | | |
 | --- | --- |
 | **Chat apps** | [WeChat](https://mingle.build/wechat/), [WeCom](https://mingle.build/wecom/), [Feishu](https://mingle.build/feishu/), [DingTalk](https://mingle.build/dingtalk/), [QQ](https://mingle.build/qq/), [Slack](https://mingle.build/slack/), [Discord](https://mingle.build/discord/), [Telegram](https://mingle.build/telegram/); [GitHub](https://mingle.build/github/) issues and pull requests, from an account of the agent's own; [iMessage](https://mingle.build/imessage/) on a Mac, by texting yourself |
-| **Harnesses** | Claude Code, Codex, Cursor, OpenCode, Kimi Code, Grok Build, Qwen Code, Qoder, CodeBuddy Code, DeepSeek Harness, Pi, Antigravity, Devin, Factory Droid, through [OAR](https://github.com/botiverse/oar) |
+| **Harnesses** | [Claude Code](https://mingle.build/claude-code/), [Codex](https://mingle.build/codex/), Cursor, [OpenCode](https://mingle.build/opencode/), [Kimi Code](https://mingle.build/kimi-code/), Grok Build, Qwen Code, Qoder, CodeBuddy Code, DeepSeek Harness, Pi, Antigravity, Devin, Factory Droid, through [OAR](https://github.com/botiverse/oar) |
 | **Systems** | macOS, Windows, Linux |
 
 Mingle is in early development. The core works end to end with Claude Code, Codex, OpenCode and Kimi Code. Feishu is verified on a real tenant; the other chat apps against their APIs and in tests.
@@ -74,6 +74,7 @@ flowchart LR
 
 ## Documentation
 
+- [Security & architecture](https://mingle.build/security/) · [Comparison & 10-channel matrix](https://mingle.build/compare/)
 - [Product design and architecture](docs/spec.md) (Chinese)
 - [Interface design](DESIGN.md) (Chinese)
 - [Remote SSH](docs/remote-ssh.md): run an agent on another machine (in development)

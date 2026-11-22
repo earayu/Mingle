@@ -1709,6 +1709,77 @@ html:not(.js) .phone-static .rx .chip {
   border-color: var(--line2);
   background: var(--bg2);
 }
+.guide-brain-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 16px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+.guide-brain-badge .brain-icon {
+  width: 28px;
+  height: 28px;
+}
+.guide-cli {
+  max-width: 780px;
+  margin-top: 32px;
+}
+.data-table-wrap {
+  margin-top: 40px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  -webkit-overflow-scrolling: touch;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.55;
+  text-align: left;
+}
+.data-table th,
+.data-table td {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.data-table thead th {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--bg2);
+  white-space: nowrap;
+}
+.data-table tbody th {
+  font-weight: 600;
+  color: var(--ink);
+  min-width: 150px;
+}
+.data-table tbody td {
+  color: var(--ink2);
+  min-width: 150px;
+}
+.data-table tbody tr:last-child th,
+.data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.table-app-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.table-app-link:hover {
+  text-decoration: underline;
+}
 
 /* CLI */
 .cli-grid > * {

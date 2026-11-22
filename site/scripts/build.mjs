@@ -14,6 +14,7 @@ import { copy } from "./copy.mjs";
 import { demo } from "./demo.mjs";
 import { harnesses } from "./harnesses.mjs";
 import { integrationOrder, integrations, integrationsUi } from "./integrations.mjs";
+import { comparePage, harnessPageOrder, harnessPages, harnessSlugById, securityPage, topicsUi } from "./topics.mjs";
 
 const { values } = parseArgs({ options: { release: { type: "string" }, out: { type: "string" } } });
 if (!values.release)
@@ -70,6 +71,7 @@ const chatApps = ["wechat", "wecom", "feishu", "dingtalk", "qq", "slack", "disco
 const platformOrder = [...chatApps, "github", "imessage"];
 const integrationSet = new Set(integrationOrder);
 const integrationPath = (key, id) => (key === "en" ? `/${id}/` : `/${key}/${id}/`);
+const slugPath = (key, slug) => (key === "en" ? `/${slug}/` : `/${key}/${slug}/`);
 const platformIcon = (id, size = 40) => {
   const mark = marks[id];
   const inner = mark.path
@@ -144,6 +146,19 @@ const breadcrumbJsonLd = (items) =>
       name,
       item: `${ORIGIN}${path}`,
     })),
+  });
+const techArticleJsonLd = ({ title, description, lang, path, og }) =>
+  jsonLd({
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    headline: title,
+    description,
+    inLanguage: lang,
+    url: `${ORIGIN}${path}`,
+    image: `${ORIGIN}${og}`,
+    dateModified: lastmod,
+    author: { "@type": "Organization", name: "Mingle", url: `${ORIGIN}/` },
+    publisher: { "@type": "Organization", name: "Mingle", url: `${ORIGIN}/`, logo: `${ORIGIN}/favicon.svg` },
   });
 const shot = (name, lang, alt, cls = "", eager = false) => `
   <figure class="window ${cls}">
@@ -266,7 +281,11 @@ function logos(key, t) {
   <div class="wrap">
     ${row(
       t.logos.harnesses,
-      harnesses.map(([id, name]) => `<li>${brainIcon(id)}${name}</li>`),
+      harnesses.map(([id, name]) => {
+        const inner = `${brainIcon(id)}${name}`;
+        const slug = harnessSlugById[id];
+        return slug ? `<li><a href="${slugPath(key, slug)}">${inner}</a></li>` : `<li>${inner}</li>`;
+      }),
     )}
     ${row(
       t.logos.apps,
@@ -518,7 +537,7 @@ ${demoSection(key, t)}
     <ul class="table table-2 reveal">
       ${t.privacy.items.map(([h, p]) => `<li><h3>${h}</h3><p>${p}</p></li>`).join("")}
     </ul>
-    <p class="note">${t.privacy.note}</p>
+    <p class="note">${t.privacy.note} <a href="${securityPage[key].path}">${topicsUi[key].securityNav} →</a> · <a href="${comparePage[key].path}">${topicsUi[key].compareNav} →</a></p>
   </div>
 </section>
 
@@ -596,7 +615,7 @@ ${demoSection(key, t)}
 <footer class="footer">
   <div class="wrap footer-inner">
     <div>© ${new Date().getFullYear()} Mingle · MIT</div>
-    <nav><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a><a href="/llms-full.txt">llms-full.txt</a><a href="mailto:${EMAIL}">${t.footer.contact}</a>${other
+    <nav><a href="${securityPage[key].path}">${topicsUi[key].securityNav}</a><a href="${comparePage[key].path}">${topicsUi[key].compareNav}</a><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a><a href="/llms-full.txt">llms-full.txt</a><a href="mailto:${EMAIL}">${t.footer.contact}</a>${other
       .map(([, v]) => `<a href="${v.path}" lang="${v.lang}">${v.langName}</a>`)
       .join("")}</nav>
     <p class="disclaimer">${t.footer.disclaimer}</p>
@@ -736,7 +755,7 @@ ${faqJsonLd(g.faq)}
     <h2>${ui.moreTitle}</h2>
     <p class="lead">${ui.moreLead}</p>
     <ul class="related-apps reveal">${moreApps}</ul>
-    <p class="note"><a href="${t.path}">${ui.seeAll} →</a></p>
+    <p class="note"><a href="${t.path}">${ui.seeAll} →</a> · <a href="${slugPath(key, "claude-code")}">Claude Code</a> · <a href="${slugPath(key, "codex")}">Codex</a> · <a href="${slugPath(key, "opencode")}">OpenCode</a> · <a href="${slugPath(key, "kimi-code")}">Kimi Code</a> · <a href="${securityPage[key].path}">${topicsUi[key].securityNav}</a> · <a href="${comparePage[key].path}">${topicsUi[key].compareNav}</a></p>
   </div>
 </section>
 
@@ -760,12 +779,502 @@ ${faqJsonLd(g.faq)}
 <footer class="footer">
   <div class="wrap footer-inner">
     <div>© ${new Date().getFullYear()} Mingle · MIT</div>
-    <nav><a href="${t.path}">${ui.breadcrumbHome}</a><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a><a href="/llms-full.txt">llms-full.txt</a><a href="mailto:${EMAIL}">${t.footer.contact}</a>${other
+    <nav><a href="${t.path}">${ui.breadcrumbHome}</a><a href="${securityPage[key].path}">${topicsUi[key].securityNav}</a><a href="${comparePage[key].path}">${topicsUi[key].compareNav}</a><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a><a href="/llms-full.txt">llms-full.txt</a><a href="mailto:${EMAIL}">${t.footer.contact}</a>${other
       .map(([k, v]) => `<a href="${integrationPath(k, id)}" lang="${v.lang}">${v.langName}</a>`)
       .join("")}</nav>
     <p class="disclaimer">${t.footer.disclaimer}</p>
   </div>
 </footer>
+</body>
+</html>
+`;
+}
+
+function downloadSection(t) {
+  const dl = (os) =>
+    `<div class="dl"><b>${t.alsoFor[os]}</b><div>${downloads[os].map(([label, href]) => `<a href="${href}">${label}</a>`).join("")}</div></div>`;
+  return `<section id="download" class="section end">
+  <div class="wrap">
+    <img class="end-icon" src="/favicon.svg" alt="" width="64" height="64">
+    <h2>${t.end.title}</h2>
+    <p class="lead">${t.end.lead}</p>
+    <div class="cta">
+      <a class="btn btn-primary" data-os-download data-os="mac" href="${downloads.mac[0][1]}"
+         data-mac="${downloads.mac[0][1]}" data-windows="${downloads.windows[0][1]}" data-linux="#download"
+         data-label-mac="${t.downloadFor.mac}" data-label-windows="${t.downloadFor.windows}" data-label-linux="${t.downloadFor.linux}" data-label-any="${t.downloadFor.any}">${osIcons}<span data-label>${t.downloadFor.mac}</span></a>
+      <a class="btn" href="${REPO}">${githubIcon}${t.end.github}</a>
+    </div>
+    <div class="dls">${dl("mac")}${dl("windows")}${dl("linux")}</div>
+    <p class="note">${t.end.installation} <a href="${releaseURL}">${t.end.releaseNotes} →</a></p>
+  </div>
+</section>`;
+}
+
+function topicFooter(key, t, altPathFor) {
+  const ui = topicsUi[key];
+  const other = Object.entries(copy).filter(([k]) => k !== key);
+  return `<footer class="footer">
+  <div class="wrap footer-inner">
+    <div>© ${new Date().getFullYear()} Mingle · MIT</div>
+    <nav><a href="${t.path}">${ui.breadcrumbHome}</a><a href="${securityPage[key].path}">${ui.securityNav}</a><a href="${comparePage[key].path}">${ui.compareNav}</a><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a><a href="/llms-full.txt">llms-full.txt</a><a href="mailto:${EMAIL}">${t.footer.contact}</a>${other
+      .map(([k, v]) => `<a href="${altPathFor(k)}" lang="${v.lang}">${v.langName}</a>`)
+      .join("")}</nav>
+    <p class="disclaimer">${t.footer.disclaimer}</p>
+  </div>
+</footer>`;
+}
+
+function harnessPage(key, slug) {
+  const t = copy[key];
+  const ui = topicsUi[key];
+  const h = harnessPages[key][slug];
+  const lang = key;
+  const path = slugPath(key, slug);
+  const og = `/img/og/${slug}-${lang}.png`;
+  const langLinks = Object.entries(copy)
+    .map(
+      ([k, v]) =>
+        `<a href="${slugPath(k, slug)}" hreflang="${v.lang}" lang="${v.lang}"${k === key ? ' aria-current="page"' : ""}>${v.langName}</a>`,
+    )
+    .join("");
+  const allApps = integrationOrder
+    .map(
+      (id) =>
+        `<li><a href="${integrationPath(key, id)}">${platformIcon(id, 24)}<span>${t.platforms[id]}</span></a></li>`,
+    )
+    .join("");
+  const otherHarnesses = harnessPageOrder
+    .filter((s) => s !== slug)
+    .map((s) => {
+      const item = harnessPages[key][s];
+      return `<li><a href="${slugPath(key, s)}">${brainIcon(item.icon)}<span>${item.name}</span></a></li>`;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html lang="${t.lang}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(h.title)}</title>
+<meta name="description" content="${esc(h.description)}">
+<link rel="canonical" href="${ORIGIN}${path}">
+${Object.entries(copy)
+  .map(([k, v]) => `<link rel="alternate" hreflang="${v.lang}" href="${ORIGIN}${slugPath(k, slug)}">`)
+  .join("\n")}
+<link rel="alternate" hreflang="x-default" href="${ORIGIN}${slugPath("en", slug)}">
+<link rel="alternate" type="text/markdown" href="${ORIGIN}/llms-full.txt" title="Mingle full documentation for LLMs">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1C1C1F" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:title" content="${esc(h.title)}">
+<meta property="og:description" content="${esc(h.description)}">
+<meta property="og:url" content="${ORIGIN}${path}">
+<meta property="og:image" content="${ORIGIN}${og}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+${softwareJsonLd({ ...t, description: h.description }, lang, path)}
+${breadcrumbJsonLd([
+  [ui.breadcrumbHome, t.path],
+  [h.name, path],
+])}
+${faqJsonLd(h.faq)}
+<link rel="stylesheet" href="/styles.css?v=${version}">
+<script>document.documentElement.classList.add("js")</script>
+<script defer src="/main.js?v=${version}"></script>
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="${t.path}"><img src="/favicon.svg" alt="" width="26" height="26">Mingle</a>
+    <nav class="nav-links"><a href="${t.path}">${ui.backHome}</a><a href="#setup">${ui.setupEyebrow}</a><a href="#apps">${ui.appsEyebrow}</a><a href="${securityPage[key].path}">${ui.securityNav}</a><a href="${comparePage[key].path}">${ui.compareNav}</a></nav>
+    <div class="nav-end">
+      <div class="langs">${langLinks}</div>
+      <a class="icon-link" href="${REPO}" aria-label="GitHub">${githubIcon}</a>
+      <a class="btn btn-small btn-primary" href="#download">${t.download}</a>
+    </div>
+  </div>
+</header>
+
+<main>
+<section class="hero guide-hero">
+  <div class="wrap">
+    <div class="hero-head">
+      <nav class="crumb rise" aria-label="Breadcrumb"><a href="${t.path}">${ui.breadcrumbHome}</a><span aria-hidden="true">/</span><span>${esc(h.name)}</span></nav>
+      <div class="guide-brain-badge rise">${brainIcon(h.icon)}</div>
+      <p class="eyebrow rise">${esc(h.eyebrow)}</p>
+      <h1 class="rise">${h.h1}</h1>
+      <p class="lead rise">${esc(h.lead)}</p>
+      <div class="cta rise">
+        <a class="btn btn-primary" data-os-download data-os="mac" href="${downloads.mac[0][1]}"
+           data-mac="${downloads.mac[0][1]}" data-windows="${downloads.windows[0][1]}" data-linux="#download"
+           data-label-mac="${t.downloadFor.mac}" data-label-windows="${t.downloadFor.windows}" data-label-linux="${t.downloadFor.linux}" data-label-any="${t.downloadFor.any}">${osIcons}<span data-label>${t.downloadFor.mac}</span></a>
+        <a class="btn" href="${t.path}#cli">${t.installTerminal}</a>
+      </div>
+      <p class="meta rise">v${version} · ${esc(h.metaNote)}</p>
+    </div>
+    ${shot("new", lang, t.how.steps[0].alt, "hero-shot rise", true)}
+  </div>
+</section>
+
+<section id="setup" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${ui.setupEyebrow}</p>
+    <h2>${ui.setupTitle}</h2>
+    <ol class="guide-steps reveal">
+      ${h.steps.map(([title, body], i) => `<li><span class="num">${i + 1}</span><h3>${esc(title)}</h3><p>${esc(body)}</p></li>`).join("")}
+    </ol>
+    <div class="guide-cli reveal">${codeBlock(h.cliCmd, t, "CLI")}</div>
+  </div>
+</section>
+
+<section id="works" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${ui.worksEyebrow}</p>
+    <h2>${esc(h.worksTitle)}</h2>
+    <ul class="table table-2 reveal">
+      ${h.highlights.map(([title, body]) => `<li><h3>${esc(title)}</h3><p>${esc(body)}</p></li>`).join("")}
+    </ul>
+  </div>
+</section>
+
+<section id="apps" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${ui.appsEyebrow}</p>
+    <h2>${ui.appsTitle}</h2>
+    <p class="lead">${ui.appsLead}</p>
+    <ul class="related-apps reveal">${allApps}</ul>
+  </div>
+</section>
+
+<section id="faq" class="section">
+  <div class="wrap split faq-split">
+    <div>
+      <p class="eyebrow">${ui.faqEyebrow}</p>
+      <h2>${ui.faqTitle}</h2>
+    </div>
+    <dl class="faq reveal">
+      ${h.faq.map(([q, a]) => `<div><dt>${esc(q)}</dt><dd>${esc(a)}</dd></div>`).join("")}
+    </dl>
+  </div>
+</section>
+
+<section id="more-harnesses" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${ui.otherHarnessesEyebrow}</p>
+    <h2>${ui.otherHarnessesTitle}</h2>
+    <p class="lead">${ui.otherHarnessesLead}</p>
+    <ul class="related-apps reveal">${otherHarnesses}</ul>
+    <p class="note"><a href="${securityPage[key].path}">${ui.securityNav} →</a> · <a href="${comparePage[key].path}">${ui.compareNav} →</a> · <a href="${t.path}">${ui.seeAll} →</a></p>
+  </div>
+</section>
+
+${downloadSection(t)}
+</main>
+
+${topicFooter(key, t, (k) => slugPath(k, slug))}
+</body>
+</html>
+`;
+}
+
+function securityPageHtml(key) {
+  const t = copy[key];
+  const ui = topicsUi[key];
+  const s = securityPage[key];
+  const lang = key;
+  const og = `/img/og/security-${lang}.png`;
+  const langLinks = Object.entries(copy)
+    .map(
+      ([k, v]) =>
+        `<a href="${securityPage[k].path}" hreflang="${v.lang}" lang="${v.lang}"${k === key ? ' aria-current="page"' : ""}>${v.langName}</a>`,
+    )
+    .join("");
+  const allApps = integrationOrder
+    .map(
+      (id) =>
+        `<li><a href="${integrationPath(key, id)}">${platformIcon(id, 24)}<span>${t.platforms[id]}</span></a></li>`,
+    )
+    .join("");
+
+  return `<!doctype html>
+<html lang="${t.lang}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(s.title)}</title>
+<meta name="description" content="${esc(s.description)}">
+<link rel="canonical" href="${ORIGIN}${s.path}">
+${Object.entries(copy)
+  .map(([k, v]) => `<link rel="alternate" hreflang="${v.lang}" href="${ORIGIN}${securityPage[k].path}">`)
+  .join("\n")}
+<link rel="alternate" hreflang="x-default" href="${ORIGIN}${securityPage.en.path}">
+<link rel="alternate" type="text/markdown" href="${ORIGIN}/llms-full.txt" title="Mingle full documentation for LLMs">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1C1C1F" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="article">
+<meta property="og:title" content="${esc(s.title)}">
+<meta property="og:description" content="${esc(s.description)}">
+<meta property="og:url" content="${ORIGIN}${s.path}">
+<meta property="og:image" content="${ORIGIN}${og}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+${techArticleJsonLd({ title: s.title, description: s.description, lang: t.lang, path: s.path, og })}
+${breadcrumbJsonLd([
+  [ui.breadcrumbHome, t.path],
+  [ui.securityNav, s.path],
+])}
+${faqJsonLd(s.faq)}
+<link rel="stylesheet" href="/styles.css?v=${version}">
+<script>document.documentElement.classList.add("js")</script>
+<script defer src="/main.js?v=${version}"></script>
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="${t.path}"><img src="/favicon.svg" alt="" width="26" height="26">Mingle</a>
+    <nav class="nav-links"><a href="${t.path}">${ui.backHome}</a><a href="#facts">${s.factsEyebrow}</a><a href="#pillars">${s.pillarsEyebrow}</a><a href="#faq">${ui.faqEyebrow}</a><a href="${comparePage[key].path}">${ui.compareNav}</a></nav>
+    <div class="nav-end">
+      <div class="langs">${langLinks}</div>
+      <a class="icon-link" href="${REPO}" aria-label="GitHub">${githubIcon}</a>
+      <a class="btn btn-small btn-primary" href="#download">${t.download}</a>
+    </div>
+  </div>
+</header>
+
+<main>
+<section class="hero guide-hero">
+  <div class="wrap">
+    <div class="hero-head">
+      <nav class="crumb rise" aria-label="Breadcrumb"><a href="${t.path}">${ui.breadcrumbHome}</a><span aria-hidden="true">/</span><span>${ui.securityNav}</span></nav>
+      <p class="eyebrow rise">${esc(s.eyebrow)}</p>
+      <h1 class="rise">${s.h1}</h1>
+      <p class="lead rise">${esc(s.lead)}</p>
+      <div class="cta rise">
+        <a class="btn btn-primary" href="${comparePage[key].path}">${ui.compareNav} →</a>
+        <a class="btn" href="${REPO}">${githubIcon}${t.end.github}</a>
+      </div>
+      <p class="meta rise">v${version} · ${esc(s.metaNote)}</p>
+    </div>
+    ${flow(t)}
+  </div>
+</section>
+
+<section id="facts" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${esc(s.factsEyebrow)}</p>
+    <h2>${esc(s.factsTitle)}</h2>
+    <div class="data-table-wrap reveal">
+      <table class="data-table">
+        <thead><tr>${s.factsHeaders.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${s.factsRows.map(([k, v]) => `<tr><th scope="row">${esc(k)}</th><td>${esc(v)}</td></tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="pillars" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${esc(s.pillarsEyebrow)}</p>
+    <h2>${esc(s.pillarsTitle)}</h2>
+    <ul class="table table-2 reveal">
+      ${s.pillars.map(([title, body]) => `<li><h3>${esc(title)}</h3><p>${esc(body)}</p></li>`).join("")}
+    </ul>
+  </div>
+</section>
+
+<section id="faq" class="section">
+  <div class="wrap split faq-split">
+    <div>
+      <p class="eyebrow">${ui.faqEyebrow}</p>
+      <h2>${ui.faqTitle}</h2>
+    </div>
+    <dl class="faq reveal">
+      ${s.faq.map(([q, a]) => `<div><dt>${esc(q)}</dt><dd>${esc(a)}</dd></div>`).join("")}
+    </dl>
+  </div>
+</section>
+
+<section id="apps" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${ui.appsEyebrow}</p>
+    <h2>${ui.appsTitle}</h2>
+    <p class="lead">${ui.appsLead}</p>
+    <ul class="related-apps reveal">${allApps}</ul>
+    <p class="note"><a href="${comparePage[key].path}">${ui.compareNav} →</a> · <a href="${t.path}">${ui.seeAll} →</a></p>
+  </div>
+</section>
+
+${downloadSection(t)}
+</main>
+
+${topicFooter(key, t, (k) => securityPage[k].path)}
+</body>
+</html>
+`;
+}
+
+function comparePageHtml(key) {
+  const t = copy[key];
+  const ui = topicsUi[key];
+  const c = comparePage[key];
+  const lang = key;
+  const og = `/img/og/compare-${lang}.png`;
+  const langLinks = Object.entries(copy)
+    .map(
+      ([k, v]) =>
+        `<a href="${comparePage[k].path}" hreflang="${v.lang}" lang="${v.lang}"${k === key ? ' aria-current="page"' : ""}>${v.langName}</a>`,
+    )
+    .join("");
+  const harnessLinks = harnessPageOrder
+    .map((slug) => {
+      const item = harnessPages[key][slug];
+      return `<li><a href="${slugPath(key, slug)}">${brainIcon(item.icon)}<span>${item.name}</span></a></li>`;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html lang="${t.lang}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(c.title)}</title>
+<meta name="description" content="${esc(c.description)}">
+<link rel="canonical" href="${ORIGIN}${c.path}">
+${Object.entries(copy)
+  .map(([k, v]) => `<link rel="alternate" hreflang="${v.lang}" href="${ORIGIN}${comparePage[k].path}">`)
+  .join("\n")}
+<link rel="alternate" hreflang="x-default" href="${ORIGIN}${comparePage.en.path}">
+<link rel="alternate" type="text/markdown" href="${ORIGIN}/llms-full.txt" title="Mingle full documentation for LLMs">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1C1C1F" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="article">
+<meta property="og:title" content="${esc(c.title)}">
+<meta property="og:description" content="${esc(c.description)}">
+<meta property="og:url" content="${ORIGIN}${c.path}">
+<meta property="og:image" content="${ORIGIN}${og}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+${techArticleJsonLd({ title: c.title, description: c.description, lang: t.lang, path: c.path, og })}
+${breadcrumbJsonLd([
+  [ui.breadcrumbHome, t.path],
+  [ui.compareNav, c.path],
+])}
+${faqJsonLd(c.faq)}
+<link rel="stylesheet" href="/styles.css?v=${version}">
+<script>document.documentElement.classList.add("js")</script>
+<script defer src="/main.js?v=${version}"></script>
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="${t.path}"><img src="/favicon.svg" alt="" width="26" height="26">Mingle</a>
+    <nav class="nav-links"><a href="${t.path}">${ui.backHome}</a><a href="#comparison">${c.tableEyebrow}</a><a href="#matrix">${ui.matrixEyebrow}</a><a href="#fit">${c.fitEyebrow}</a><a href="${securityPage[key].path}">${ui.securityNav}</a></nav>
+    <div class="nav-end">
+      <div class="langs">${langLinks}</div>
+      <a class="icon-link" href="${REPO}" aria-label="GitHub">${githubIcon}</a>
+      <a class="btn btn-small btn-primary" href="#download">${t.download}</a>
+    </div>
+  </div>
+</header>
+
+<main>
+<section class="hero guide-hero">
+  <div class="wrap">
+    <div class="hero-head">
+      <nav class="crumb rise" aria-label="Breadcrumb"><a href="${t.path}">${ui.breadcrumbHome}</a><span aria-hidden="true">/</span><span>${ui.compareNav}</span></nav>
+      <p class="eyebrow rise">${esc(c.eyebrow)}</p>
+      <h1 class="rise">${c.h1}</h1>
+      <p class="lead rise">${esc(c.lead)}</p>
+      <div class="cta rise">
+        <a class="btn btn-primary" href="#matrix">${ui.matrixTitle}</a>
+        <a class="btn" href="${securityPage[key].path}">${ui.securityNav} →</a>
+      </div>
+      <p class="meta rise">v${version} · ${esc(c.metaNote)}</p>
+    </div>
+  </div>
+</section>
+
+<section id="comparison" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${esc(c.tableEyebrow)}</p>
+    <h2>${esc(c.tableTitle)}</h2>
+    <div class="data-table-wrap reveal">
+      <table class="data-table">
+        <thead><tr>${c.tableHeaders.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${c.tableRows.map(([k, ...vals]) => `<tr><th scope="row">${esc(k)}</th>${vals.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="matrix" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${ui.matrixEyebrow}</p>
+    <h2>${ui.matrixTitle}</h2>
+    <p class="lead">${ui.matrixLead}</p>
+    <div class="data-table-wrap reveal">
+      <table class="data-table">
+        <thead><tr>${c.matrixHeaders.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${c.matrixRows
+            .map(
+              ([id, ...vals]) =>
+                `<tr><th scope="row"><a class="table-app-link" href="${integrationPath(key, id)}">${platformIcon(id, 22)}<span>${esc(t.platforms[id])}</span></a></th>${vals.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="fit" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${esc(c.fitEyebrow)}</p>
+    <h2>${esc(c.fitTitle)}</h2>
+    <ul class="table table-2 reveal">
+      ${c.fitPoints.map(([title, body]) => `<li><h3>${esc(title)}</h3><p>${esc(body)}</p></li>`).join("")}
+    </ul>
+  </div>
+</section>
+
+<section id="faq" class="section">
+  <div class="wrap split faq-split">
+    <div>
+      <p class="eyebrow">${ui.faqEyebrow}</p>
+      <h2>${ui.faqTitle}</h2>
+    </div>
+    <dl class="faq reveal">
+      ${c.faq.map(([q, a]) => `<div><dt>${esc(q)}</dt><dd>${esc(a)}</dd></div>`).join("")}
+    </dl>
+  </div>
+</section>
+
+<section id="harnesses" class="section">
+  <div class="wrap">
+    <p class="eyebrow">${ui.otherHarnessesEyebrow}</p>
+    <h2>${ui.otherHarnessesTitle}</h2>
+    <p class="lead">${ui.otherHarnessesLead}</p>
+    <ul class="related-apps reveal">${harnessLinks}</ul>
+    <p class="note"><a href="${securityPage[key].path}">${ui.securityNav} →</a> · <a href="${t.path}">${ui.seeAll} →</a></p>
+  </div>
+</section>
+
+${downloadSection(t)}
+</main>
+
+${topicFooter(key, t, (k) => comparePage[k].path)}
 </body>
 </html>
 `;
@@ -820,6 +1329,15 @@ Build from source (Node.js 24, pnpm): \`git clone ${REPO}.git && cd Mingle && pn
 ## Integration guides
 
 ${integrationOrder.map((id) => `- [${t.platforms[id]}](${ORIGIN}${integrationPath("en", id)}): ${integrations.en[id].transportNote} (Chinese: ${ORIGIN}${integrationPath("zh", id)})`).join("\n")}
+
+## Coding agent harness guides
+
+${harnessPageOrder.map((slug) => `- [${harnessPages.en[slug].name}](${ORIGIN}${slugPath("en", slug)}): ${harnessPages.en[slug].metaNote} (Chinese: ${ORIGIN}${slugPath("zh", slug)})`).join("\n")}
+
+## Architecture & comparison
+
+- [Security & architecture](${ORIGIN}${securityPage.en.path}): ${securityPage.en.metaNote} (Chinese: ${ORIGIN}${securityPage.zh.path})
+- [Comparison & 10-channel capability matrix](${ORIGIN}${comparePage.en.path}): ${comparePage.en.metaNote} (Chinese: ${ORIGIN}${comparePage.zh.path})
 
 ## Docs
 
@@ -918,8 +1436,20 @@ function llmsFull() {
 
 Mingle never calls an LLM API itself—it drives whichever local coding agent harness you already installed and signed in to (subscription or API key), with console support for installing, signing in, updating, and viewing quota:
 
-- **Tested end to end**: Claude Code, Codex, OpenCode, Kimi Code
+- **Tested end to end**: Claude Code (${ORIGIN}/claude-code/), Codex (${ORIGIN}/codex/), OpenCode (${ORIGIN}/opencode/), Kimi Code (${ORIGIN}/kimi-code/)
 - **All 14 harnesses**: ${harnesses.map(([, n]) => n).join(", ")}
+
+## Comparison: Mingle vs. alternatives (${ORIGIN}${comparePage.en.path})
+
+| ${comparePage.en.tableHeaders.join(" | ")} |
+| ${comparePage.en.tableHeaders.map(() => "---").join(" | ")} |
+${comparePage.en.tableRows.map((row) => `| ${row.join(" | ")} |`).join("\n")}
+
+## Security & architecture (${ORIGIN}${securityPage.en.path})
+
+| ${securityPage.en.factsHeaders.join(" | ")} |
+| ${securityPage.en.factsHeaders.map(() => "---").join(" | ")} |
+${securityPage.en.factsRows.map((row) => `| ${row.join(" | ")} |`).join("\n")}
 
 ## Channel capability matrix (10 platforms)
 
@@ -969,10 +1499,26 @@ for (const key of Object.keys(copy)) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "index.html"), integrationPage(key, id));
   }
+  for (const slug of harnessPageOrder) {
+    const dir = key === "en" ? join(OUT, slug) : join(OUT, key, slug);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "index.html"), harnessPage(key, slug));
+  }
+  const secDir = key === "en" ? join(OUT, "security") : join(OUT, key, "security");
+  mkdirSync(secDir, { recursive: true });
+  writeFileSync(join(secDir, "index.html"), securityPageHtml(key));
+  const cmpDir = key === "en" ? join(OUT, "compare") : join(OUT, key, "compare");
+  mkdirSync(cmpDir, { recursive: true });
+  writeFileSync(join(cmpDir, "index.html"), comparePageHtml(key));
 }
 for (const id of integrationOrder) {
   sitemapPairs.push([integrationPath("en", id), integrationPath("zh", id)]);
 }
+for (const slug of harnessPageOrder) {
+  sitemapPairs.push([slugPath("en", slug), slugPath("zh", slug)]);
+}
+sitemapPairs.push([securityPage.en.path, securityPage.zh.path]);
+sitemapPairs.push([comparePage.en.path, comparePage.zh.path]);
 writeFileSync(join(OUT, "llms.txt"), llms());
 writeFileSync(join(OUT, "llms-full.txt"), llmsFull());
 writeFileSync(

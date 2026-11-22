@@ -93,6 +93,9 @@ const configs = [
   ["en-slack", "/slack/", "light", 1440],
   ["en-github", "/github/", "dark", 1440],
   ["zh-feishu", "/zh/feishu/", "dark", 390],
+  ["en-claude-code", "/claude-code/", "light", 1440],
+  ["zh-security", "/zh/security/", "dark", 1440],
+  ["en-compare", "/compare/", "light", 390],
 ];
 
 let failed = false;
