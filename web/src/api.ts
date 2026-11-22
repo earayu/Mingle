@@ -23,16 +23,27 @@ export class ApiError extends Error {
   }
 }
 
+const MAX_ETAG_CACHE = 128;
+const etagCache = new Map<string, { etag: string; value: unknown }>();
+
+export function clearResponseCache(): void {
+  etagCache.clear();
+}
+
 async function call<T>(method: string, path: string, body?: unknown, remote?: string): Promise<T> {
   if (remote) path = `/v1/admin/ssh/${remote}/${path.slice("/v1/admin/".length)}`;
   let response: Response;
   // Raw bytes (a picture) go as they are; everything else is JSON.
   const raw = body instanceof Blob;
+  const token = sessionStorage.getItem(TOKEN_KEY) ?? "";
+  const cacheKey = method === "GET" ? `${token}\0${path}` : null;
+  const cached = cacheKey ? etagCache.get(cacheKey) : undefined;
   try {
     response = await fetch(path, {
       method,
       headers: {
-        authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) ?? ""}`,
+        authorization: `Bearer ${token}`,
+        ...(cached ? { "if-none-match": cached.etag } : {}),
         ...(body !== undefined ? { "content-type": raw ? body.type : "application/json" } : {}),
       },
       ...(body !== undefined ? { body: raw ? body : JSON.stringify(body) } : {}),
@@ -40,10 +51,28 @@ async function call<T>(method: string, path: string, body?: unknown, remote?: st
   } catch {
     throw new ApiError("offline", "", 0);
   }
+  if (response.status === 304 && cached) {
+    // Refresh recency and return the exact previous object reference so React skips re-renders.
+    etagCache.delete(cacheKey as string);
+    etagCache.set(cacheKey as string, cached);
+    return cached.value as T;
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) etagCache.clear();
     const error = payload as { error?: string; next?: string };
     throw new ApiError(error.error ?? "http_error", error.next ?? response.statusText, response.status);
+  }
+  if (cacheKey) {
+    const etag = response.headers.get("etag");
+    if (etag) {
+      etagCache.delete(cacheKey);
+      if (etagCache.size >= MAX_ETAG_CACHE) {
+        const oldest = etagCache.keys().next().value;
+        if (oldest !== undefined) etagCache.delete(oldest);
+      }
+      etagCache.set(cacheKey, { etag, value: payload });
+    }
   }
   return payload as T;
 }

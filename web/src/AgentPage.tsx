@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AgentEnv } from "./AgentEnv.tsx";
 import type { Navigate } from "./App.tsx";
 import {
@@ -18,7 +18,7 @@ import {
   type Reminder,
   type Task,
 } from "./api.ts";
-import { PrivateChat } from "./Chat.tsx";
+import { PrivateChat, prefetchChat } from "./Chat.tsx";
 import {
   BotPage,
   ChatAppList,
@@ -28,7 +28,7 @@ import {
   focusChatAppRow,
   ReconnectButton,
 } from "./ChatApps.tsx";
-import { fetchCached, peek, remember, useCached } from "./cache.ts";
+import { fetchCached, peek, prefetchCached, reconcileList, remember, useCached } from "./cache.ts";
 import { HandoffItem, HandoffSection } from "./Handoff.tsx";
 import { errorText, type MessageKey, statusDetailText, type Translate, useI18n } from "./i18n.ts";
 import { ModelPicker } from "./NewAgent.tsx";
@@ -73,7 +73,7 @@ type WorkData = { tasks: Task[]; reminders: Reminder[] };
 type Tab = "activity" | "chat" | "settings";
 const TABS: readonly Tab[] = ["activity", "chat", "settings"];
 
-export function AgentPage({
+export const AgentPage = memo(function AgentPage({
   agent,
   requestedTab,
   onNavigate,
@@ -91,7 +91,7 @@ export function AgentPage({
     () => peek<Conversation[]>(`conversations:${agent.id}`) ?? null,
   );
   // Every message the activity holds, for what needs the owner and the getting-started card.
-  const activity = conversations?.flatMap((c) => c.messages) ?? null;
+  const activity = useMemo(() => conversations?.flatMap((c) => c.messages) ?? null, [conversations]);
   const [work, setWork] = useState<WorkData | null>(() => peek<WorkData>(`work:${agent.id}`) ?? null);
   const [handoffs, setHandoffs] = useState<HandoffView[] | null>(
     () => peek<HandoffView[]>(`handoffs:${agent.id}`) ?? null,
@@ -145,28 +145,35 @@ export function AgentPage({
   // Each resource guards itself: a slow call is not superseded by the next poll, and one
   // request in flight does not hold back the other resource. `fresh` lets a remount read
   // again even if a previous mount's read is still resolving; only the latest read caches.
+  const includeHandoffs = tab !== "chat";
   const refreshActivity = useCallback(async () => {
     if (activityPending.current) return;
     activityPending.current = true;
     try {
       const [items, handed] = await Promise.all([
         fetchCached(`conversations:${agent.id}`, () => api.conversations(agent.id), true),
-        fetchCached(`handoffs:${agent.id}`, () => api.handoffs(agent.id), true),
+        includeHandoffs ? fetchCached(`handoffs:${agent.id}`, () => api.handoffs(agent.id), true) : null,
       ]);
-      setConversations(items);
-      setHandoffs(handed);
+      setConversations((prev) => reconcileList(prev, items, (c) => c.chat.id));
+      if (handed !== null) setHandoffs((prev) => reconcileList(prev, handed, (h) => h.id));
       setActivityError(false);
     } catch {
       setActivityError(true);
     } finally {
       activityPending.current = false;
     }
-  }, [agent.id]);
+  }, [agent.id, includeHandoffs]);
   const refreshWork = useCallback(async () => {
     if (workPending.current) return;
     workPending.current = true;
     try {
-      setWork(await fetchCached(`work:${agent.id}`, () => api.work(agent.id), true));
+      const next = await fetchCached(`work:${agent.id}`, () => api.work(agent.id), true);
+      setWork((prev) => {
+        if (!prev || prev === next) return next;
+        const tasks = reconcileList(prev.tasks, next.tasks, (item) => item.id);
+        const reminders = reconcileList(prev.reminders, next.reminders, (item) => item.id);
+        return tasks === prev.tasks && reminders === prev.reminders ? prev : { tasks, reminders };
+      });
       setWorkError(false);
     } catch {
       setWorkError(true);
@@ -213,7 +220,9 @@ export function AgentPage({
   useEffect(() => {
     if (requestedTab) setTab(requestedTab.tab);
   }, [requestedTab]);
-  usePolling(refresh, 2500);
+  // Poll the active view briskly and ease off background tabs; ETag 304 keeps unchanged ticks free.
+  usePolling(refreshActivity, tab === "activity" ? 2500 : 8000);
+  usePolling(refreshWork, tab === "activity" ? 2500 : 6000);
 
   // A notice answers one click; it must not outlive what it describes.
   useEffect(() => {
@@ -263,58 +272,93 @@ export function AgentPage({
     await onChanged();
     refresh();
   };
-  const retry = async (ids: string[]) => {
-    try {
-      const { retried, offline } = await api.retry(agent.id, ids);
-      const bots = agent.connections
-        .filter((c) => offline.includes(c.id))
-        .map((c) => c.bot ?? t(`platform.${c.platform}` as MessageKey));
-      setNotice(
-        retried.length > 0
-          ? t("agent.retrying", { count: String(retried.length), name: agent.name })
-          : bots.length > 0
-            ? t("agent.retryOffline", { bot: bots.join(", ") })
-            : t("agent.retryNothing"),
-      );
-    } catch (error) {
-      setNotice(errorText(t, error));
-    }
-    refresh();
-  };
-  const ignore = async (ids: string[]) => {
-    try {
-      const { ignored } = await api.ignore(agent.id, ids);
-      const changed = new Set(ignored);
-      setConversations(
-        (items) =>
-          items?.map((c) => ({
-            ...c,
-            messages: c.messages.map((m) => (changed.has(m.id) ? { ...m, state: "ignored" } : m)),
-          })) ?? null,
-      );
-      setNotice(
-        ignored.length ? t("agent.ignoredNotice", { count: String(ignored.length) }) : t("agent.ignoreUnchanged"),
-      );
-    } catch (error) {
-      setNotice(errorText(t, error));
-    }
-    refresh();
-  };
-  const decide = async (request: AccessRequest, access: "allowed" | "blocked") => {
-    const name = requestName(t, request);
-    try {
-      await api.setAccess(agent.id, request.kind, request.id, access);
-      setNotice(t(access === "allowed" ? "needs.allowed" : "needs.declined", { name, agent: agent.name }));
-    } catch (error) {
-      setNotice(errorText(t, error));
-    }
-    await onChanged();
-    refresh();
-  };
-  const connect = () => onNavigate({ kind: "connect", slug: agent.slug });
-  const unanswered = (activity ?? []).filter((m) => m.direction === "in" && m.state === "unanswered");
-  const failed = (activity ?? []).filter((m) => m.direction === "in" && m.state === "failed");
-  const troubled = agent.connections.filter((c) => c.state === "error" || c.state === "awaiting_approval");
+  const retry = useCallback(
+    async (ids: string[]) => {
+      try {
+        const { retried, offline } = await api.retry(agent.id, ids);
+        const bots = agent.connections
+          .filter((c) => offline.includes(c.id))
+          .map((c) => c.bot ?? t(`platform.${c.platform}` as MessageKey));
+        setNotice(
+          retried.length > 0
+            ? t("agent.retrying", { count: String(retried.length), name: agent.name })
+            : bots.length > 0
+              ? t("agent.retryOffline", { bot: bots.join(", ") })
+              : t("agent.retryNothing"),
+        );
+      } catch (error) {
+        setNotice(errorText(t, error));
+      }
+      refresh();
+    },
+    [agent.connections, agent.id, agent.name, refresh, t],
+  );
+  const ignore = useCallback(
+    async (ids: string[]) => {
+      try {
+        const { ignored } = await api.ignore(agent.id, ids);
+        const changed = new Set(ignored);
+        setConversations(
+          (items) =>
+            items?.map((c) => ({
+              ...c,
+              messages: c.messages.map((m) => (changed.has(m.id) ? { ...m, state: "ignored" } : m)),
+            })) ?? null,
+        );
+        setNotice(
+          ignored.length ? t("agent.ignoredNotice", { count: String(ignored.length) }) : t("agent.ignoreUnchanged"),
+        );
+      } catch (error) {
+        setNotice(errorText(t, error));
+      }
+      refresh();
+    },
+    [agent.id, refresh, t],
+  );
+  const decide = useCallback(
+    async (request: AccessRequest, access: "allowed" | "blocked") => {
+      const name = requestName(t, request);
+      try {
+        await api.setAccess(agent.id, request.kind, request.id, access);
+        setNotice(t(access === "allowed" ? "needs.allowed" : "needs.declined", { name, agent: agent.name }));
+      } catch (error) {
+        setNotice(errorText(t, error));
+      }
+      await onChanged();
+      refresh();
+    },
+    [agent.id, agent.name, onChanged, refresh, t],
+  );
+  const connect = useCallback(() => onNavigate({ kind: "connect", slug: agent.slug }), [agent.slug, onNavigate]);
+  const openChatTab = useCallback(() => setTab("chat"), []);
+  const prefetchTab = useCallback(
+    (next: Tab) => {
+      if (next === "chat") {
+        prefetchChat(agent.id);
+      } else if (next === "settings") {
+        prefetchCached(`env:${agent.id}`, () => api.env(agent.id), 10_000);
+        prefetchCached("harnesses", api.harnesses, 15_000);
+        prefetchCached(`contacts:${agent.id}`, () => api.contacts(agent.id), 10_000);
+      } else {
+        prefetchCached(`conversations:${agent.id}`, () => api.conversations(agent.id));
+        prefetchCached(`handoffs:${agent.id}`, () => api.handoffs(agent.id));
+        prefetchCached(`work:${agent.id}`, () => api.work(agent.id));
+      }
+    },
+    [agent.id],
+  );
+  const unansweredIds = useMemo(
+    () => (activity ?? []).filter((m) => m.direction === "in" && m.state === "unanswered").map((m) => m.id),
+    [activity],
+  );
+  const failedIds = useMemo(
+    () => (activity ?? []).filter((m) => m.direction === "in" && m.state === "failed").map((m) => m.id),
+    [activity],
+  );
+  const troubled = useMemo(
+    () => agent.connections.filter((c) => c.state === "error" || c.state === "awaiting_approval"),
+    [agent.connections],
+  );
 
   // With no bot left, the side panel is where to add one again (the getting-started card is gone by then).
   const hasNeeds =
@@ -322,13 +366,13 @@ export function AgentPage({
     agent.hasReplied ||
     troubled.length > 0 ||
     agent.requests.length > 0 ||
-    unanswered.length > 0 ||
-    failed.length > 0;
+    unansweredIds.length > 0 ||
+    failedIds.length > 0;
   const needsYou = hasNeeds ? (
     <NeedsYou
       agent={agent}
-      unanswered={unanswered.map((m) => m.id)}
-      failed={failed.map((m) => m.id)}
+      unanswered={unansweredIds}
+      failed={failedIds}
       troubled={troubled}
       onRetry={retry}
       onIgnore={ignore}
@@ -356,6 +400,7 @@ export function AgentPage({
               label={t("agent.view")}
               value={tab}
               onChange={setTab}
+              onPrefetch={prefetchTab}
               // Each neighbour of the tab shown carries the key that goes to it.
               options={TABS.map((value, i) => {
                 const step = i - TABS.indexOf(tab);
@@ -397,7 +442,7 @@ export function AgentPage({
             onIgnore={ignore}
           />
         ) : (
-          <div ref={scrollerRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+          <div ref={scrollerRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
             <div className="flex max-w-[680px] flex-col gap-7 px-6 py-6 md:px-8">
               {agent.remote?.reachable === false ? <Unreachable id={agent.remote.id} onReady={onChanged} /> : null}
               {notice ? <p className="rise -mb-3 text-small text-ink2">{notice}</p> : null}
@@ -539,7 +584,7 @@ export function AgentPage({
                         handoffs={handoffs ?? []}
                         onRetry={retry}
                         onIgnore={ignore}
-                        onOpenChat={() => setTab("chat")}
+                        onOpenChat={openChatTab}
                       />
                     ) : activityError ? null : (
                       <div className="flex flex-col items-start gap-3 rounded-card border border-line bg-bg2 p-5">
@@ -580,7 +625,7 @@ export function AgentPage({
             </div>
           </div>
         )}
-        <aside className="hidden w-[320px] shrink-0 flex-col gap-6 overflow-y-auto border-l border-line bg-wing px-4 py-5 min-[1140px]:flex">
+        <aside className="hidden w-[320px] shrink-0 flex-col gap-6 overflow-y-auto overscroll-contain border-l border-line bg-wing px-4 py-5 min-[1140px]:flex">
           {needsYou}
           {/* Settings lists the same bots with their controls; the panel glances at them only beside the activity. */}
           {tab === "activity" && agent.connections.length ? (
@@ -598,7 +643,7 @@ export function AgentPage({
       </div>
     </>
   );
-}
+});
 
 /** Until the agent has answered someone: the steps that get it there, and where it is. */
 function GettingStarted({
@@ -753,7 +798,7 @@ function KeepOnline() {
   );
 }
 
-function NeedsYou({
+const NeedsYou = memo(function NeedsYou({
   agent,
   unanswered,
   failed,
@@ -843,7 +888,7 @@ function NeedsYou({
       )}
     </Section>
   );
-}
+});
 
 /** What to call a person or group asking to talk to the agent. */
 function requestName(t: ReturnType<typeof useI18n>["t"], r: { kind: string; name: string | null }): string {
@@ -960,7 +1005,7 @@ function LoadProblem({ title, onRetry }: { title: string; onRetry: () => Promise
   );
 }
 
-function Work({
+const Work = memo(function Work({
   agentId,
   work,
   error,
@@ -1077,7 +1122,7 @@ function Work({
       </Section>
     </>
   );
-}
+});
 
 /** Failed checks in a row before a reminder shows it, as many as it takes to tell the agent (docs/spec.md 4.6). */
 const CHECK_FAILING = 3;
@@ -1810,7 +1855,7 @@ function needs(messages: Activity[]): { failed: number; unanswered: number; held
   };
 }
 
-function ActivityList({
+const ActivityList = memo(function ActivityList({
   agent,
   conversations,
   handoffs,
@@ -1826,10 +1871,10 @@ function ActivityList({
   /** The private chat is read where it is written: its row opens it. */
   onOpenChat: () => void;
 }) {
-  const nodes = conversationTree(conversations);
+  const nodes = useMemo(() => conversationTree(conversations), [conversations]);
   // The newest conversation opens by itself: what just happened reads at once, as the timeline did.
   // Not the private chat: it opens on its own tab.
-  const newest = nodes.find((n) => n.platform !== "local");
+  const newest = useMemo(() => nodes.find((n) => n.platform !== "local"), [nodes]);
   const [open, setOpen] = useState<Set<string>>(() => new Set(newest ? [newest.key] : []));
   const seeded = useRef(Boolean(newest));
   useEffect(() => {
@@ -1837,22 +1882,28 @@ function ActivityList({
     seeded.current = true;
     setOpen(new Set([newest.key]));
   }, [newest]);
-  const toggle = (key: string) =>
-    setOpen((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  const toggle = useCallback(
+    (key: string) =>
+      setOpen((current) => {
+        const next = new Set(current);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      }),
+    [],
+  );
   // Handoffs go in among the conversations by time, no further back than the conversations shown reach.
-  const oldest = conversations.length >= 20 ? Math.min(...conversations.map((c) => c.latestAt)) : 0;
-  const rows: (
-    | { kind: "chat"; at: number; node: ConversationNode }
-    | { kind: "handoff"; at: number; h: HandoffView }
-  )[] = [
-    ...nodes.map((node) => ({ kind: "chat" as const, at: node.latestAt, node })),
-    ...handoffs.filter((h) => h.createdAt >= oldest).map((h) => ({ kind: "handoff" as const, at: h.createdAt, h })),
-  ].sort((a, b) => b.at - a.at);
+  const rows = useMemo(() => {
+    const oldest = conversations.length >= 20 ? Math.min(...conversations.map((c) => c.latestAt)) : 0;
+    const items: (
+      | { kind: "chat"; at: number; node: ConversationNode }
+      | { kind: "handoff"; at: number; h: HandoffView }
+    )[] = [
+      ...nodes.map((node) => ({ kind: "chat" as const, at: node.latestAt, node })),
+      ...handoffs.filter((h) => h.createdAt >= oldest).map((h) => ({ kind: "handoff" as const, at: h.createdAt, h })),
+    ];
+    return items.sort((a, b) => b.at - a.at);
+  }, [conversations, handoffs, nodes]);
   // Like a Mac list: ↑↓ move between rows, → opens, ← closes.
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const row = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-conversation]");
@@ -1879,7 +1930,15 @@ function ActivityList({
               key={row.node.key}
               agent={agent}
               node={row.node}
-              open={open}
+              expanded={open.has(row.node.key)}
+              openThreads={
+                row.node.threads.length
+                  ? row.node.threads
+                      .filter((th) => open.has(th.chat.id))
+                      .map((th) => th.chat.id)
+                      .join("\0")
+                  : ""
+              }
               onToggle={row.node.platform === "local" ? onOpenChat : toggle}
               onRetry={onRetry}
               onIgnore={onIgnore}
@@ -1889,26 +1948,32 @@ function ActivityList({
       </Group>
     </div>
   );
-}
+});
 
-function ConversationRow({
+const ConversationRow = memo(function ConversationRow({
   agent,
   node,
-  open,
+  expanded,
+  openThreads,
   onToggle,
   onRetry,
   onIgnore,
 }: {
   agent: AgentView;
   node: ConversationNode;
-  open: Set<string>;
+  expanded: boolean;
+  /** Null-delimited ids of expanded child threads; scalar prop keeps memo hits when another row toggles. */
+  openThreads: string;
   onToggle: (key: string) => void;
   onRetry: (ids: string[]) => Promise<void>;
   onIgnore: (ids: string[]) => Promise<void>;
 }) {
   const { t } = useI18n();
-  const expanded = open.has(node.key);
-  const all = [...(node.own?.messages ?? []), ...node.threads.flatMap((c) => c.messages)];
+  const openThreadSet = useMemo(() => (openThreads ? new Set(openThreads.split("\0")) : null), [openThreads]);
+  const all = useMemo(
+    () => [...(node.own?.messages ?? []), ...node.threads.flatMap((c) => c.messages)],
+    [node.own, node.threads],
+  );
   const kind = node.head.kind;
   const title =
     node.platform === "local"
@@ -1946,42 +2011,45 @@ function ConversationRow({
           {node.own ? (
             <ConversationMessages agent={agent} conversation={node.own} onRetry={onRetry} onIgnore={onIgnore} />
           ) : null}
-          {node.threads.map((thread) => (
-            <div key={thread.chat.id} className="ml-12 border-t border-line">
-              <ConversationHead
-                id={thread.chat.id}
-                thread
-                icon={
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-small border border-line2 text-ink3">
-                    <ThreadIcon />
-                  </span>
-                }
-                title={thread.chat.name || t("chat.thread")}
-                where={t("chat.thread")}
-                messages={thread.messages}
-                latestAt={thread.latestAt}
-                expanded={open.has(thread.chat.id)}
-                preview={thread.messages}
-                onToggle={onToggle}
-              />
-              {open.has(thread.chat.id) ? (
-                <div className="rise">
-                  <ConversationMessages
-                    agent={agent}
-                    conversation={thread}
-                    thread
-                    onRetry={onRetry}
-                    onIgnore={onIgnore}
-                  />
-                </div>
-              ) : null}
-            </div>
-          ))}
+          {node.threads.map((thread) => {
+            const threadOpen = openThreadSet?.has(thread.chat.id) ?? false;
+            return (
+              <div key={thread.chat.id} className="ml-12 border-t border-line">
+                <ConversationHead
+                  id={thread.chat.id}
+                  thread
+                  icon={
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-small border border-line2 text-ink3">
+                      <ThreadIcon />
+                    </span>
+                  }
+                  title={thread.chat.name || t("chat.thread")}
+                  where={t("chat.thread")}
+                  messages={thread.messages}
+                  latestAt={thread.latestAt}
+                  expanded={threadOpen}
+                  preview={thread.messages}
+                  onToggle={onToggle}
+                />
+                {threadOpen ? (
+                  <div className="rise">
+                    <ConversationMessages
+                      agent={agent}
+                      conversation={thread}
+                      thread
+                      onRetry={onRetry}
+                      onIgnore={onIgnore}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </div>
   );
-}
+});
 
 /** A conversation's row: where, what still needs the owner, when, and, closed, the last exchange. */
 function ConversationHead({

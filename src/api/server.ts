@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { hash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -662,6 +663,22 @@ export function createApi(mingle: Mingle): Hono<Env> {
     if (token !== mingle.adminToken)
       throw new MingleError("unauthorized", "admin token mismatch; is this the running Mingle?", 401);
     await next();
+    // Conditional GET for console polling: unchanged JSON answers 304 so the UI skips parsing and re-renders.
+    if (c.req.method !== "GET" || c.res.status !== 200) return;
+    if (!c.res.headers.get("content-type")?.includes("application/json")) return;
+    const body = Buffer.from(await c.res.arrayBuffer());
+    const etag = `W/"${body.byteLength.toString(36)}-${hash("sha1", body, "base64url")}"`;
+    const headers = new Headers(c.res.headers);
+    headers.set("etag", etag);
+    headers.set("cache-control", "no-cache");
+    const inm = c.req.header("if-none-match");
+    if (inm === etag || (inm?.includes(",") && inm.split(",").some((part) => part.trim() === etag))) {
+      headers.delete("content-type");
+      headers.delete("content-length");
+      c.res = new Response(null, { status: 304, headers });
+      return;
+    }
+    c.res = new Response(body, { status: 200, headers });
   });
 
   app.use("/v1/admin/*", remoteGateway(mingle.remotes));
@@ -975,15 +992,28 @@ export function createApi(mingle: Mingle): Hono<Env> {
     const shared = sharedOwners(connections);
     // The work a message started, or the line it went to (docs/spec.md 4.13).
     const lines = store.lineTasks(agent.id, 0);
+    const lineById = new Map<string, Task>();
+    const lineByMessage = new Map<string, Task>();
+    for (const task of lines) {
+      lineById.set(task.id, task);
+      if (task.fromMessage && !lineByMessage.has(task.fromMessage)) lineByMessage.set(task.fromMessage, task);
+    }
+    const contacts = new Map<string, Contact | undefined>();
+    const contactOf = (connectionId: string, senderId: string) => {
+      const key = `${connectionId}\0${senderId}`;
+      if (contacts.has(key)) return contacts.get(key);
+      const found = store.contactByPlatformId(connectionId, senderId);
+      contacts.set(key, found);
+      return found;
+    };
     const lineOf = (m: Message) => {
-      const task = m.lineTaskId ? lines.find((t) => t.id === m.lineTaskId) : lines.find((t) => t.fromMessage === m.id);
+      const task = m.lineTaskId ? lineById.get(m.lineTaskId) : lineByMessage.get(m.id);
       return task
         ? { id: task.id, title: task.title, state: lineState(task), started: task.fromMessage === m.id }
         : null;
     };
     return (m: Message & { chat: Chat; platform: Platform }) => {
-      const contact =
-        m.direction === "in" && m.senderId ? store.contactByPlatformId(m.chat.connectionId, m.senderId) : undefined;
+      const contact = m.direction === "in" && m.senderId ? contactOf(m.chat.connectionId, m.senderId) : undefined;
       const senderIsOwner = m.direction === "in" && owners.has(`${m.chat.connectionId}:${m.senderId}`);
       return {
         id: m.id,
@@ -1112,6 +1142,16 @@ export function createApi(mingle: Mingle): Hono<Env> {
       profile: k.profile,
     });
     const byPerson = new Map(store.agentPeople(agent.id).map((p) => [p.id, p]));
+    const membersByPerson = new Map<string, (typeof all)[number][]>();
+    for (const k of all) {
+      if (!k.personId) continue;
+      let group = membersByPerson.get(k.personId);
+      if (!group) {
+        group = [];
+        membersByPerson.set(k.personId, group);
+      }
+      group.push(k);
+    }
     const seen = new Set<string>();
     const entries: unknown[] = [];
     for (const k of all) {
@@ -1122,7 +1162,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
       if (seen.has(k.personId)) continue;
       seen.add(k.personId);
       const person = byPerson.get(k.personId);
-      const members = all.filter((m) => m.personId === k.personId);
+      const members = membersByPerson.get(k.personId) ?? [];
       entries.push({
         person: k.personId,
         name: person?.name ?? null,
@@ -1262,14 +1302,29 @@ export function createApi(mingle: Mingle): Hono<Env> {
     const agent = mingle.agent(c.req.param("id"));
     // Open tasks, and the work its lines finished in the last day.
     const lines = store.lineTasks(agent.id, Date.now() - 86_400_000);
-    const open = store.tasks(agent.id, false).filter((t) => !lines.some((l) => l.id === t.id));
+    const lineIds = new Set(lines.map((l) => l.id));
+    const open = store.tasks(agent.id, false).filter((t) => !lineIds.has(t.id));
+    const chats = new Map<string, Chat | undefined>();
+    const connections = new Map<string, Connection | undefined>();
+    const chatOf = (id: string) => {
+      if (chats.has(id)) return chats.get(id);
+      const found = store.chat(id);
+      chats.set(id, found);
+      return found;
+    };
+    const connectionOf = (id: string) => {
+      if (connections.has(id)) return connections.get(id);
+      const found = store.connection(id);
+      connections.set(id, found);
+      return found;
+    };
     const tasks = [...open, ...lines]
       .filter((t) => t.status !== "closed")
       // Work under way first, oldest first; what finished today after it.
       .sort((a, b) => Number(a.status === "done") - Number(b.status === "done") || a.createdAt - b.createdAt)
       .map((t) => {
-        const chat = t.fromChat ? store.chat(t.fromChat) : undefined;
-        const platform = chat ? store.connection(chat.connectionId)?.platform : undefined;
+        const chat = t.fromChat ? chatOf(t.fromChat) : undefined;
+        const platform = chat ? connectionOf(chat.connectionId)?.platform : undefined;
         return {
           id: t.id,
           title: t.title,
@@ -1317,8 +1372,14 @@ export function createApi(mingle: Mingle): Hono<Env> {
   /** One message of the private chat as the console shows it. Mingle's own notices are left out. */
   const chatMessageView = (agent: Agent) => {
     const lines = store.lineTasks(agent.id, 0);
+    const lineById = new Map<string, Task>();
+    const lineByMessage = new Map<string, Task>();
+    for (const task of lines) {
+      lineById.set(task.id, task);
+      if (task.fromMessage && !lineByMessage.has(task.fromMessage)) lineByMessage.set(task.fromMessage, task);
+    }
     return (m: Message) => {
-      const task = m.lineTaskId ? lines.find((t) => t.id === m.lineTaskId) : lines.find((t) => t.fromMessage === m.id);
+      const task = m.lineTaskId ? lineById.get(m.lineTaskId) : lineByMessage.get(m.id);
       return {
         id: m.id,
         direction: m.direction,
@@ -1413,7 +1474,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
     return c.body(readFileSync(file.ref), 200, {
       "content-type": file.mime ?? mimeOf(file.name) ?? "application/octet-stream",
       "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
-      "cache-control": "private, max-age=3600",
+      "cache-control": "private, max-age=31536000, immutable",
       "cross-origin-resource-policy": "same-origin",
       "x-content-type-options": "nosniff",
     });
@@ -1683,10 +1744,20 @@ export function serveConsole(app: Hono<Env>): boolean {
   ];
   const root = candidates.find((dir) => existsSync(resolve(dir, "index.html")));
   if (!root) return false;
+  app.use("/assets/*", async (c, next) => {
+    await next();
+    if (c.res.status === 200) c.res.headers.set("cache-control", "public, max-age=31536000, immutable");
+  });
   app.use("/assets/*", serveStatic({ root }));
   const index = serveStatic({ root, path: "index.html" });
   // Everything that is not the API is the single-page console.
-  app.get("*", (c, next) => (c.req.path.startsWith("/v1/") ? next() : index(c, next)));
+  app.get("*", async (c, next) => {
+    if (c.req.path.startsWith("/v1/")) return next();
+    const res = await index(c, next);
+    const out = res ?? c.res;
+    if (out.status === 200) out.headers.set("cache-control", "no-cache");
+    return res;
+  });
   return true;
 }
 

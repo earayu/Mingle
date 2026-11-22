@@ -185,6 +185,14 @@ code {
   [role="button"] {
     cursor: pointer;
   }
+  button,
+  a,
+  [role="button"],
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
 }
 
 /* One look for selects in every engine; the chevron is two gradients so it follows the theme. */

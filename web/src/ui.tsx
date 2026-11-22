@@ -1,6 +1,7 @@
 import {
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
+  memo,
   type ReactNode,
   type Ref,
   type SelectHTMLAttributes,
@@ -108,16 +109,20 @@ export function Segmented<T extends string>({
   value,
   options,
   onChange,
+  onPrefetch,
   label,
 }: {
   value: T;
   options: { value: T; label: string; keys?: Keys }[];
   onChange: (value: T) => void;
+  /** Warm the target view when the pointer or focus rests on an inactive choice. */
+  onPrefetch?: (value: T) => void;
   label: string;
 }) {
   return (
     <div role="radiogroup" aria-label={label} className="inline-flex rounded-control bg-bg3 p-0.5">
       {options.map((o) => {
+        const warm = onPrefetch && o.value !== value ? () => onPrefetch(o.value) : undefined;
         const choice = (
           // biome-ignore lint/a11y/useSemanticElements: a styled choice; a native radio cannot take this look
           <button
@@ -127,6 +132,8 @@ export function Segmented<T extends string>({
             aria-checked={value === o.value}
             aria-keyshortcuts={o.keys ? keysAria(o.keys) : undefined}
             onClick={() => onChange(o.value)}
+            onPointerEnter={warm}
+            onFocus={warm}
             className="h-7 rounded-small px-3 text-small text-ink2 transition-colors duration-[120ms] aria-checked:bg-card aria-checked:font-medium aria-checked:text-ink aria-checked:shadow-card"
           >
             {o.label}
@@ -334,11 +341,19 @@ const dot: Record<string, string> = {
   paused: "border-[1.5px] border-ink3",
 };
 
-export function StatusDot({ state }: { state: string }) {
+export const StatusDot = memo(function StatusDot({ state }: { state: string }) {
   return <span aria-hidden className={`inline-block size-2 shrink-0 rounded-full ${dot[state] ?? "bg-ink3"}`} />;
-}
+});
 
-export function Avatar({ name, src, size = 32 }: { name: string; src?: string | null; size?: number }) {
+export const Avatar = memo(function Avatar({
+  name,
+  src,
+  size = 32,
+}: {
+  name: string;
+  src?: string | null;
+  size?: number;
+}) {
   const [broken, setBroken] = useState<string | null>(null);
   const radius = Math.round(size * 0.28);
   if (src && broken !== src) {
@@ -348,6 +363,7 @@ export function Avatar({ name, src, size = 32 }: { name: string; src?: string | 
         src={src}
         width={size}
         height={size}
+        decoding="async"
         draggable={false}
         onError={() => setBroken(src)}
         style={{ width: size, height: size, borderRadius: radius }}
@@ -375,7 +391,7 @@ export function Avatar({ name, src, size = 32 }: { name: string; src?: string | 
       {initial}
     </span>
   );
-}
+});
 
 export function Spinner({ size = 14 }: { size?: number }) {
   return (
@@ -565,11 +581,20 @@ export function MoreMenu({
       menu.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]') ??
       menu.current?.querySelector<HTMLButtonElement>("button")
     )?.focus({ preventScroll: true });
-    addEventListener("resize", place);
-    addEventListener("scroll", place, true);
+    let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        place();
+      });
+    };
+    addEventListener("resize", schedule, { passive: true });
+    addEventListener("scroll", schedule, { capture: true, passive: true });
     return () => {
-      removeEventListener("resize", place);
-      removeEventListener("scroll", place, true);
+      if (frame) cancelAnimationFrame(frame);
+      removeEventListener("resize", schedule);
+      removeEventListener("scroll", schedule, true);
     };
   }, [open, trigger]);
   useEffect(() => {
@@ -695,7 +720,7 @@ export function HelpTip({ label, children }: { label: string; children: ReactNod
   );
 }
 
-export function AgentStatusText({
+export const AgentStatusText = memo(function AgentStatusText({
   status,
   detail,
   where,
@@ -721,7 +746,7 @@ export function AgentStatusText({
       </span>
     </span>
   );
-}
+});
 
 /** Copy text, falling back to a hidden text area where the clipboard API is not offered (some webviews). */
 export async function copyText(text: string): Promise<boolean> {
@@ -902,33 +927,111 @@ export const ChatIcon = (p: { className?: string }) => (
 );
 
 // ------------------------------------------------------------------ time
+// Intl formatters are expensive to construct; reuse one per locale so lists render without jank.
+
+function cachedFormatter<T>(map: Map<string, T>, key: string, create: () => T): T {
+  let formatter = map.get(key);
+  if (!formatter) {
+    formatter = create();
+    map.set(key, formatter);
+  }
+  return formatter;
+}
+
+const timeFmt = new Map<string, Intl.DateTimeFormat>();
+const weekdayFmt = new Map<string, Intl.DateTimeFormat>();
+const monthDayFmt = new Map<string, Intl.DateTimeFormat>();
+const dayThisYearFmt = new Map<string, Intl.DateTimeFormat>();
+const dayOtherYearFmt = new Map<string, Intl.DateTimeFormat>();
+const relTimeFmt = new Map<string, Intl.RelativeTimeFormat>();
+const intFmt = new Map<string, Intl.NumberFormat>();
+const decFmt = new Map<string, Intl.NumberFormat>();
+
+const getTimeFmt = (locale: string) =>
+  cachedFormatter(
+    timeFmt,
+    locale,
+    () => new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hour12: false }),
+  );
+const getWeekdayFmt = (locale: string) =>
+  cachedFormatter(weekdayFmt, locale, () => new Intl.DateTimeFormat(locale, { weekday: "short" }));
+const getMonthDayFmt = (locale: string) =>
+  cachedFormatter(monthDayFmt, locale, () => new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }));
+const getDayFmt = (locale: string, sameYear: boolean) =>
+  sameYear
+    ? cachedFormatter(
+        dayThisYearFmt,
+        locale,
+        () => new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", weekday: "short" }),
+      )
+    : cachedFormatter(
+        dayOtherYearFmt,
+        locale,
+        () => new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", weekday: "short", year: "numeric" }),
+      );
+const getRelFmt = (locale: string) =>
+  cachedFormatter(relTimeFmt, locale, () => new Intl.RelativeTimeFormat(locale, { numeric: "auto" }));
+
+/** "09:00", formatted with a reused Intl.DateTimeFormat. */
+export function clockTime(ms: number, locale: string): string {
+  return getTimeFmt(locale).format(ms);
+}
+
+/** The day a run of messages was said on: "Today", "Yesterday", or the date. */
+export function dayLabel(ms: number, locale: string): string {
+  const date = new Date(ms);
+  const now = new Date();
+  const start = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((start(date) - start(now)) / 86_400_000);
+  if (days === 0 || days === -1) {
+    const word = getRelFmt(locale).format(days, "day");
+    return word.charAt(0).toUpperCase() + word.slice(1);
+  }
+  return getDayFmt(locale, date.getFullYear() === now.getFullYear()).format(date);
+}
+
+/** Human-readable file size with cached Intl.NumberFormat. */
+export function formatBytes(bytes: number | null, locale: string): string {
+  if (bytes === null) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let n = bytes;
+  let u = 0;
+  while (n >= 1024 && u < units.length - 1) {
+    n /= 1024;
+    u++;
+  }
+  const fmt = u
+    ? cachedFormatter(decFmt, locale, () => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }))
+    : cachedFormatter(intFmt, locale, () => new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }));
+  return `${fmt.format(n)} ${units[u]}`;
+}
 
 /** "Yesterday 09:00", "Tomorrow 20:02", "Thu 09:00", or "Nov 20, 09:00" for further out. */
 export function shortDateTime(ms: number, locale: string): string {
   const date = new Date(ms);
-  const time = date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hour12: false });
+  const time = getTimeFmt(locale).format(date);
   const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const days = Math.round((startOfDay(date) - startOfDay(new Date())) / 86_400_000);
   if (days >= -1 && days <= 1) {
-    const word = new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(days, "day");
+    const word = getRelFmt(locale).format(days, "day");
     return `${word} ${time}`;
   }
-  if (days > 1 && days < 7) return `${date.toLocaleDateString(locale, { weekday: "short" })} ${time}`;
-  return `${date.toLocaleDateString(locale, { month: "short", day: "numeric" })} ${time}`;
+  if (days > 1 && days < 7) return `${getWeekdayFmt(locale).format(date)} ${time}`;
+  return `${getMonthDayFmt(locale).format(date)} ${time}`;
 }
 
 export function relativeTime(ms: number, locale: string): string {
   const diff = (ms - Date.now()) / 1000;
-  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  const rtf = getRelFmt(locale);
   const abs = Math.abs(diff);
   if (abs < 45) return rtf.format(0, "second");
   if (abs < 3600) return rtf.format(Math.round(diff / 60), "minute");
   if (abs < 86400) return rtf.format(Math.round(diff / 3600), "hour");
-  return new Date(ms).toLocaleDateString(locale, { month: "short", day: "numeric" });
+  return getMonthDayFmt(locale).format(ms);
 }
 
 /** The harness's own mark, for the light or dark background it sits on. */
-export function HarnessIcon({
+export const HarnessIcon = memo(function HarnessIcon({
   harness,
   size = 24,
 }: {
@@ -938,8 +1041,8 @@ export function HarnessIcon({
   if (!harness.icon) return <Avatar name={harness.name} size={size} />;
   return (
     <span className="flex shrink-0 items-center justify-center" style={{ width: size, height: size }}>
-      <img src={harness.icon.light} alt="" className="size-full dark:hidden" />
-      <img src={harness.icon.dark} alt="" className="hidden size-full dark:block" />
+      <img src={harness.icon.light} alt="" decoding="async" className="size-full dark:hidden" />
+      <img src={harness.icon.dark} alt="" decoding="async" className="hidden size-full dark:block" />
     </span>
   );
-}
+});

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
  * arrives opens at once instead of filling in late. Failures are never kept.
  */
 const answers = new Map<string, unknown>();
+const rememberedAt = new Map<string, number>();
 const pending = new Map<string, Promise<unknown>>();
 
 export function peek<T>(key: string): T | undefined {
@@ -15,7 +16,57 @@ export function peek<T>(key: string): T | undefined {
 
 export function remember<T>(key: string, value: T): T {
   answers.set(key, value);
+  rememberedAt.set(key, Date.now());
   return value;
+}
+
+/** Fast structural equality for JSON values returned by the admin API. */
+export function sameJson(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!sameJson(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  for (const key of ak) {
+    if (!Object.hasOwn(bo, key) || !sameJson(ao[key], bo[key])) return false;
+  }
+  return true;
+}
+
+/**
+ * Reconcile a newly fetched list against the previous one by item identity, preserving object
+ * references for unchanged items (and the array itself when nothing changed) so memoized rows
+ * and pages skip re-rendering during polling.
+ */
+export function reconcileList<T>(prev: T[] | null, next: T[], keyOf: (item: T) => string): T[] {
+  if (prev === next) return prev;
+  if (!prev) return next;
+  const byKey = new Map(prev.map((item) => [keyOf(item), item]));
+  let same = prev.length === next.length;
+  const out = next.map((item, i) => {
+    const existing = byKey.get(keyOf(item));
+    const kept = existing !== undefined && sameJson(existing, item) ? existing : item;
+    if (same && kept !== prev[i]) same = false;
+    return kept;
+  });
+  return same ? prev : out;
+}
+
+/** Warm `key` ahead of navigation without duplicating an in-flight or freshly cached read. */
+export function prefetchCached<T>(key: string, load: () => Promise<T>, staleMs = 3000): void {
+  if (pending.has(key)) return;
+  const at = rememberedAt.get(key);
+  if (at !== undefined && Date.now() - at < staleMs) return;
+  void fetchCached(key, load).catch(() => {});
 }
 
 /**
@@ -57,9 +108,12 @@ export function useCached<T>(
   const read = useCallback(
     async (again: boolean, exact: (() => Promise<T>) | undefined) => {
       if (key === null) return;
+      const before = peek<T>(key);
       try {
-        await fetchCached(key, exact ?? load, again);
+        const after = await fetchCached(key, exact ?? load, again);
         setFailed((f) => (f?.key === key ? null : f));
+        // Conditional GET (304) returns the exact previous object reference: skip the re-render.
+        if (after === before) return;
       } catch (error) {
         setFailed({ key, error });
       }

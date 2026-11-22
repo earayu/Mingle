@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import type { ChatKind, Platform } from "../channels/channel.ts";
 import type { HearTier } from "../core/hearing.ts";
 import { shortId } from "../core/ids.ts";
@@ -251,6 +251,7 @@ const MIGRATIONS = new URL("./migrations/", import.meta.url);
 export class Store {
   readonly db: DatabaseSync;
   private readonly now: () => number;
+  private readonly statements = new Map<string, StatementSync>();
 
   constructor(path: string, now: () => number = Date.now) {
     this.now = now;
@@ -260,7 +261,18 @@ export class Store {
     if (from < 6) this.backfillContacts();
   }
 
+  /** Reuse compiled SQLite statements across hot console polling queries. */
+  private stmt(sql: string): StatementSync {
+    let compiled = this.statements.get(sql);
+    if (!compiled) {
+      compiled = this.db.prepare(sql);
+      this.statements.set(sql, compiled);
+    }
+    return compiled;
+  }
+
   close(): void {
+    this.statements.clear();
     this.db.close();
   }
 
@@ -333,18 +345,22 @@ export class Store {
   }
 
   agent(id: string): Agent | undefined {
-    const row = this.db.prepare("SELECT * FROM agents WHERE id = ? OR slug = ?").get(id, id) as Row | undefined;
+    const row = this.stmt("SELECT * FROM agents WHERE id = ? OR slug = ?").get(id, id) as Row | undefined;
     return row && toAgent(row);
   }
 
   agents(): Agent[] {
-    return (this.db.prepare("SELECT * FROM agents ORDER BY created_at").all() as Row[]).map(toAgent);
+    return (this.stmt("SELECT * FROM agents ORDER BY created_at").all() as Row[]).map(toAgent);
   }
 
   setAgentStatus(id: string, status: AgentStatus, detail: string | null = null, failure: string | null = null): void {
-    this.db
-      .prepare("UPDATE agents SET status = ?, status_detail = ?, status_failure = ?, updated_at = ? WHERE id = ?")
-      .run(status, detail, failure, this.now(), id);
+    this.stmt("UPDATE agents SET status = ?, status_detail = ?, status_failure = ?, updated_at = ? WHERE id = ?").run(
+      status,
+      detail,
+      failure,
+      this.now(),
+      id,
+    );
   }
 
   updateAgent(id: string, patch: { name?: string; harness?: string; model?: string | null }): void {
@@ -365,21 +381,18 @@ export class Store {
 
   /** The owner has seen the private chat up to `at`; never moves back. */
   setChatSeen(id: string, at: number): void {
-    this.db.prepare("UPDATE agents SET chat_seen_at = MAX(chat_seen_at, ?) WHERE id = ?").run(at, id);
+    this.stmt("UPDATE agents SET chat_seen_at = MAX(chat_seen_at, ?) WHERE id = ?").run(at, id);
   }
 
   /** What the agent said in a chat after `since`: how many messages, and the latest. Mingle's notices left out. */
   saidSince(chatId: string, since: number): { count: number; last: Message | undefined } {
-    const row = this.db
-      .prepare(
-        "SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND direction = 'out' AND notice = 0 AND state <> 'failed' AND created_at > ?",
-      )
-      .get(chatId, since) as { n: number };
-    const last = this.db
-      .prepare(
-        "SELECT * FROM messages WHERE chat_id = ? AND direction = 'out' AND notice = 0 AND state <> 'failed' AND created_at > ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
-      )
-      .get(chatId, since) as Row | undefined;
+    const row = this.stmt(
+      "SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND direction = 'out' AND notice = 0 AND state <> 'failed' AND created_at > ?",
+    ).get(chatId, since) as { n: number };
+    if (Number(row.n) === 0) return { count: 0, last: undefined };
+    const last = this.stmt(
+      "SELECT * FROM messages WHERE chat_id = ? AND direction = 'out' AND notice = 0 AND state <> 'failed' AND created_at > ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+    ).get(chatId, since) as Row | undefined;
     return { count: Number(row.n), last: last && toMessage(last) };
   }
 
@@ -518,14 +531,14 @@ export class Store {
   }
 
   connection(id: string): Connection | undefined {
-    const row = this.db.prepare("SELECT * FROM connections WHERE id = ?").get(id) as Row | undefined;
+    const row = this.stmt("SELECT * FROM connections WHERE id = ?").get(id) as Row | undefined;
     return row && toConnection(row);
   }
 
   connections(agentId?: string): Connection[] {
     const rows = agentId
-      ? this.db.prepare("SELECT * FROM connections WHERE agent_id = ? ORDER BY created_at").all(agentId)
-      : this.db.prepare("SELECT * FROM connections ORDER BY created_at").all();
+      ? this.stmt("SELECT * FROM connections WHERE agent_id = ? ORDER BY created_at").all(agentId)
+      : this.stmt("SELECT * FROM connections ORDER BY created_at").all();
     return (rows as Row[]).map(toConnection);
   }
 
@@ -632,15 +645,15 @@ export class Store {
   }
 
   chat(id: string): Chat | undefined {
-    const row = this.db.prepare("SELECT * FROM chats WHERE id = ?").get(id) as Row | undefined;
+    const row = this.stmt("SELECT * FROM chats WHERE id = ?").get(id) as Row | undefined;
     return row && toChat(row);
   }
 
   /** The chat, if it belongs to one of this agent's connections. */
   agentChat(agentId: string, chatId: string): Chat | undefined {
-    const row = this.db
-      .prepare("SELECT c.* FROM chats c JOIN connections n ON n.id = c.connection_id WHERE c.id = ? AND n.agent_id = ?")
-      .get(chatId, agentId) as Row | undefined;
+    const row = this.stmt(
+      "SELECT c.* FROM chats c JOIN connections n ON n.id = c.connection_id WHERE c.id = ? AND n.agent_id = ?",
+    ).get(chatId, agentId) as Row | undefined;
     return row && toChat(row);
   }
 
@@ -686,14 +699,15 @@ export class Store {
   }
 
   contact(id: string): Contact | undefined {
-    const row = this.db.prepare(`${CONTACTS} WHERE k.id = ?`).get(id) as Row | undefined;
+    const row = this.stmt(`${CONTACTS} WHERE k.id = ?`).get(id) as Row | undefined;
     return row && toContact(row);
   }
 
   contactByPlatformId(connectionId: string, platformId: string): Contact | undefined {
-    const row = this.db
-      .prepare(`${CONTACTS} WHERE k.connection_id = ? AND k.platform_id = ?`)
-      .get(connectionId, platformId) as Row | undefined;
+    const row = this.stmt(`${CONTACTS} WHERE k.connection_id = ? AND k.platform_id = ?`).get(
+      connectionId,
+      platformId,
+    ) as Row | undefined;
     return row && toContact(row);
   }
 
@@ -809,18 +823,22 @@ export class Store {
 
   /** This agent's messages waiting for the owner to let their sender or group in, oldest first. */
   heldMessages(agentId: string): (Message & { chat: Chat; connectionId: string; platform: Platform })[] {
-    const rows = this.db
-      .prepare(
-        `SELECT m.*, n.platform, c.connection_id FROM messages m JOIN chats c ON c.id = m.chat_id
-         JOIN connections n ON n.id = c.connection_id
-         WHERE n.agent_id = ? AND m.state = 'held' ORDER BY m.created_at, m.rowid`,
-      )
-      .all(agentId) as Row[];
+    const rows = this.stmt(
+      `SELECT m.*, n.platform, c.connection_id FROM messages m JOIN chats c ON c.id = m.chat_id
+       JOIN connections n ON n.id = c.connection_id
+       WHERE n.agent_id = ? AND m.state = 'held' ORDER BY m.created_at, m.rowid`,
+    ).all(agentId) as Row[];
+    const chats = new Map<string, Chat>();
     return rows.map((r) => {
       const message = toMessage(r);
+      let chat = chats.get(message.chatId);
+      if (!chat) {
+        chat = this.chat(message.chatId) as Chat;
+        chats.set(message.chatId, chat);
+      }
       return {
         ...message,
-        chat: this.chat(message.chatId) as Chat,
+        chat,
         connectionId: String(r.connection_id),
         platform: String(r.platform) as Platform,
       };
@@ -1159,18 +1177,16 @@ export class Store {
   chatMessages(chatId: string, limit: number, before?: string, opts?: { excludeNotices?: boolean }): Message[] {
     // Before the anchor in the order stored: one stored in the same millisecond still came first.
     const anchor = before
-      ? (this.db.prepare("SELECT created_at, rowid FROM messages WHERE id = ?").get(before) as
+      ? (this.stmt("SELECT created_at, rowid FROM messages WHERE id = ?").get(before) as
           | { created_at: number; rowid: number }
           | undefined)
       : undefined;
     const at = anchor ? Number(anchor.created_at) : Number.MAX_SAFE_INTEGER;
     const row = anchor ? Number(anchor.rowid) : Number.MAX_SAFE_INTEGER;
     const filter = opts?.excludeNotices ? " AND notice = 0" : "";
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM messages WHERE chat_id = ?${filter} AND (created_at < ? OR (created_at = ? AND rowid < ?)) ORDER BY created_at DESC, rowid DESC LIMIT ?`,
-      )
-      .all(chatId, at, at, row, limit) as Row[];
+    const rows = this.stmt(
+      `SELECT * FROM messages WHERE chat_id = ?${filter} AND (created_at < ? OR (created_at = ? AND rowid < ?)) ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+    ).all(chatId, at, at, row, limit) as Row[];
     return rows.map(toMessage).reverse();
   }
 
@@ -1360,15 +1376,19 @@ export class Store {
 
   /** Recent messages across all of an agent's chats, newest first, for the console. */
   agentActivity(agentId: string, limit: number): (Message & { chat: Chat; platform: Platform })[] {
-    const rows = this.db
-      .prepare(
-        `SELECT m.*, n.platform FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
-         WHERE n.agent_id = ? ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?`,
-      )
-      .all(agentId, limit) as Row[];
+    const rows = this.stmt(
+      `SELECT m.*, n.platform FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
+       WHERE n.agent_id = ? ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?`,
+    ).all(agentId, limit) as Row[];
+    const chats = new Map<string, Chat>();
     return rows.map((r) => {
       const message = toMessage(r);
-      return { ...message, chat: this.chat(message.chatId) as Chat, platform: String(r.platform) as Platform };
+      let chat = chats.get(message.chatId);
+      if (!chat) {
+        chat = this.chat(message.chatId) as Chat;
+        chats.set(message.chatId, chat);
+      }
+      return { ...message, chat, platform: String(r.platform) as Platform };
     });
   }
 
@@ -1392,45 +1412,39 @@ export class Store {
     messages: Message[];
   }[] {
     const scope = opts.chatId ? "AND c.id = ?" : "";
-    const heads = this.db
-      .prepare(
-        `SELECT c.id, n.platform, max(m.created_at) AS latest FROM messages m JOIN chats c ON c.id = m.chat_id
-         JOIN connections n ON n.id = c.connection_id WHERE n.agent_id = ? ${scope}
-         GROUP BY c.id ORDER BY latest DESC, max(m.rowid) DESC LIMIT ?`,
-      )
-      .all(agentId, ...(opts.chatId ? [opts.chatId] : []), opts.chats) as Row[];
+    const heads = this.stmt(
+      `SELECT c.id, n.platform, max(m.created_at) AS latest FROM messages m JOIN chats c ON c.id = m.chat_id
+       JOIN connections n ON n.id = c.connection_id WHERE n.agent_id = ? ${scope}
+       GROUP BY c.id ORDER BY latest DESC, max(m.rowid) DESC LIMIT ?`,
+    ).all(agentId, ...(opts.chatId ? [opts.chatId] : []), opts.chats) as Row[];
     const before = opts.before ?? Number.MAX_SAFE_INTEGER;
+    const latestStmt = this.stmt(
+      "SELECT * FROM messages WHERE chat_id = ? AND created_at < ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+    );
+    const pendingStmt = this.stmt(
+      `SELECT * FROM messages WHERE chat_id = ? AND direction = 'in' AND created_at < ?
+       AND state IN ('unanswered', 'failed', 'waiting', 'held')`,
+    );
+    const countStmt = this.stmt("SELECT count(*) AS n FROM messages WHERE chat_id = ? AND created_at < ?");
+    const chats = new Map<string, Chat>();
+    const chatById = (id: string) => {
+      let chat = chats.get(id);
+      if (!chat) {
+        chat = this.chat(id);
+        if (chat) chats.set(id, chat);
+      }
+      return chat;
+    };
     return heads.map((h) => {
-      const chat = this.chat(String(h.id)) as Chat;
-      const latest = (
-        this.db
-          .prepare(
-            `SELECT * FROM messages WHERE chat_id = ? AND created_at < ? ORDER BY created_at DESC, rowid DESC LIMIT ?`,
-          )
-          .all(chat.id, before, opts.messages) as Row[]
-      ).map(toMessage);
+      const chat = chatById(String(h.id)) as Chat;
+      const latest = (latestStmt.all(chat.id, before, opts.messages) as Row[]).map(toMessage);
       const oldest = latest.at(-1);
-      const pending = oldest
-        ? (
-            this.db
-              .prepare(
-                `SELECT * FROM messages WHERE chat_id = ? AND direction = 'in' AND created_at < ?
-                 AND state IN ('unanswered', 'failed', 'waiting', 'held')`,
-              )
-              .all(chat.id, oldest.createdAt) as Row[]
-          ).map(toMessage)
-        : [];
+      const pending = oldest ? (pendingStmt.all(chat.id, oldest.createdAt) as Row[]).map(toMessage) : [];
       const shown = [...latest, ...pending].sort((a, b) => a.createdAt - b.createdAt);
-      const total = Number(
-        (
-          this.db
-            .prepare("SELECT count(*) AS n FROM messages WHERE chat_id = ? AND created_at < ?")
-            .get(chat.id, before) as Row
-        ).n,
-      );
+      const total = Number((countStmt.get(chat.id, before) as Row).n);
       return {
         chat,
-        parent: chat.parentId ? (this.chat(chat.parentId) ?? null) : null,
+        parent: chat.parentId ? (chatById(chat.parentId) ?? null) : null,
         platform: String(h.platform) as Platform,
         latestAt: Number(h.latest),
         earlier: total - shown.length,
@@ -1502,12 +1516,10 @@ export class Store {
 
   /** Inbound messages of this agent the owner can retry or ignore (waiting, failed or unanswered), oldest first; `ids` narrows it. */
   retryable(agentId: string, ids?: readonly string[]): Message[] {
-    const rows = this.db
-      .prepare(
-        `SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
-         WHERE n.agent_id = ? AND m.direction = 'in' AND m.state IN ('waiting', 'failed', 'unanswered') ORDER BY m.created_at`,
-      )
-      .all(agentId) as Row[];
+    const rows = this.stmt(
+      `SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id JOIN connections n ON n.id = c.connection_id
+       WHERE n.agent_id = ? AND m.direction = 'in' AND m.state IN ('waiting', 'failed', 'unanswered') ORDER BY m.created_at`,
+    ).all(agentId) as Row[];
     const wanted = ids && new Set(ids);
     return rows.map(toMessage).filter((m) => !wanted || wanted.has(m.id));
   }
@@ -1629,9 +1641,9 @@ export class Store {
 
   tasks(agentId: string, all: boolean): Task[] {
     const filter = all ? "" : "AND status IN ('todo', 'in_progress')";
-    const rows = this.db
-      .prepare(`SELECT * FROM tasks WHERE agent_id = ? ${filter} ORDER BY created_at`)
-      .all(agentId) as Row[];
+    const rows = this.stmt(`SELECT * FROM tasks WHERE agent_id = ? ${filter} ORDER BY created_at`).all(
+      agentId,
+    ) as Row[];
     return rows.map(toTask);
   }
 
@@ -1708,13 +1720,11 @@ export class Store {
    */
   lineTasks(agentId: string, since: number): Task[] {
     return (
-      this.db
-        .prepare(
-          `SELECT * FROM tasks WHERE agent_id = ? AND line_state IS NOT NULL
-           AND (line_state IN ('queued', 'running') OR status IN ('todo', 'in_progress') OR updated_at >= ?)
-           ORDER BY created_at`,
-        )
-        .all(agentId, since) as Row[]
+      this.stmt(
+        `SELECT * FROM tasks WHERE agent_id = ? AND line_state IS NOT NULL
+         AND (line_state IN ('queued', 'running') OR status IN ('todo', 'in_progress') OR updated_at >= ?)
+         ORDER BY created_at`,
+      ).all(agentId, since) as Row[]
     ).map(toTask);
   }
 
@@ -1822,9 +1832,9 @@ export class Store {
   }
 
   reminders(agentId: string): Reminder[] {
-    const rows = this.db
-      .prepare("SELECT * FROM reminders WHERE agent_id = ? AND next_fire_at IS NOT NULL ORDER BY next_fire_at")
-      .all(agentId) as Row[];
+    const rows = this.stmt(
+      "SELECT * FROM reminders WHERE agent_id = ? AND next_fire_at IS NOT NULL ORDER BY next_fire_at",
+    ).all(agentId) as Row[];
     return rows.map(toReminder);
   }
 
@@ -1833,14 +1843,12 @@ export class Store {
    * whose time ran out is due at its deadline even when its next poll is later, so it ends on time.
    */
   dueReminders(at: number): Reminder[] {
-    const rows = this.db
-      .prepare(
-        `SELECT r.* FROM reminders r JOIN agents a ON a.id = r.agent_id
-         WHERE r.next_fire_at IS NOT NULL
-           AND (r.next_fire_at <= ? OR (r.check_command IS NOT NULL AND r.check_until IS NOT NULL AND r.check_until <= ?))
-           AND a.status != 'paused' ORDER BY r.next_fire_at`,
-      )
-      .all(at, at) as Row[];
+    const rows = this.stmt(
+      `SELECT r.* FROM reminders r JOIN agents a ON a.id = r.agent_id
+       WHERE r.next_fire_at IS NOT NULL
+         AND (r.next_fire_at <= ? OR (r.check_command IS NOT NULL AND r.check_until IS NOT NULL AND r.check_until <= ?))
+         AND a.status != 'paused' ORDER BY r.next_fire_at`,
+    ).all(at, at) as Row[];
     return rows.map(toReminder);
   }
 
@@ -1931,9 +1939,9 @@ export class Store {
 
   /** Newest first. */
   handoffs(agentId: string, limit: number): Handoff[] {
-    const rows = this.db
-      .prepare("SELECT * FROM handoffs WHERE agent_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
-      .all(agentId, limit) as Row[];
+    const rows = this.stmt(
+      "SELECT * FROM handoffs WHERE agent_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+    ).all(agentId, limit) as Row[];
     return rows.map(toHandoff);
   }
 

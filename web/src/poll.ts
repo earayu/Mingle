@@ -8,13 +8,21 @@ import { useEffect } from "react";
 export function usePolling(refresh: () => unknown, ms: number, enabled = true): void {
   useEffect(() => {
     if (!enabled) return;
+    let inflight = false;
+    const run = () => {
+      if (inflight) return;
+      inflight = true;
+      void Promise.resolve(refresh()).finally(() => {
+        inflight = false;
+      });
+    };
     const tick = () => {
-      if (!document.hidden) void refresh();
+      if (!document.hidden) run();
     };
     const onVisible = () => {
-      if (!document.hidden) void refresh();
+      if (!document.hidden) run();
     };
-    void refresh();
+    run();
     const timer = setInterval(tick, ms);
     document.addEventListener("visibilitychange", onVisible);
     return () => {

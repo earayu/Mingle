@@ -10,7 +10,7 @@ import {
 } from "./api.ts";
 import { QrFlow } from "./Connect.tsx";
 import { AllMe, Contacts } from "./Contacts.tsx";
-import { useCached } from "./cache.ts";
+import { prefetchCached, useCached } from "./cache.ts";
 import { errorText, type MessageKey, useI18n } from "./i18n.ts";
 import { PlatformIcon } from "./platforms.tsx";
 import { onEscape } from "./shortcuts.ts";
@@ -55,7 +55,15 @@ export function ChatAppList({
       ) : (
         <Group>
           {agent.connections.map((c) => (
-            <ChatAppRow key={c.id} connection={c} onOpen={() => onOpen(c.id)} />
+            <ChatAppRow
+              key={c.id}
+              connection={c}
+              onOpen={() => onOpen(c.id)}
+              onPrefetch={() => {
+                prefetchCached(`contacts:${agent.id}`, () => api.contacts(agent.id), 10_000);
+                prefetchCached("platforms", api.platforms, 60_000);
+              }}
+            />
           ))}
         </Group>
       )}
@@ -64,7 +72,15 @@ export function ChatAppList({
   );
 }
 
-function ChatAppRow({ connection, onOpen }: { connection: ConnectionView; onOpen: () => void }) {
+function ChatAppRow({
+  connection,
+  onOpen,
+  onPrefetch,
+}: {
+  connection: ConnectionView;
+  onOpen: () => void;
+  onPrefetch?: () => void;
+}) {
   const { t } = useI18n();
   const platform = t(`platform.${connection.platform}` as MessageKey);
   const owner = connection.ownerContact;
@@ -73,6 +89,8 @@ function ChatAppRow({ connection, onOpen }: { connection: ConnectionView; onOpen
       type="button"
       id={listRowId(connection.id)}
       onClick={onOpen}
+      onPointerEnter={onPrefetch}
+      onFocus={onPrefetch}
       className="flex min-h-[56px] w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-left transition-colors duration-[120ms] hover:bg-bg2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
     >
       <PlatformIcon platform={connection.platform} size={32} />

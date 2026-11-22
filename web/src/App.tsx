@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentPage } from "./AgentPage.tsx";
-import { type AgentView, ApiError, api, captureToken } from "./api.ts";
+import { type AgentView, ApiError, api, captureToken, clearResponseCache } from "./api.ts";
+import { prefetchChat } from "./Chat.tsx";
 import { ConnectPage } from "./Connect.tsx";
+import { prefetchCached, reconcileList } from "./cache.ts";
 import { I18n, type MessageKey, translator, useI18n, useLocaleSettings } from "./i18n.ts";
 import iconUrl from "./icon.svg";
 import { NewAgent } from "./NewAgent.tsx";
@@ -113,6 +115,7 @@ function Shell() {
     // A fresh `mingle open` link pasted into an existing tab only changes the fragment.
     const onHash = () => {
       const next = captureToken();
+      clearResponseCache();
       setToken(next);
       setView(viewFromPath());
       if (next) setProblem(null);
@@ -138,7 +141,7 @@ function Shell() {
     try {
       const status = await api.status();
       if (version !== refreshVersion.current) return;
-      setAgents(status.agents);
+      setAgents((prev) => reconcileList(prev, status.agents, (a) => a.id));
       setVersion(status.version);
       setProblem(null);
     } catch (e) {
@@ -261,7 +264,67 @@ function Shell() {
   );
 }
 
-function Sidebar({
+const SIDEBAR_ROW =
+  "flex w-full items-center gap-2.5 rounded-control px-2.5 text-left transition-colors duration-[120ms] hover:bg-black/5 dark:hover:bg-white/5 aria-[current=page]:bg-sel";
+
+function prefetchAgent(agent: AgentView): void {
+  prefetchCached(`conversations:${agent.id}`, () => api.conversations(agent.id));
+  prefetchCached(`handoffs:${agent.id}`, () => api.handoffs(agent.id));
+  prefetchCached(`work:${agent.id}`, () => api.work(agent.id));
+  if (agent.chat?.unread) prefetchChat(agent.id);
+}
+
+const SidebarAgentRow = memo(function SidebarAgentRow({
+  agent: a,
+  index: i,
+  current: on,
+  onNavigate,
+}: {
+  agent: AgentView;
+  index: number;
+  current: boolean;
+  onNavigate: Navigate;
+}) {
+  const { t } = useI18n();
+  // One name per chat app, even with several bots in it.
+  const apps = [...new Set(a.connections.map((c) => c.platform))]
+    .map((p) => t(`platform.${p}` as MessageKey))
+    .join(t("list.separator"));
+  const keys = KEYS.agent(i);
+  const more = [a.doing ? t("agent.doing", { count: String(a.doing) }) : "", apps]
+    .filter(Boolean)
+    .join(t("list.separator"));
+  const warm = on ? undefined : () => prefetchAgent(a);
+  return (
+    <Shortcut label={a.name} keys={keys} side="right">
+      <button
+        type="button"
+        title={keys ? undefined : a.name}
+        aria-keyshortcuts={keys ? keysAria(keys) : undefined}
+        onClick={() => onNavigate({ kind: "agent", slug: a.slug })}
+        onPointerEnter={warm}
+        onFocus={warm}
+        aria-current={on ? "page" : undefined}
+        className={`${SIDEBAR_ROW} min-h-[46px] py-1.5`}
+      >
+        <Avatar name={a.name} src={a.avatar} size={28} />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate font-medium">{a.name}</span>
+          <span className="text-caption text-ink2">
+            <AgentStatusText status={a.status} where={a.remote} more={more} />
+          </span>
+        </span>
+        {a.chat?.unread ? (
+          <span className="size-2 shrink-0 rounded-full bg-accent" title={t("privateChat.unread")}>
+            <span className="sr-only">{t("privateChat.unread")}</span>
+          </span>
+        ) : null}
+      </button>
+    </Shortcut>
+  );
+});
+
+const Sidebar = memo(function Sidebar({
   agents,
   view,
   currentId,
@@ -274,11 +337,10 @@ function Sidebar({
 }) {
   const { t } = useI18n();
   const update = useUpdates();
-  const row =
-    "flex w-full items-center gap-2.5 rounded-control px-2.5 text-left transition-colors duration-[120ms] hover:bg-black/5 dark:hover:bg-white/5 aria-[current=page]:bg-sel";
   // Only what needs the user: an update that is ready, or one they install themselves.
   // An update downloading in the background shows nothing until it is ready.
   const offer = update?.available && (update.ready || !update.automaticDownloads) ? update : null;
+  const warmBrains = () => prefetchCached("brains", () => api.brains(), 10_000);
   return (
     <div className="flex min-w-0 flex-1 flex-col px-2 pb-3">
       {/* The brand row: in the desktop app it sits right of the traffic lights and moves the window. */}
@@ -286,50 +348,19 @@ function Sidebar({
         <span className="font-semibold">{t("app.title")}</span>
       </div>
       <Eyebrow>{t("sidebar.agents")}</Eyebrow>
-      <nav className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
-        {agents.map((a, i) => {
-          const on = currentId === a.id;
-          // One name per chat app, even with several bots in it.
-          const apps = [...new Set(a.connections.map((c) => c.platform))]
-            .map((p) => t(`platform.${p}` as MessageKey))
-            .join(t("list.separator"));
-          const keys = KEYS.agent(i);
-          const more = [a.doing ? t("agent.doing", { count: String(a.doing) }) : "", apps]
-            .filter(Boolean)
-            .join(t("list.separator"));
-          return (
-            <Shortcut key={a.id} label={a.name} keys={keys} side="right">
-              <button
-                type="button"
-                title={keys ? undefined : a.name}
-                aria-keyshortcuts={keys ? keysAria(keys) : undefined}
-                onClick={() => onNavigate({ kind: "agent", slug: a.slug })}
-                aria-current={on ? "page" : undefined}
-                className={`${row} min-h-[46px] py-1.5`}
-              >
-                <Avatar name={a.name} src={a.avatar} size={28} />
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate font-medium">{a.name}</span>
-                  <span className="text-caption text-ink2">
-                    <AgentStatusText status={a.status} where={a.remote} more={more} />
-                  </span>
-                </span>
-                {a.chat?.unread ? (
-                  <span className="size-2 shrink-0 rounded-full bg-accent" title={t("privateChat.unread")}>
-                    <span className="sr-only">{t("privateChat.unread")}</span>
-                  </span>
-                ) : null}
-              </button>
-            </Shortcut>
-          );
-        })}
+      <nav className="flex min-h-0 flex-col gap-0.5 overflow-y-auto overscroll-contain">
+        {agents.map((a, i) => (
+          <SidebarAgentRow key={a.id} agent={a} index={i} current={currentId === a.id} onNavigate={onNavigate} />
+        ))}
         <Shortcut label={t("agents.new")} keys={KEYS.newAgent} side="right">
           <button
             type="button"
             onClick={() => onNavigate({ kind: "new" })}
+            onPointerEnter={warmBrains}
+            onFocus={warmBrains}
             aria-keyshortcuts={keysAria(KEYS.newAgent)}
             aria-current={view.kind === "new" ? "page" : undefined}
-            className={`${row} h-8 text-ink2 hover:text-ink`}
+            className={`${SIDEBAR_ROW} h-8 text-ink2 hover:text-ink`}
           >
             <PlusIcon className="mx-1.5" />
             {t("agents.new")}
@@ -355,9 +386,11 @@ function Sidebar({
           <button
             type="button"
             onClick={() => onNavigate({ kind: "settings" })}
+            onPointerEnter={warmBrains}
+            onFocus={warmBrains}
             aria-keyshortcuts={keysAria(KEYS.settings)}
             aria-current={view.kind === "settings" ? "page" : undefined}
-            className={`${row} h-8 text-ink2 hover:text-ink aria-[current=page]:text-ink`}
+            className={`${SIDEBAR_ROW} h-8 text-ink2 hover:text-ink aria-[current=page]:text-ink`}
           >
             <SettingsIcon className="mx-1.5" />
             {t("settings.title")}
@@ -366,7 +399,7 @@ function Sidebar({
       </div>
     </div>
   );
-}
+});
 
 function Unauthorized() {
   const { t } = useI18n();

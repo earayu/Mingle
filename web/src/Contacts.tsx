@@ -9,7 +9,17 @@ import { Button, Field, Group, GroupRow, HelpTip, Input, MoreMenu, Section, Sele
 const FIRST_ROWS = 6;
 /** The API's limit on a note, in UTF-8 bytes (docs/spec.md 4.2). */
 const NOTE_MAX_BYTES = 2048;
-const bytes = (text: string) => new TextEncoder().encode(text).length;
+const encoder = new TextEncoder();
+const bytes = (text: string) => encoder.encode(text).length;
+const listFormats = new Map<string, Intl.ListFormat>();
+function formatList(locale: string, items: readonly string[]): string {
+  let fmt = listFormats.get(locale);
+  if (!fmt) {
+    fmt = new Intl.ListFormat(locale, { type: "conjunction" });
+    listFormats.set(locale, fmt);
+  }
+  return fmt.format(items);
+}
 /** Remembered per agent and set of owner accounts: the owner said they are not all one person. */
 const notAllMeKey = (agentId: string, ids: readonly string[]) =>
   `mingle:not-all-me:${agentId}:${[...ids].sort().join(",")}`;
@@ -411,9 +421,7 @@ function AllMeCard({
   const [error, setError] = useState<string | null>(null);
   const allOwnerLinked = owners.every((a) => a.linkedBy === "owner");
   if (owners.length < 2 || (linked.size === 1 && allOwnerLinked) || dismissed) return null;
-  const platforms = new Intl.ListFormat(locale, { type: "conjunction" }).format([
-    ...new Set(owners.map((a) => t(`platform.${a.platform}` as MessageKey))),
-  ]);
+  const platforms = formatList(locale, [...new Set(owners.map((a) => t(`platform.${a.platform}` as MessageKey)))]);
   return (
     <div className="rise flex flex-col gap-2.5 rounded-card border border-line bg-bg2 px-4 py-3">
       <div className="flex items-center gap-3">

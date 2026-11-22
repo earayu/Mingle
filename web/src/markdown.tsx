@@ -1,13 +1,32 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
+
+const MAX_RENDER_CACHE = 256;
+const renderCache = new Map<string, ReactNode[]>();
+
+function cachedBlocks(text: string): ReactNode[] {
+  const hit = renderCache.get(text);
+  if (hit) {
+    renderCache.delete(text);
+    renderCache.set(text, hit);
+    return hit;
+  }
+  const built = blocks(text);
+  if (renderCache.size >= MAX_RENDER_CACHE) {
+    const oldest = renderCache.keys().next().value;
+    if (oldest !== undefined) renderCache.delete(oldest);
+  }
+  renderCache.set(text, built);
+  return built;
+}
 
 /**
  * What agents write, rendered for the private chat (docs/spec.md 6.9): paragraphs, headings,
  * lists, quotes, code, tables, emphasis and links. Built as React elements, never as HTML, so
  * nothing in a message can run or restyle the console. Anything it does not know stays plain text.
  */
-export function Markdown({ text }: { text: string }) {
-  return <div className="markdown flex flex-col gap-2.5">{blocks(text.replace(/\r\n?/g, "\n"))}</div>;
-}
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
+  return <div className="markdown flex flex-col gap-2.5">{cachedBlocks(text.replace(/\r\n?/g, "\n"))}</div>;
+});
 
 type Block =
   | { kind: "p"; text: string }

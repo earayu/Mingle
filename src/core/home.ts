@@ -15,16 +15,63 @@ export function createHome(dir: string, name: string, role: string): void {
   }
 }
 
+interface RoleCacheEntry {
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+  size: bigint;
+  ino: bigint;
+  content: string;
+}
+
+/** Stat-validated cache for ROLE.md so frequent console status polls avoid re-reading unchanged files. */
+const roleCache = new Map<string, RoleCacheEntry>();
+
 export function readRole(dir: string): string {
+  const path = join(dir, "ROLE.md");
   try {
-    return readFileSync(join(dir, "ROLE.md"), "utf8");
+    const stat = statSync(path, { bigint: true });
+    const cached = roleCache.get(path);
+    if (
+      cached &&
+      cached.mtimeNs === stat.mtimeNs &&
+      cached.ctimeNs === stat.ctimeNs &&
+      cached.size === stat.size &&
+      cached.ino === stat.ino
+    ) {
+      return cached.content;
+    }
+    const content = readFileSync(path, "utf8");
+    if (roleCache.size >= 128) roleCache.clear();
+    roleCache.set(path, {
+      mtimeNs: stat.mtimeNs,
+      ctimeNs: stat.ctimeNs,
+      size: stat.size,
+      ino: stat.ino,
+      content,
+    });
+    return content;
   } catch {
+    roleCache.delete(path);
     return "";
   }
 }
 
 export function writeRole(dir: string, role: string): void {
-  writeFileSync(join(dir, "ROLE.md"), role.trim() ? `${role.trim()}\n` : "");
+  const path = join(dir, "ROLE.md");
+  const content = role.trim() ? `${role.trim()}\n` : "";
+  writeFileSync(path, content);
+  try {
+    const stat = statSync(path, { bigint: true });
+    roleCache.set(path, {
+      mtimeNs: stat.mtimeNs,
+      ctimeNs: stat.ctimeNs,
+      size: stat.size,
+      ino: stat.ino,
+      content,
+    });
+  } catch {
+    roleCache.delete(path);
+  }
 }
 
 /** Size of MEMORY.md in bytes, or 0 when there is none. */
