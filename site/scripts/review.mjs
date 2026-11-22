@@ -22,6 +22,7 @@ const types = {
   ".js": "text/javascript",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".webp": "image/webp",
 };
 const server = createServer(async (req, res) => {
   let path = decodeURIComponent(new URL(req.url, "http://x").pathname);
@@ -90,6 +91,7 @@ const configs = [
   ["en", "/", "dark", 390],
   ["zh", "/zh/", "light", 390],
   ["en-slack", "/slack/", "light", 1440],
+  ["en-github", "/github/", "dark", 1440],
   ["zh-feishu", "/zh/feishu/", "dark", 390],
 ];
 

@@ -1,7 +1,18 @@
 // Bilingual integration landing pages for mingle.build (/<app>/ and /zh/<app>/).
 // Keep English and Chinese in step, and keep every claim grounded in src/channels/.
 
-export const integrationOrder = ["slack", "discord", "telegram", "imessage", "feishu", "wechat"];
+export const integrationOrder = [
+  "slack",
+  "discord",
+  "telegram",
+  "imessage",
+  "feishu",
+  "wechat",
+  "wecom",
+  "dingtalk",
+  "qq",
+  "github",
+];
 
 export const integrationsUi = {
   en: {
@@ -373,6 +384,230 @@ export const integrations = {
         ],
       ],
     },
+    wecom: {
+      title: "Connect Claude Code & Codex to WeCom Locally · Mingle",
+      description:
+        "Scan a QR code in WeCom (企业微信) to connect local Claude Code, Codex, OpenCode and Kimi Code over the official intelligent bot WebSocket SDK. Streaming replies, files, zero server.",
+      eyebrow: "Mingle for WeCom",
+      h1: "Claude Code & Codex in WeCom.<br><span>QR scan, no server.</span>",
+      lead: "Scan once with WeCom to create an official intelligent bot and connect your local coding agent over WebSocket. Streaming live replies, group chats, and files—with zero cloud server.",
+      transportNote: "Official WeCom bot SDK WebSocket · QR setup · Streaming replies & files",
+      steps: [
+        [
+          "Scan the QR code with WeCom",
+          "Pick WeCom in the Mingle console and scan the code on your phone to create and authorize an official WeCom intelligent bot—no public callback URL needed.",
+        ],
+        [
+          "Connect outbound over the official WebSocket SDK",
+          "Mingle saves the bot credentials only in your OS keychain (macOS Keychain, Windows DPAPI or Linux Secret Service) and opens an outbound WebSocket directly from your machine.",
+        ],
+        [
+          "DM or @-mention your agent in WeCom groups",
+          "Whoever scans the code becomes the owner. Ask questions directly or @ the bot in team groups and watch answers stream in live as your local agent works.",
+        ],
+      ],
+      worksTitle: "Built for WeCom DMs and team groups.",
+      highlights: [
+        [
+          "Official intelligent bot WebSocket, zero server",
+          "Uses the official WeCom AI bot Node SDK over an outbound WebSocket from your computer—no public webhook domain, no reverse proxy, and no Mingle relay.",
+        ],
+        [
+          "Streaming live replies",
+          "Replies stream directly into the WeCom message while your agent thinks and runs tools, then hand over cleanly to a follow-up message if a task runs long.",
+        ],
+        [
+          "Direct chats, group chats and two-way files",
+          "Works in 1-on-1 chats and WeCom groups, with quote replies and encrypted image/file download and upload handled locally.",
+        ],
+        [
+          "Shared memory across WeCom, WeChat & GitHub",
+          "Connect the same local agent to WeCom, WeChat, Feishu, Slack or GitHub so it remembers work context everywhere with one ROLE.md and MEMORY.md.",
+        ],
+      ],
+      faq: [
+        [
+          "Do I need a public IP or callback URL to connect WeCom?",
+          "No. Mingle uses the official WeCom intelligent bot WebSocket SDK, so your computer initiates the connection outbound without exposing any HTTP endpoint.",
+        ],
+        [
+          "Does WeCom support both direct messages and group chats?",
+          "Yes. You can message the bot directly or add it to WeCom groups, with streaming replies and two-way file and image support.",
+        ],
+        [
+          "Where are my WeCom credentials and company chat data stored?",
+          "Bot credentials are stored only in your OS keychain, and Mingle runs locally on 127.0.0.1 with no Mingle server or telemetry.",
+        ],
+      ],
+    },
+    dingtalk: {
+      title: "Connect Claude Code & Codex to DingTalk Locally · Mingle",
+      description:
+        "Connect Claude Code, Codex, OpenCode and Kimi Code to DingTalk via QR device registration and DingTalk Stream WebSocket. Live AI cards, files, and zero public server.",
+      eyebrow: "Mingle for DingTalk",
+      h1: "Claude Code & Codex in DingTalk.<br><span>Stream mode, no server.</span>",
+      lead: "Scan a QR code in DingTalk to register a bot and connect your local coding agent over official DingTalk Stream. Live AI progress cards, reactions, and files—no public webhook needed.",
+      transportNote: "DingTalk Stream WebSocket · QR setup · AI progress cards & files",
+      steps: [
+        [
+          "Scan with DingTalk to register the bot",
+          "Pick DingTalk in the Mingle console and scan the QR code (or open the desktop link) to finish official device registration without manually wiring callback URLs.",
+        ],
+        [
+          "Connect via DingTalk Stream from your machine",
+          "Mingle stores the app credentials only in your OS keychain and opens an outbound DingTalk Stream WebSocket—no VPS, no public domain, no tunnel.",
+        ],
+        [
+          "Chat in DingTalk DMs or @ in groups",
+          "Whoever scans becomes the owner. Send text, voice transcripts, screenshots or files up to 20 MB and track progress live inside DingTalk AI cards.",
+        ],
+      ],
+      worksTitle: "Native DingTalk Stream, live AI cards.",
+      highlights: [
+        [
+          "DingTalk Stream, no public webhook",
+          "Receives messages over the official DingTalk Stream client straight on your computer—no cloud host or public HTTPS endpoint to maintain.",
+        ],
+        [
+          "Live AI cards and message reactions",
+          "Your agent reacts immediately when a message arrives and streams live markdown updates through DingTalk's AI card while long tasks run on the side.",
+        ],
+        [
+          "Direct chats, groups and two-way files",
+          "Supports 1-on-1 messages and @-mentions in DingTalk groups, plus receiving and sending images and files up to 20 MB.",
+        ],
+        [
+          "One local agent across every app",
+          "Keep the same agent in DingTalk, WeChat, Feishu, Slack and GitHub with one local memory and your existing coding agent subscription.",
+        ],
+      ],
+      faq: [
+        [
+          "Does DingTalk require a public server or HTTPS callback?",
+          "No. Mingle connects through DingTalk Stream (outbound WebSocket), so everything runs on your own machine with no exposed ports.",
+        ],
+        [
+          "Can the agent send and receive files in DingTalk?",
+          "Yes. Mingle downloads incoming files and images for your local agent and uploads images and files up to 20 MB back into DingTalk chats.",
+        ],
+        [
+          "Which coding agents can drive my DingTalk bot?",
+          "Any of the 14 harnesses supported via OAR, including Claude Code, Codex, OpenCode and Kimi Code (tested end to end), using the subscription or API key you already have.",
+        ],
+      ],
+    },
+    qq: {
+      title: "Connect Claude Code & Codex to QQ Locally · Mingle",
+      description:
+        "Bind a QQ bot by QR scan and drive it locally with Claude Code, Codex, OpenCode or Kimi Code over Tencent's official QQ Bot SDK WebSocket. Owner approval and zero server.",
+      eyebrow: "Mingle for QQ",
+      h1: "Claude Code & Codex in QQ.<br><span>QR bind, no server.</span>",
+      lead: "Scan with QQ to bind an official QQ bot and run your local coding agent over Tencent's WebSocket gateway. Direct messages, @-mentions in groups, file transfer, and owner approval.",
+      transportNote: "Official Tencent QQ Bot SDK · WebSocket gateway · Owner approval",
+      steps: [
+        [
+          "Scan to bind an official QQ bot",
+          "Select QQ in the Mingle console and scan the QR code with QQ (or enter AppID and AppSecret manually from q.qq.com) to authorize the official bot.",
+        ],
+        [
+          "Connect outbound to the QQ WebSocket gateway",
+          "Mingle stores AppID and AppSecret only in your OS keychain and connects over Tencent's official Node SDK gateway—no server or webhook needed.",
+        ],
+        [
+          "Approve who can talk to your bot",
+          "Whoever binds the bot (or sends the 6-digit claim code) is the owner. Because QQ bots can be reached publicly, new users and groups wait for your approval before the agent acts.",
+        ],
+      ],
+      worksTitle: "Official QQ Bot SDK, safely gated by you.",
+      highlights: [
+        [
+          "Official Tencent SDKs, zero cloud bridge",
+          "Uses Tencent's official qqbot-connector for QR binding and qqbot-nodejs for the WebSocket gateway—running strictly on your computer.",
+        ],
+        [
+          "Direct chats and group @-mentions",
+          "Chat 1-on-1 with live typing notices or @ your agent in QQ groups. Long messages split automatically to respect QQ's length limits.",
+        ],
+        [
+          "Two-way images and files",
+          "Send screenshots and attachments from QQ for your local coding agent to inspect, and receive generated files or images back in the chat.",
+        ],
+        [
+          "Owner approval for public chats",
+          "New people or QQ groups never spend your coding agent's quota until you explicitly approve them in the console or chat.",
+        ],
+      ],
+      faq: [
+        [
+          "Does Mingle use an unofficial QQ protocol or third-party bridge?",
+          "No. Mingle uses Tencent's official QQ Bot SDKs (@tencent-connect/qqbot-connector and @tencent-connect/qqbot-nodejs) directly from your computer.",
+        ],
+        [
+          "Can strangers use my QQ bot and burn my Claude Code or Codex quota?",
+          "No. On public platforms like QQ, Telegram and Discord, any new user or group waits for the owner's explicit approval before the agent runs a turn.",
+        ],
+        [
+          "Do I need a VPS to keep the QQ bot online?",
+          "No. Mingle runs in your desktop app's menu bar or system tray on macOS, Windows or Linux, connecting outbound over WebSocket with no server required.",
+        ],
+      ],
+    },
+    github: {
+      title: "Connect Claude Code & Codex to GitHub Issues & PRs Locally · Mingle",
+      description:
+        "Mention your local Claude Code, Codex or OpenCode agent in GitHub issues, pull requests and inline review threads. Polls the official Notifications API from your computer—no webhook or server.",
+      eyebrow: "Mingle for GitHub",
+      h1: "Claude Code & Codex in GitHub.<br><span>@mention in issues & PRs.</span>",
+      lead: "Give your local coding agent its own GitHub account and @-mention it in issues, pull requests and inline review comments. Polls GitHub directly from your machine—no webhook, no GitHub App server.",
+      transportNote: "GitHub REST Notifications API (ETag polling) · Trusted org/collaborators only",
+      steps: [
+        [
+          "Sign in the agent's own GitHub account",
+          "Pick GitHub in the Mingle console and authorize the agent's dedicated GitHub account via device code (or a classic personal access token with notifications and repo scopes).",
+        ],
+        [
+          "Poll notifications locally with zero webhook",
+          "Mingle saves the token in your OS keychain and polls the official GitHub Notifications API with ETag caching from your computer—no public URL or server to host.",
+        ],
+        [
+          "@-mention your agent in issues, PRs and reviews",
+          "Tag @your-agent in an issue, PR or inline code review thread. It reacts to acknowledge, runs on your local machine, and replies right inside the same issue or review thread.",
+        ],
+      ],
+      worksTitle: "Built for issues, pull requests and code review.",
+      highlights: [
+        [
+          "Zero webhook, ETag-friendly polling",
+          "Polls GitHub's official REST Notifications API with ETag headers so idle checks cost zero rate limit—no webhook server, no ngrok, and no hosted CI runner needed.",
+        ],
+        [
+          "Inline PR review threads stay in thread",
+          "When you @-mention the agent on a specific diff line in a pull request review, its reply lands right back inside that exact inline review thread.",
+        ],
+        [
+          "Trusted repo roles only (anti-abuse by design)",
+          "On public or private repositories, Mingle only wakes the agent for comments from repository OWNER, MEMBER or COLLABORATOR accounts—drive-by mentions from strangers are ignored.",
+        ],
+        [
+          "Same memory as your team's chat apps",
+          "Your agent in GitHub is the exact same agent in Slack, Discord, Feishu, Telegram or WeChat—so a discussion in chat carries straight into the PR without re-explaining.",
+        ],
+      ],
+      faq: [
+        [
+          "Do I need to host a GitHub App webhook server?",
+          "No. Mingle polls the GitHub REST Notifications API directly from your computer using conditional ETag requests, so no public webhook endpoint is needed.",
+        ],
+        [
+          "What stops random people on a public repo from triggering my local agent?",
+          "Mingle checks each commenter's author_association and only acts on mentions from repository OWNER, MEMBER or COLLABORATOR accounts. Everyone else on a public repo is ignored.",
+        ],
+        [
+          "Why does the agent use its own GitHub account?",
+          "Using a dedicated machine account keeps @-mentions unambiguous, avoids self-notification loops, and makes it obvious in issue and PR history which comments came from the agent.",
+        ],
+      ],
+    },
   },
   zh: {
     slack: {
@@ -699,6 +934,230 @@ export const integrations = {
         [
           "在微信里用 Claude Code 或 Codex 需要额外付费吗？",
           "不需要。Mingle 是免费且 MIT 开源的本地程序，直接驱动你电脑上已有的订阅或 API key，不加收任何费用。",
+        ],
+      ],
+    },
+    wecom: {
+      title: "企业微信本地接入 Claude Code 与 Codex（无服务器）· Mingle",
+      description:
+        "企业微信扫码接入本机 Claude Code、Codex、OpenCode 与 Kimi Code。基于企业微信官方智能机器人 WebSocket SDK，支持流式回复、群聊与双向文件，无需公网服务器。",
+      eyebrow: "Mingle · 企业微信",
+      h1: "企业微信本地接入 Claude Code 和 Codex，<br><span>扫码直连，没有服务器。</span>",
+      lead: "用企业微信扫一下二维码，即可通过官方智能机器人 WebSocket SDK 把本机 coding agent 接进企业微信私聊和群聊。支持流式实时回复与双向文件，无需公网回调地址。",
+      transportNote: "企业微信官方智能机器人 WebSocket · 扫码绑定 · 流式回复与文件",
+      steps: [
+        [
+          "用企业微信扫码创建智能机器人",
+          "在 Mingle 控制台选择企业微信，用手机企业微信扫一下二维码完成官方机器人授权，不需要手动配置公网回调域名和加解密。",
+        ],
+        [
+          "本机主动连向企业微信 WebSocket",
+          "机器人凭据只存入系统钥匙串（macOS 钥匙串、Windows DPAPI 或 Linux Secret Service），Mingle 直接从你的电脑发起 WebSocket 长连接。",
+        ],
+        [
+          "在私聊或企业微信群里直接交办任务",
+          "扫码的人自动成为 owner。在私聊或工作群里提问、发文件，Agent 边干活边流式输出回复内容。",
+        ],
+      ],
+      worksTitle: "把本机 coding agent 请进企业微信。",
+      highlights: [
+        [
+          "官方智能机器人 SDK，零公网服务器",
+          "基于企业微信官方 @wecom/aibot-node-sdk 长连接，不用买云服务器、不用开公网端口，也没有 Mingle 云端中转。",
+        ],
+        [
+          "流式实时回复体验",
+          "Agent 思考和执行期间，回答会以流式方式持续刷新进企业微信消息里，长任务超时前自动衔接续发。",
+        ],
+        [
+          "支持私聊、群聊与双向加密文件",
+          "同时支持单聊、群聊和引用回复，支持本地解密下载图片与文件，也能把生成结果直接发回企业微信。",
+        ],
+        [
+          "与微信、飞书、GitHub 共享同一份记忆",
+          "同一个 Agent 共用本地 ROLE.md 和 MEMORY.md，在企业微信群里讨论的上下文，回到微信或 GitHub 里也记得清清楚楚。",
+        ],
+      ],
+      faq: [
+        [
+          "企业微信接入需要公网 IP 或回调域名吗？",
+          "不需要。Mingle 使用企业微信官方智能机器人的 WebSocket 长连接，由你的电脑主动向外连接，不需要暴露任何公网接口。",
+        ],
+        [
+          "企业微信支持群聊和私聊吗？",
+          "都支持。可以直接和机器人单聊，也可以把它拉进企业微信群里使用，同时支持流式回复和双向图片/文件收发。",
+        ],
+        [
+          "机器人密钥和公司聊天内容会上传到 Mingle 服务器吗？",
+          "不会。Mingle 没有服务端、账号和遥测，完全运行在你的电脑（127.0.0.1）上，凭据只存在系统钥匙串中。",
+        ],
+      ],
+    },
+    dingtalk: {
+      title: "钉钉本地接入 Claude Code 与 Codex（Stream 模式，无服务器）· Mingle",
+      description:
+        "钉钉扫码通过官方 Stream 长连接接入本机 Claude Code、Codex、OpenCode 与 Kimi Code。支持 AI 流式进度卡片、表情回应与 20MB 文件收发，无需公网服务器。",
+      eyebrow: "Mingle · 钉钉",
+      h1: "钉钉本地接入 Claude Code 和 Codex，<br><span>Stream 直连，没有服务器。</span>",
+      lead: "用钉钉扫码完成官方设备注册，通过钉钉 Stream 长连接把本机 coding agent 接进钉钉私聊和群聊。支持流式 AI 进度卡片与双向文件，不需要公网回调地址。",
+      transportNote: "钉钉官方 Stream 长连接 · 扫码注册 · AI 进度卡片与文件",
+      steps: [
+        [
+          "用钉钉扫码完成机器人注册",
+          "在 Mingle 控制台选择钉钉，用手机钉钉扫码（或直接点开桌面端链接）即可完成官方注册，不用手动配置繁琐的 webhook 回调。",
+        ],
+        [
+          "本机直连钉钉 Stream 长连接",
+          "应用凭据仅存系统钥匙串，Mingle 直接从你的电脑建立钉钉 Stream WebSocket 连接，不需要云服务器、域名或内网穿透。",
+        ],
+        [
+          "在钉钉单聊或群里 @ 它干活",
+          "扫码的人自动成为 owner。支持发送文字、语音转写、截图和文件，长任务会在钉钉 AI 卡片里实时刷新进度。",
+        ],
+      ],
+      worksTitle: "原生钉钉 Stream，流式 AI 卡片实时看进度。",
+      highlights: [
+        [
+          "官方 Stream 模式，零公网部署",
+          "通过钉钉官方 dingtalk-stream 长连接直接在本地收消息，不依赖任何公网 HTTPS 回调或第三方桥接。",
+        ],
+        [
+          "AI 进度卡片与消息回应",
+          "收到消息先回表情确认，随后用钉钉 AI 卡片流式更新进度和结果；长任务在后台跑，主群快问照样秒回。",
+        ],
+        [
+          "私聊、群聊与双向文件收发",
+          "支持单聊与群聊 @ 触发，支持接收富文本/图片/文件，并可把最高 20 MB 的图片和文件发回钉钉。",
+        ],
+        [
+          "复用已有订阅，跨软件共用记忆",
+          "同一个本地 Agent 可以同时在线于钉钉、微信、飞书、Slack 和 GitHub，共用一份记忆和你已有的 Claude Code / Codex 订阅。",
+        ],
+      ],
+      faq: [
+        [
+          "钉钉接入 Claude Code 需要公网服务器或回调 URL 吗？",
+          "不需要。Mingle 走钉钉官方 Stream 长连接模式，完全在你的电脑上主动连接钉钉，不需要公网服务器或穿透工具。",
+        ],
+        [
+          "支持在钉钉里收发文件和图片吗？",
+          "支持。Mingle 会把钉钉发来的文件和图片下载给本机 Agent 处理，也支持把 Agent 生成的图片和文件（单文件最高 20 MB）发回群聊或私聊。",
+        ],
+        [
+          "钉钉机器人可以用哪些 AI coding agent 驱动？",
+          "支持通过 OAR 接入的全部 14 款 harness，其中 Claude Code、Codex、OpenCode、Kimi Code 已端到端验证，直接复用你已有的订阅或 API key。",
+        ],
+      ],
+    },
+    qq: {
+      title: "QQ 本地接入 Claude Code 与 Codex（官方 SDK，无服务器）· Mingle",
+      description:
+        "QQ 扫码绑定官方机器人，通过腾讯官方 QQ Bot SDK WebSocket 在本机运行 Claude Code、Codex、OpenCode 或 Kimi Code。支持私聊、群聊 @、文件收发与 owner 审批。",
+      eyebrow: "Mingle · QQ",
+      h1: "QQ 本地接入 Claude Code 和 Codex，<br><span>官方扫码，没有服务器。</span>",
+      lead: "用 QQ 扫一下二维码绑定腾讯官方机器人，在本机通过官方 WebSocket 网关驱动你的 coding agent。支持单聊、QQ 群 @ 触发、双向文件，以及针对陌生人的 owner 审批机制。",
+      transportNote: "腾讯官方 QQ Bot SDK · WebSocket 网关 · 陌生人审批防滥用",
+      steps: [
+        [
+          "用 QQ 扫码绑定官方机器人",
+          "在 Mingle 控制台选择 QQ，用手机 QQ 扫码即可完成绑定（也支持在 q.qq.com 获取 AppID 与 AppSecret 后手动填写）。",
+        ],
+        [
+          "本机直连腾讯官方 WebSocket 网关",
+          "AppID 和 AppSecret 只保存在系统钥匙串中，Mingle 直接从你的电脑连接官方网关，不需要云服务器或公网回调。",
+        ],
+        [
+          "认领 owner 并审批可对话的人和群",
+          "扫码人（或私聊发送 6 位认领码的人）成为 owner。由于 QQ 机器人可能被公开搜到，新用户和新群需经你审批通过后 Agent 才会响应。",
+        ],
+      ],
+      worksTitle: "腾讯官方机器人 SDK，额度安全可控。",
+      highlights: [
+        [
+          "腾讯官方 SDK，无第三方非官方协议",
+          "使用腾讯官方 @tencent-connect/qqbot-connector 扫码绑定与 @tencent-connect/qqbot-nodejs 长连接，不经过任何第三方中转服务器。",
+        ],
+        [
+          "支持单聊输入状态与 QQ 群 @ 回复",
+          "单聊处理期间会持续显示「正在输入」状态，群聊里 @ 它即可触发；超长回复会自动按 QQ 字数上限安全分段发送。",
+        ],
+        [
+          "双向图片与文件传输",
+          "可以把 QQ 里的截图和文件发给本机 Agent 阅读分析，Agent 生成的文件和图片也能直接发回 QQ 聊天。",
+        ],
+        [
+          "陌生人与新群默认需审批",
+          "未获 owner 批准的新人或新 QQ 群不会触发你的 coding agent，避免别人随意消耗你的模型订阅额度。",
+        ],
+      ],
+      faq: [
+        [
+          "Mingle 接入 QQ 用的是官方接口还是第三方逆向协议？",
+          "完全使用腾讯官方 QQ 机器人 SDK（qqbot-connector 与 qqbot-nodejs），稳定合规且直接运行在你自己的电脑上。",
+        ],
+        [
+          "别人搜到我的 QQ 机器人会乱花我的模型额度吗？",
+          "不会。对于 QQ、Telegram、Discord 这类公开平台，任何陌生人或新群发来消息时都会先等待你的 owner 审批，批准前 Agent 不会执行。",
+        ],
+        [
+          "需要买云服务器挂着 QQ 机器人吗？",
+          "不需要。Mingle 桌面端常驻 macOS 菜单栏或 Windows/Linux 系统托盘，在本机通过 WebSocket 保持在线，零服务器成本。",
+        ],
+      ],
+    },
+    github: {
+      title: "在 GitHub Issue 与 PR 中本地接入 Claude Code 和 Codex · Mingle",
+      description:
+        "在 GitHub Issue、Pull Request 和行内 Code Review 评论里 @ 本机的 Claude Code、Codex 或 OpenCode。本机 ETag 轮询官方通知 API，无需 webhook 服务器，仅响应仓库成员。",
+      eyebrow: "Mingle · GitHub",
+      h1: "在 GitHub Issue 和 PR 里，<br><span>直接 @ 本机 Agent 干活。</span>",
+      lead: "给你的本地 coding agent 配一个专属 GitHub 账号，在 Issue、Pull Request 和行内 Review 评论里直接 @ 它。本机通过 ETag 轮询官方通知接口，无需 webhook 服务器，也绝不响应陌生人。",
+      transportNote: "GitHub REST 通知 API（ETag 零限额轮询）· 仅信任仓库 OWNER / MEMBER / COLLABORATOR",
+      steps: [
+        [
+          "登录 Agent 专属的 GitHub 账号",
+          "在 Mingle 控制台选择 GitHub，用验证码授权 Agent 自己的 GitHub 账号（或填入包含 notifications 与 repo 权限的 Classic PAT）。",
+        ],
+        [
+          "本机低开销轮询，无需 webhook 服务器",
+          "Token 仅保存在系统钥匙串里，Mingle 在你本机带 ETag 轮询 GitHub 官方通知 API——没有新动态时不消耗 API 限额，也无需暴露任何公网地址。",
+        ],
+        [
+          "在 Issue、PR 和行内 Review 里 @ 它",
+          "在任意 Issue、PR 或代码行评审线程里 @ 你的 Agent，它会先回表情表示收到，在你的电脑上完成分析或修改，然后直接回复在原线程里。",
+        ],
+      ],
+      worksTitle: "专为 Issue、PR 和代码评审设计。",
+      highlights: [
+        [
+          "无需 webhook，ETag 轮询省限额",
+          "不需要搭 GitHub App 服务端或开 ngrok，Mingle 在本机使用条件 ETag 请求轮询官方通知接口，空闲时几乎零限额消耗。",
+        ],
+        [
+          "PR 行内 Review 回复精准回到原线程",
+          "在 Pull Request 某一行代码上发起 review 评论并 @ 它，Agent 的回复会直接落回那条行内评审线程，不会歪楼到主评论区。",
+        ],
+        [
+          "开源仓库防滥用：只响应受信任成员",
+          "Mingle 会校验评论者的 author_association，只响应仓库 OWNER、MEMBER 与 COLLABORATOR 的 @，公开仓库里陌生人的 @ 会被直接忽略。",
+        ],
+        [
+          "与 Slack、飞书、Discord 共享同一份记忆",
+          "GitHub 上的 Agent 和你工作群里的 Agent 是同一个，群里聊完的方案结论不用重复粘贴，在 PR 里 @ 它就能直接接着干。",
+        ],
+      ],
+      faq: [
+        [
+          "接入 GitHub 需要自己搭建 Webhook 服务器或 GitHub App 吗？",
+          "不需要。Mingle 直接从你的电脑轮询 GitHub 官方 REST 通知接口（带 ETag 缓存），完全不需要公网地址或云端服务器。",
+        ],
+        [
+          "公开仓库里如果有陌生人 @ 我的 Agent 怎么办？",
+          "Mingle 内置了权限过滤，只对仓库的 OWNER、MEMBER 和 COLLABORATOR 的评论触发执行，公开仓库中其他外部用户的 @ 会被自动忽略。",
+        ],
+        [
+          "为什么建议给 Agent 使用独立的 GitHub 账号？",
+          "独立账号可以让 @ 触发关系清晰无歧义、避免自己触发自己的通知循环，也能让团队在 Issue 和 PR 历史里一眼分辨哪些回复来自 Agent。",
         ],
       ],
     },

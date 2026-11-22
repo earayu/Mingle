@@ -1,12 +1,13 @@
 # mingle.build
 
-The website: static pages in English and Chinese (`/` and `/zh/`, plus per-app integration guides at `/<app>/` and `/zh/<app>/`), `llms.txt` for AI agents, and real screenshots of the console. No framework; one generator script.
+The website: static pages in English and Chinese (`/` and `/zh/`, plus per-app integration guides at `/<app>/` and `/zh/<app>/`), `llms.txt` and `llms-full.txt` for AI agents, and real screenshots of the console. No framework; one generator script.
 
 ```text
 site/scripts/copy.mjs          every word on the homepage, en and zh; keep the two in step
-site/scripts/integrations.mjs  bilingual integration landing pages (slack, discord, telegram, imessage, feishu, wechat)
+site/scripts/integrations.mjs  bilingual integration landing pages for all 10 platforms
 site/scripts/harnesses.mjs     the harnesses on the Brains row, in the console's order
 site/scripts/demo.mjs          the homepage demo's scenes (one agent in Feishu, WeChat, Telegram, Discord), en and zh; they play by themselves
+site/scripts/assets.mjs        converts site/img/*.png to WebP twins and renders 1200x630 Open Graph cards into site/img/og/
 site/scripts/build.mjs         renders site/dist from copy.mjs, integrations.mjs and a release snapshot
 site/scripts/screenshots.mjs   seeds a throwaway Mingle and shoots the console into site/img, light and dark; refreshes site/icons from OAR
 site/scripts/review.mjs        screenshots the built site section by section, desktop and phone, into .site-review/page/

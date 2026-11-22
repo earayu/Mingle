@@ -21,7 +21,12 @@ if (!values.release)
 const published = validateRelease(JSON.parse(readFileSync(resolve(values.release), "utf8")));
 const version = releaseVersion(published.tag_name);
 const releaseURL = published.html_url;
+const lastmod = published.assets
+  .map((a) => a.updated_at.slice(0, 10))
+  .sort()
+  .at(-1);
 const asset = (name) => assetURL(published, name);
+const INDEXNOW_KEY_FILE = "7f4c9a2e8b1d4f6a9c3e5b7d2a8f4c1e.txt";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const SITE = join(ROOT, "site");
@@ -76,6 +81,30 @@ const platformIcon = (id, size = 40) => {
 const esc = (s) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 const jsonLd = (data) =>
   `<script type="application/ld+json">${JSON.stringify(data).replaceAll("<", "\\u003c")}</script>`;
+const websiteJsonLd = (t) =>
+  jsonLd({
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": `${ORIGIN}/#organization`,
+        name: "Mingle",
+        url: `${ORIGIN}/`,
+        logo: `${ORIGIN}/favicon.svg`,
+        email: EMAIL,
+        sameAs: [REPO],
+      },
+      {
+        "@type": "WebSite",
+        "@id": `${ORIGIN}/#website`,
+        url: `${ORIGIN}${t.path}`,
+        name: "Mingle",
+        description: t.description,
+        inLanguage: t.lang,
+        publisher: { "@id": `${ORIGIN}/#organization` },
+      },
+    ],
+  });
 const softwareJsonLd = (t, lang, path) =>
   jsonLd({
     "@context": "https://schema.org",
@@ -120,7 +149,9 @@ const shot = (name, lang, alt, cls = "", eager = false) => `
   <figure class="window ${cls}">
     <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i></div>
     <picture>
+      <source srcset="/img/${name}-${lang}-dark.webp" media="(prefers-color-scheme: dark)" type="image/webp">
       <source srcset="/img/${name}-${lang}-dark.png" media="(prefers-color-scheme: dark)">
+      <source srcset="/img/${name}-${lang}-light.webp" type="image/webp">
       <img src="/img/${name}-${lang}-light.png" alt="${esc(alt)}" width="2560" height="1600" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">
     </picture>
   </figure>`;
@@ -388,6 +419,7 @@ ${Object.values(copy)
   .map((v) => `<link rel="alternate" hreflang="${v.lang}" href="${ORIGIN}${v.path}">`)
   .join("\n")}
 <link rel="alternate" hreflang="x-default" href="${ORIGIN}/">
+<link rel="alternate" type="text/markdown" href="${ORIGIN}/llms-full.txt" title="Mingle full documentation for LLMs">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1C1C1F" media="(prefers-color-scheme: dark)">
@@ -395,8 +427,11 @@ ${Object.values(copy)
 <meta property="og:title" content="${esc(t.title)}">
 <meta property="og:description" content="${esc(t.description)}">
 <meta property="og:url" content="${ORIGIN}${t.path}">
-<meta property="og:image" content="${ORIGIN}/img/agent-${lang}-light.png">
+<meta property="og:image" content="${ORIGIN}/img/og/home-${lang}.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
+${websiteJsonLd(t)}
 ${softwareJsonLd(t, lang, t.path)}
 ${faqJsonLd(t.faq.items)}
 <link rel="stylesheet" href="/styles.css?v=${version}">
@@ -496,7 +531,9 @@ ${demoSection(key, t)}
     </div>
     <figure class="crop reveal">
       <picture>
+        <source srcset="/img/handoff-${lang}-dark.webp" media="(prefers-color-scheme: dark)" type="image/webp">
         <source srcset="/img/handoff-${lang}-dark.png" media="(prefers-color-scheme: dark)">
+        <source srcset="/img/handoff-${lang}-light.webp" type="image/webp">
         <img src="/img/handoff-${lang}-light.png" alt="${esc(t.handoff.alt)}" width="1296" height="1294" loading="lazy" decoding="async">
       </picture>
     </figure>
@@ -559,7 +596,7 @@ ${demoSection(key, t)}
 <footer class="footer">
   <div class="wrap footer-inner">
     <div>© ${new Date().getFullYear()} Mingle · MIT</div>
-    <nav><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a><a href="mailto:${EMAIL}">${t.footer.contact}</a>${other
+    <nav><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a><a href="/llms-full.txt">llms-full.txt</a><a href="mailto:${EMAIL}">${t.footer.contact}</a>${other
       .map(([, v]) => `<a href="${v.path}" lang="${v.lang}">${v.langName}</a>`)
       .join("")}</nav>
     <p class="disclaimer">${t.footer.disclaimer}</p>
@@ -605,6 +642,7 @@ ${Object.entries(copy)
   .map(([k, v]) => `<link rel="alternate" hreflang="${v.lang}" href="${ORIGIN}${integrationPath(k, id)}">`)
   .join("\n")}
 <link rel="alternate" hreflang="x-default" href="${ORIGIN}${integrationPath("en", id)}">
+<link rel="alternate" type="text/markdown" href="${ORIGIN}/llms-full.txt" title="Mingle full documentation for LLMs">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1C1C1F" media="(prefers-color-scheme: dark)">
@@ -612,7 +650,9 @@ ${Object.entries(copy)
 <meta property="og:title" content="${esc(g.title)}">
 <meta property="og:description" content="${esc(g.description)}">
 <meta property="og:url" content="${ORIGIN}${path}">
-<meta property="og:image" content="${ORIGIN}/img/connect-${lang}-light.png">
+<meta property="og:image" content="${ORIGIN}/img/og/${id}-${lang}.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 ${softwareJsonLd({ ...t, description: g.description }, lang, path)}
 ${breadcrumbJsonLd([
@@ -720,7 +760,7 @@ ${faqJsonLd(g.faq)}
 <footer class="footer">
   <div class="wrap footer-inner">
     <div>© ${new Date().getFullYear()} Mingle · MIT</div>
-    <nav><a href="${t.path}">${ui.breadcrumbHome}</a><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a><a href="mailto:${EMAIL}">${t.footer.contact}</a>${other
+    <nav><a href="${t.path}">${ui.breadcrumbHome}</a><a href="${REPO}">GitHub</a><a href="${REPO}/releases">Releases</a><a href="${releaseURL}">${t.footer.changelog}</a><a href="/llms.txt">llms.txt</a><a href="/llms-full.txt">llms-full.txt</a><a href="mailto:${EMAIL}">${t.footer.contact}</a>${other
       .map(([k, v]) => `<a href="${integrationPath(k, id)}" lang="${v.lang}">${v.langName}</a>`)
       .join("")}</nav>
     <p class="disclaimer">${t.footer.disclaimer}</p>
@@ -741,6 +781,7 @@ function llms() {
 Key facts:
 
 - Website: ${ORIGIN}/ (English), ${ORIGIN}/zh/ (Chinese)
+- Full LLM reference: ${ORIGIN}/llms-full.txt
 - Source: ${REPO} (MIT)
 - Latest release: ${releaseURL} (v${version})
 - Install on macOS or Linux: \`${installSh}\`
@@ -797,30 +838,159 @@ ${integrationOrder.map((id) => `- [${t.platforms[id]}](${ORIGIN}${integrationPat
 `;
 }
 
+function llmsFull() {
+  const t = copy.en;
+  const strip = (s) =>
+    s
+      .replace(/<[^>]+>/g, " ")
+      .replaceAll("&amp;", "&")
+      .replace(/\s+/g, " ")
+      .trim();
+  const channelMatrix = [
+    "| Platform | Transport (no public server) | Onboarding | Chats | Threads / Live progress | Files in/out | Access control |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    "| Slack | Official Socket Mode (outbound WebSocket) | Pre-filled Slack App Manifest + tokens | DMs & channels | Thread replies, reactions, live reply | Yes | 6-digit owner claim code |",
+    "| Discord | Official Discord Gateway (outbound WebSocket) | Bot token + Message Content Intent | DMs & servers | Native threads, reactions, typing | Yes | Owner approval for new users/servers |",
+    "| Telegram | Official Bot API long polling (`getUpdates`) | BotFather token | DMs & groups | Quote replies, reactions, typing | Yes | Owner approval for new users/groups |",
+    "| iMessage | Local macOS Messages (`chat.db` + AppleScript) | Local Apple ID (macOS only) | Self-chat only | Standard messages | Yes | Owner's own Apple ID self-chat |",
+    "| Feishu / Lark | Official SDK long connection (`@larksuiteoapi/node-sdk`) | QR scan (or app credentials) | DMs, groups & Docs comments | Native threads, streaming cards, reactions | Yes | QR scanner becomes owner (verified on real tenant) |",
+    "| WeChat | Official WeChat Bot API long polling | QR scan | Direct messages | Typing indicator | Yes | QR scanner becomes owner |",
+    "| WeCom | Official AI Bot SDK WebSocket (`@wecom/aibot-node-sdk`) | QR scan | DMs & groups | Streaming replies, quote replies | Yes | QR scanner becomes owner |",
+    "| DingTalk | Official Stream WebSocket (`dingtalk-stream`) | QR device registration | DMs & groups | Streaming AI cards, reactions | Yes (up to 20 MB) | QR scanner becomes owner |",
+    "| QQ | Official Tencent QQ Bot SDK WebSocket | QR scan (or AppID/AppSecret) | DMs & groups (`@`) | Typing notice in DMs | Yes | Owner approval for new users/groups |",
+    "| GitHub | Official REST Notifications API (ETag polling) | Agent's own account (device code or PAT) | Issues, PRs & review threads | Inline PR review threads, reactions | No | Repo `OWNER`, `MEMBER`, `COLLABORATOR` only |",
+  ].join("\n");
+
+  const channelGuides = integrationOrder
+    .map((id) => {
+      const g = integrations.en[id];
+      return [
+        `### ${t.platforms[id]} (${ORIGIN}${integrationPath("en", id)})`,
+        "",
+        `> ${g.lead}`,
+        "",
+        `- **Transport**: ${g.transportNote}`,
+        `- **Chinese guide**: ${ORIGIN}${integrationPath("zh", id)}`,
+        "- **Setup steps**:",
+        ...g.steps.map(([title, body], i) => `  ${i + 1}. **${title}**: ${body}`),
+        "- **Highlights**:",
+        ...g.highlights.map(([h, p]) => `  - **${h}**: ${p}`),
+        "- **FAQ**:",
+        ...g.faq.map(([q, a]) => `  - **${q}** ${a}`),
+      ].join("\n");
+    })
+    .join("\n\n");
+
+  return `# Mingle — Complete Reference for AI Agents and LLMs
+
+> ${strip(t.description)}
+
+## Canonical facts
+
+- **Name**: Mingle
+- **Category**: Open-source, local-first AI coding agent chat bridge & companion runtime
+- **License**: MIT (${REPO}/blob/main/LICENSE)
+- **Website**: ${ORIGIN}/ (English), ${ORIGIN}/zh/ (Chinese)
+- **Short summary**: ${ORIGIN}/llms.txt
+- **Repository**: ${REPO}
+- **Latest release**: ${releaseURL} (v${version}, updated ${lastmod})
+- **Operating systems**: macOS (Apple Silicon & Intel, signed & notarized), Windows (x64 & ARM), Linux (.deb & .rpm, x64 & ARM)
+- **Install (macOS / Linux)**: \`${installSh}\`
+- **Install (Windows PowerShell)**: \`${installPs}\`
+- **Build from source (Node.js 24, pnpm)**: \`git clone ${REPO}.git && cd Mingle && pnpm install && pnpm build && node dist/cli/main.js start\`
+- **Pricing**: Free. Zero Mingle server, zero account, zero telemetry, zero model markup.
+- **Contact**: ${EMAIL} · Issues: ${REPO}/issues
+
+## Core architecture & security model
+
+- **No Mingle server or cloud relay**: Mingle runs strictly on your own computer. The local console and admin HTTP API bind to \`127.0.0.1\` only.
+- **No public URL or webhook needed**: Every chat app connects outbound from your machine via official WebSocket / Stream / long-polling / ETag notification APIs (and iMessage reads your local macOS Messages database).
+- **OS Keychain credential storage**: Bot tokens and app secrets are stored only in macOS Keychain, Windows DPAPI, or Linux Secret Service—never in plaintext files.
+- **One agent, one memory, every app**: Each agent lives in a plain folder with \`ROLE.md\`, \`MEMORY.md\`, and \`notes/\`, plus a single long-lived harness session shared across every connected chat app. State and logs live under \`~/.mingle\` (\`MINGLE_HOME\`).
+- **Parallel work without blocking**: Long-running jobs execute on the side (up to 3 concurrent tasks) while quick questions still get answered in seconds; results return under the original message or thread.
+- **Access control & anti-abuse**:
+  - QR-based apps bind ownership to whoever completes the scan; token-based apps use a 6-digit claim code shown in the local console.
+  - On public platforms (Telegram, Discord, QQ), unknown users and groups wait for explicit owner approval before the agent runs a turn.
+  - On GitHub, only repository \`OWNER\`, \`MEMBER\`, and \`COLLABORATOR\` mentions trigger the agent; drive-by mentions from strangers on public repos are ignored.
+  - Owners can interrupt work immediately with \`/stop\`.
+
+## Supported coding agent harnesses (via OAR)
+
+Mingle never calls an LLM API itself—it drives whichever local coding agent harness you already installed and signed in to (subscription or API key), with console support for installing, signing in, updating, and viewing quota:
+
+- **Tested end to end**: Claude Code, Codex, OpenCode, Kimi Code
+- **All 14 harnesses**: ${harnesses.map(([, n]) => n).join(", ")}
+
+## Channel capability matrix (10 platforms)
+
+${channelMatrix}
+
+## Channel integration guides
+
+${channelGuides}
+
+## Command-line interface
+
+- \`mingle start [--port 7419] [--no-open]\`: start Mingle locally and open the console
+- \`mingle status\`: show agents and channel connection state
+- \`mingle harnesses\`: list coding agent harnesses detected on this computer
+- \`mingle agent create --name <n> --harness <id> [--model <m>] [--role <text> | --role-file <path>]\`: create a new local agent
+- \`mingle connect <agent> <platform>\`: connect a channel (for token channels such as \`telegram\`, pass token on stdin)
+- \`mingle handoff <agent>\`: import context from another conversation via stdin
+- \`mingle log\`: inspect recent lines from \`~/.mingle/logs/mingle.log\`
+- **In-session agent commands**: \`mingle message reply|send|read|search\`, \`mingle chat list|info\`, \`mingle contact list|info|name|link|note\`, \`mingle file get\`, \`mingle task create|list|update\`, \`mingle reminder set|list|snooze|cancel\` (supports \`--every 5m --check <command>\` to run a local shell check and wake the agent only when output changes), \`mingle manual\`
+- Append \`--json\` for machine-readable output.
+
+## Homepage FAQ
+
+${t.faq.items.map(([q, a]) => `### ${q}\n\n${a}`).join("\n\n")}
+`;
+}
+
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(join(OUT, "zh"), { recursive: true });
-for (const asset of ["img", "icons", "styles.css", "main.js", "favicon.svg", "_headers", "robots.txt"])
+for (const asset of [
+  "img",
+  "icons",
+  "styles.css",
+  "main.js",
+  "favicon.svg",
+  "_headers",
+  "robots.txt",
+  INDEXNOW_KEY_FILE,
+])
   cpSync(join(SITE, asset), join(OUT, asset), { recursive: true });
 writeFileSync(join(OUT, "index.html"), page("en"));
 writeFileSync(join(OUT, "zh/index.html"), page("zh"));
-const sitemapPaths = Object.values(copy).map((v) => v.path);
+const sitemapPairs = [[copy.en.path, copy.zh.path]];
 for (const key of Object.keys(copy)) {
   for (const id of integrationOrder) {
     const dir = key === "en" ? join(OUT, id) : join(OUT, key, id);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "index.html"), integrationPage(key, id));
-    sitemapPaths.push(integrationPath(key, id));
   }
 }
+for (const id of integrationOrder) {
+  sitemapPairs.push([integrationPath("en", id), integrationPath("zh", id)]);
+}
 writeFileSync(join(OUT, "llms.txt"), llms());
+writeFileSync(join(OUT, "llms-full.txt"), llmsFull());
 writeFileSync(
   join(OUT, "404.html"),
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Not found · Mingle</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/styles.css?v=${version}"></head><body><main class="section end"><div class="wrap"><img class="end-icon" src="/favicon.svg" alt="" width="64" height="64"><h2>This page isn't here.</h2><p class="lead"><a href="/">mingle.build</a> · <a href="/zh/">中文</a></p></div></main></body></html>\n`,
 );
+const sitemapEntries = sitemapPairs.flatMap(([enPath, zhPath]) => {
+  const alts = [
+    `    <xhtml:link rel="alternate" hreflang="en" href="${ORIGIN}${enPath}"/>`,
+    `    <xhtml:link rel="alternate" hreflang="zh-CN" href="${ORIGIN}${zhPath}"/>`,
+    `    <xhtml:link rel="alternate" hreflang="x-default" href="${ORIGIN}${enPath}"/>`,
+  ].join("\n");
+  return [enPath, zhPath].map(
+    (loc) => `  <url>\n    <loc>${ORIGIN}${loc}</loc>\n    <lastmod>${lastmod}</lastmod>\n${alts}\n  </url>`,
+  );
+});
 writeFileSync(
   join(OUT, "sitemap.xml"),
-  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${sitemapPaths
-    .map((p) => `  <url><loc>${ORIGIN}${p}</loc></url>`)
-    .join("\n")}\n</urlset>\n`,
+  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${sitemapEntries.join("\n")}\n</urlset>\n`,
 );
 console.log(`site in ${OUT}`);

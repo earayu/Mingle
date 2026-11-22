@@ -21,7 +21,7 @@ Create an agent on your own computer: it has a name, a role, a memory and a home
 
 | | |
 | --- | --- |
-| **Chat apps** | WeChat, WeCom, Feishu, DingTalk, QQ, Slack, Discord, Telegram; GitHub issues and pull requests, from an account of the agent's own; iMessage on a Mac, by texting yourself |
+| **Chat apps** | [WeChat](https://mingle.build/wechat/), [WeCom](https://mingle.build/wecom/), [Feishu](https://mingle.build/feishu/), [DingTalk](https://mingle.build/dingtalk/), [QQ](https://mingle.build/qq/), [Slack](https://mingle.build/slack/), [Discord](https://mingle.build/discord/), [Telegram](https://mingle.build/telegram/); [GitHub](https://mingle.build/github/) issues and pull requests, from an account of the agent's own; [iMessage](https://mingle.build/imessage/) on a Mac, by texting yourself |
 | **Harnesses** | Claude Code, Codex, Cursor, OpenCode, Kimi Code, Grok Build, Qwen Code, Qoder, CodeBuddy Code, DeepSeek Harness, Pi, Antigravity, Devin, Factory Droid, through [OAR](https://github.com/botiverse/oar) |
 | **Systems** | macOS, Windows, Linux |
 
@@ -69,7 +69,7 @@ flowchart LR
 
 ## For AI agents
 
-- **Using or explaining Mingle:** [mingle.build/llms.txt](https://mingle.build/llms.txt) summarizes the product and the CLI. Inside a session, `mingle manual` prints the agent's full guide.
+- **Using or explaining Mingle:** [mingle.build/llms.txt](https://mingle.build/llms.txt) summarizes the product and CLI; [mingle.build/llms-full.txt](https://mingle.build/llms-full.txt) has the complete Markdown reference (all channels, capability matrix, CLI and FAQ). Inside a session, `mingle manual` prints the agent's full guide.
 - **Working on this repository:** start with [AGENTS.md](AGENTS.md), the code map and working rules, then [docs/spec.md](docs/spec.md) for scope and architecture and [DESIGN.md](DESIGN.md) before touching the interface. `pnpm check` (typecheck, lint, tests) must pass.
 
 ## Documentation

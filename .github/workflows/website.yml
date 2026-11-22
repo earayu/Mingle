@@ -68,3 +68,22 @@ jobs:
           packageManager: npm
           preCommands: node scripts/releases.ts check-latest "$RUNNER_TEMP/latest-release.json"
           command: deploy --config site/wrangler.jsonc
+      - name: Notify IndexNow (Bing & AI search crawlers)
+        continue-on-error: true
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const key = "7f4c9a2e8b1d4f6a9c3e5b7d2a8f4c1e";
+            const xml = fs.readFileSync("site/dist/sitemap.xml", "utf8");
+            const urlList = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+            fetch("https://api.indexnow.org/indexnow", {
+              method: "POST",
+              headers: { "content-type": "application/json; charset=utf-8" },
+              body: JSON.stringify({
+                host: "mingle.build",
+                key,
+                keyLocation: `https://mingle.build/${key}.txt`,
+                urlList,
+              }),
+            }).then((r) => console.log(`IndexNow submitted ${urlList.length} URLs: HTTP ${r.status}`));
+          '

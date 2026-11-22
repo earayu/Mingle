@@ -814,24 +814,43 @@ describe("site build", () => {
       expect(app?.downloadUrl).toBe(`${REPO_URL}/releases/tag/${TAG}`);
       expect(faq).toBeDefined();
       expect((must(faq).mainEntity as unknown[]).length).toBeGreaterThanOrEqual(4);
+      const graphBlock = blocks.find((b) => Array.isArray(b["@graph"]));
+      expect(graphBlock).toBeDefined();
+      expect(html).toContain('type="text/markdown" href="https://mingle.build/llms-full.txt"');
+      expect(html).toContain('type="image/webp"');
     }
+    expect(en).toContain('property="og:image" content="https://mingle.build/img/og/home-en.png"');
+    expect(zh).toContain('property="og:image" content="https://mingle.build/img/og/home-zh.png"');
+    // Full LLM documentation and IndexNow verification file.
+    const llmsFull = readFileSync(join(out, "llms-full.txt"), "utf8");
+    expect(llms).toContain("https://mingle.build/llms-full.txt");
+    expect(llmsFull).toContain("## Channel capability matrix");
+    expect(llmsFull).toContain(`v${VERSION}`);
+    expect(readFileSync(join(out, "7f4c9a2e8b1d4f6a9c3e5b7d2a8f4c1e.txt"), "utf8").trim()).toBe(
+      "7f4c9a2e8b1d4f6a9c3e5b7d2a8f4c1e",
+    );
     // Bilingual integration landing pages, internal links, sitemap.xml, and llms.txt.
     const sitemap = readFileSync(join(out, "sitemap.xml"), "utf8");
-    const apps = ["slack", "discord", "telegram", "imessage", "feishu", "wechat"];
+    const apps = ["slack", "discord", "telegram", "imessage", "feishu", "wechat", "wecom", "dingtalk", "qq", "github"];
     expect(sitemap.match(/<url>/g)).toHaveLength(2 + apps.length * 2);
+    expect(sitemap).toContain('xmlns:xhtml="http://www.w3.org/1999/xhtml"');
+    expect(sitemap).toContain("<lastmod>");
+    expect(sitemap).toContain('xhtml:link rel="alternate" hreflang="zh-CN"');
     for (const app of apps) {
       expect(en).toContain(`href="/${app}/"`);
       expect(zh).toContain(`href="/zh/${app}/"`);
       expect(llms).toContain(`https://mingle.build/${app}/`);
-      for (const [lang, relPath, filePath] of [
-        ["en", `/${app}/`, join(out, app, "index.html")],
-        ["zh-CN", `/zh/${app}/`, join(out, "zh", app, "index.html")],
+      expect(llmsFull).toContain(`https://mingle.build/${app}/`);
+      for (const [lang, ogLang, relPath, filePath] of [
+        ["en", "en", `/${app}/`, join(out, app, "index.html")],
+        ["zh-CN", "zh", `/zh/${app}/`, join(out, "zh", app, "index.html")],
       ] as const) {
         expect(sitemap).toContain(`<loc>https://mingle.build${relPath}</loc>`);
         const html = readFileSync(filePath, "utf8");
         expect(html).toContain(`<link rel="canonical" href="https://mingle.build${relPath}">`);
         expect(html).toContain(`href="https://mingle.build/${app}/"`);
         expect(html).toContain(`href="https://mingle.build/zh/${app}/"`);
+        expect(html).toContain(`property="og:image" content="https://mingle.build/img/og/${app}-${ogLang}.png"`);
         expect(html).toContain(`${dl}/mingle-${VERSION}-arm64.dmg`);
         expect(html).not.toContain(`mingle-${pkg.version}-`);
         expect(html).not.toContain("aren't signed");

@@ -21,7 +21,7 @@
 
 | | |
 | --- | --- |
-| **聊天软件** | 微信、企业微信、飞书、钉钉、QQ、Slack、Discord、Telegram；GitHub 的 issue 和 PR（用 Agent 自己的账号）；Mac 上的 iMessage（给自己发消息） |
+| **聊天软件** | [微信](https://mingle.build/zh/wechat/)、[企业微信](https://mingle.build/zh/wecom/)、[飞书](https://mingle.build/zh/feishu/)、[钉钉](https://mingle.build/zh/dingtalk/)、[QQ](https://mingle.build/zh/qq/)、[Slack](https://mingle.build/zh/slack/)、[Discord](https://mingle.build/zh/discord/)、[Telegram](https://mingle.build/zh/telegram/)；[GitHub](https://mingle.build/zh/github/) 的 issue 和 PR（用 Agent 自己的账号）；Mac 上的 [iMessage](https://mingle.build/zh/imessage/)（给自己发消息） |
 | **Harness** | Claude Code、Codex、Cursor、OpenCode、Kimi Code、Grok Build、Qwen Code、Qoder、CodeBuddy Code、DeepSeek Harness、Pi、Antigravity、Devin、Factory Droid，通过 [OAR](https://github.com/botiverse/oar) 接入 |
 | **系统** | macOS、Windows、Linux |
 
@@ -69,7 +69,7 @@ flowchart LR
 
 ## 给 AI Agent
 
-- **使用或介绍 Mingle：** [mingle.build/llms.txt](https://mingle.build/llms.txt) 概括了产品和命令行。在会话里，`mingle manual` 会输出 Agent 的完整使用指南。
+- **使用或介绍 Mingle：** [mingle.build/llms.txt](https://mingle.build/llms.txt) 概括了产品和命令行；[mingle.build/llms-full.txt](https://mingle.build/llms-full.txt) 包含完整 Markdown 文档（全部渠道接入、能力矩阵、CLI 与 FAQ）。在会话里，`mingle manual` 会输出 Agent 的完整使用指南。
 - **在本仓库里开发：** 先读 [AGENTS.md](AGENTS.md)（代码地图和工作规则），再读 [docs/spec.md](docs/spec.md)（范围和架构），改界面前读 [DESIGN.md](DESIGN.md)。`pnpm check`（类型检查、lint、测试）必须通过。
 
 ## 文档
