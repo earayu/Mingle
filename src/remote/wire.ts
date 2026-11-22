@@ -6,11 +6,14 @@ export interface RemoteRequest {
   path: string;
   body?: unknown;
   binary?: string;
+  contentType?: string;
+  fileName?: string;
 }
 export interface RemoteResponse {
   status: number;
   body: unknown;
   contentType?: string;
+  disposition?: string;
   binary?: string;
 }
 

@@ -602,7 +602,12 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
           if (!channel) throw new Error("the Feishu connection is not ready");
           // A comment thread takes no cards: the answer goes out as a reply of its own.
           if (parseThread(chat.platformId)) throw new Error("a document comment cannot be a live reply");
-          const card = await openCard(channel.rawClient, options.replyTo, options.initial);
+          const card = await openCard(
+            channel.rawClient,
+            options.replyTo,
+            options.initial,
+            Boolean(groupThread(chat.platformId)),
+          );
           const mention = options.mention ? `<at id=${options.mention}></at> ` : "";
           return {
             update: async (markdown) => {
@@ -833,7 +838,7 @@ function boundedHttp(base: LarkHttp): LarkHttp {
  * card: progress is best effort, the answer is what must land, and its push reports failure so
  * the caller can send it another way. Streaming mode is kept on past Feishu's ten minutes.
  */
-async function openCard(client: LarkClient, replyTo: string, initial: string) {
+async function openCard(client: LarkClient, replyTo: string, initial: string, replyInThread = false) {
   const created = await client.cardkit.v1.card.create({
     data: { type: "card_json", data: cardJson(initial) },
   });
@@ -841,7 +846,11 @@ async function openCard(client: LarkClient, replyTo: string, initial: string) {
   if (!cardId) throw new Error("Feishu created no card");
   const sent = await client.im.v1.message.reply({
     path: { message_id: replyTo },
-    data: { msg_type: "interactive", content: JSON.stringify({ type: "card", data: { card_id: cardId } }) },
+    data: {
+      msg_type: "interactive",
+      content: JSON.stringify({ type: "card", data: { card_id: cardId } }),
+      ...(replyInThread ? { reply_in_thread: true } : {}),
+    },
   });
   const messageId = ok(sent).data?.message_id ?? "";
   // One sequence per card for every operation on it; Feishu rejects one that does not grow.

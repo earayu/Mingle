@@ -242,6 +242,47 @@ describe("lines in threads", () => {
     await until(() => front.some((input) => input.includes("And Sunday?")));
   });
 
+  it("opens a thread even when a live reply is open for the message, and settles the live reply", async () => {
+    let task = "";
+    let acked = false;
+    current = await rig(
+      async (t) => {
+        if (isLine(t)) {
+          if (t.input.includes("[task=")) {
+            task = taskOf(t.input);
+            await until(() => acked);
+            await runCli(env(t), ["message", "send"], "Working in the thread.");
+            await runCli(env(t), ["message", "reply", fromOf(t.input)], "All done.");
+            await runCli(env(t), ["task", "done", task], "Finished.");
+          }
+          return;
+        }
+        for (const id of messageIds(t.input)) {
+          await runCli(env(t), ["task", "run", "Fix bug", "--from", id], "Go.");
+          await runCli(env(t), ["message", "reply", id], "On it, progress in the thread.");
+          acked = true;
+        }
+      },
+      { live: true },
+    );
+    const { mingle, channel } = current;
+    channel.threads = true;
+
+    const asked = channel.receive({ text: "@Alex Fix the bug" });
+    await until(() => task && mingle.store.taskById(task)?.status === "done");
+
+    // The acknowledgement went through send({ inThread }), not into the live reply, so the thread opened.
+    const ack = channel.sent.find((m) => m.text === "On it, progress in the thread.");
+    expect(ack?.inThread?.title).toBe("Fix bug");
+    const thread = `-100:${asked.platformId}`;
+    expect(mingle.store.taskById(task)?.threadChat).toBeTruthy();
+    expect(channel.sent.find((m) => m.text === "Working in the thread.")?.chat.platformId).toBe(thread);
+    expect(channel.sent.find((m) => m.text === "All done.")?.inChat).toBe(true);
+    // The live reply opened for the ask was settled instead of left stuck on progress.
+    await until(() => channel.lives[0]?.final !== undefined);
+    expect(channel.lives[0]?.final).not.toBe("On it, progress in the thread.");
+  });
+
   it("guides a line to talk in its thread at a few moments, report where there is none, and stop when told", () => {
     const line = renderManual("Alex", "", "darwin", [], { taskId: "t9", title: "Fix login", home: "/h/alex" });
     expect(line).toContain("when you start, when you need to ask someone, when the direction changes");

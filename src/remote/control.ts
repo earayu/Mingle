@@ -21,7 +21,8 @@ export async function remoteRequest(home: string, request: RemoteRequest): Promi
     decoded.includes("\\") ||
     [...decoded].some((char) => char.charCodeAt(0) < 32) ||
     /^\/v1\/admin\/ssh(?:\/|\?|$)/.test(decoded) ||
-    decoded.includes("/open-home")
+    decoded.includes("/open-home") ||
+    /\/chat\/files\/[^/]+\/reveal(?:\/|\?|$)/.test(decoded)
   ) {
     return { status: 400, body: { error: "ssh_request_invalid", next: "Unsupported remote request." } };
   }
@@ -34,13 +35,16 @@ export async function remoteRequest(home: string, request: RemoteRequest): Promi
     method: request.method,
     headers: {
       authorization: `Bearer ${runtime.adminToken}`,
-      ...(request.binary
-        ? { "content-type": "application/octet-stream" }
+      ...(request.binary !== undefined
+        ? {
+            "content-type": request.contentType ?? "application/octet-stream",
+            ...(request.fileName !== undefined ? { "x-file-name": request.fileName } : {}),
+          }
         : request.body === undefined
           ? {}
           : { "content-type": "application/json" }),
     },
-    ...(request.binary
+    ...(request.binary !== undefined
       ? { body: Buffer.from(request.binary, "base64") }
       : request.body === undefined
         ? {}
@@ -49,11 +53,13 @@ export async function remoteRequest(home: string, request: RemoteRequest): Promi
     redirect: "error",
   });
   const contentType = response.headers.get("content-type") ?? "application/json";
-  if (contentType.startsWith("image/")) {
+  const disposition = response.headers.get("content-disposition") ?? undefined;
+  if (contentType.startsWith("image/") || disposition?.startsWith("attachment")) {
     return {
       status: response.status,
       body: null,
       contentType,
+      ...(disposition ? { disposition } : {}),
       binary: Buffer.from(await response.arrayBuffer()).toString("base64"),
     };
   }

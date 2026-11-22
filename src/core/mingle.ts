@@ -142,7 +142,8 @@ const MIME: Record<string, string> = {
 
 /** A file's type by its extension, where it is a common one. */
 export function mimeOf(name: string): string | undefined {
-  return MIME[name.slice(name.lastIndexOf(".") + 1).toLowerCase()];
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? MIME[name.slice(dot + 1).toLowerCase()] : undefined;
 }
 
 export interface MingleOptions {
@@ -1804,8 +1805,11 @@ export class Mingle {
       return;
     }
     // Addressed: in a conversation with the agent, and heard at the usual pace again.
-    if ((parent ?? chat).kind === "group")
+    if ((parent ?? chat).kind === "group") {
+      // Track replies sent after this address so the first follow-up sees the agent's answer.
+      if (!this.spokeSynced.has(chat.id)) this.spokeSynced.set(chat.id, this.store.lastSpokeAt(chat.id) ?? 0);
       this.book.addressed(chat.id, (parent ?? chat).id, inbound.sender.id, Date.now());
+    }
     // Addressed where it chose to hear nothing: back to the usual pace, and it may choose again.
     const place = parent ?? chat;
     if (place.kind === "group" && place.listen && place.hearPace.kind === "muted") {

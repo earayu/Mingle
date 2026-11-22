@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
@@ -1354,7 +1354,7 @@ export function createApi(mingle: Mingle): Hono<Env> {
     const chat = mingle.localChatOf(agent.id);
     if (!chat) return c.json({ messages: [], more: false });
     // One more than asked, to tell whether there is anything earlier.
-    const page = store.chatMessages(chat.id, limit + 1, before || undefined).filter((m) => !m.notice);
+    const page = store.chatMessages(chat.id, limit + 1, before || undefined, { excludeNotices: true });
     const more = page.length > limit;
     return c.json({ messages: (more ? page.slice(-limit) : page).map(chatMessageView(agent)), more });
   });
@@ -1397,7 +1397,13 @@ export function createApi(mingle: Mingle): Hono<Env> {
   const chatFile = (agentId: string, fileId: string) => {
     const chat = mingle.localChatOf(agentId);
     const found = chat && store.chatFile(chat.id, fileId);
-    if (!found || !existsSync(found.attachment.ref)) throw notFound("file", fileId);
+    if (!found) throw notFound("file", fileId);
+    try {
+      if (!statSync(found.attachment.ref).isFile()) throw notFound("file", fileId);
+    } catch (error) {
+      if (error instanceof MingleError) throw error;
+      throw notFound("file", fileId);
+    }
     return found.attachment;
   };
 

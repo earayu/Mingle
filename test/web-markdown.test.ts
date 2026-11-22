@@ -40,4 +40,18 @@ describe("private chat Markdown", () => {
     expect(out).toContain("first line\nsecond line with my_var_name");
     expect(out).not.toContain("<em");
   });
+
+  it("renders fenced code blocks with extended info strings and nested fences", () => {
+    const csharp = html("```c#\nConsole.WriteLine(1);\n```");
+    expect(csharp).toContain("<pre");
+    expect(csharp).toContain("Console.WriteLine(1);");
+
+    const titled = html('```ts title="app.ts"\nexport const ok = true;\n```');
+    expect(titled).toContain("<pre");
+    expect(titled).toContain("export const ok = true;");
+
+    const nested = html("````markdown\n```ts\nconst a = 1;\n```\n````");
+    expect(nested).toContain("<pre");
+    expect(nested).toContain("```ts\nconst a = 1;\n```");
+  });
 });

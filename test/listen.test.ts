@@ -546,6 +546,37 @@ describe("a group that hears everything", () => {
       (await r.admin("PUT", `/v1/admin/agents/${r.agentId}/chats/${group}/listen`, { listen: "yes" })).status,
     ).toBe(400);
   });
+
+  it("syncs the agent's reply to the first @-mention in a group even when the answer took several minutes", async () => {
+    const base = Date.now();
+    let clock = base;
+    const realNow = Date.now;
+    Date.now = () => clock;
+    try {
+      const r = await setup({ hearing: { quietMs: 60_000, maxWaitMs: 60_000, gapMs: 120_000 } });
+      // First @-mention in a fresh group (no prior overheard messages yet).
+      r.channel.receive({ text: "@alex can you check this?", sender: { id: "u1", name: "Alice", isBot: false } });
+      await until(() => r.turns.length === 1 && r.channel.sent.length === 1);
+      const groupId = r.mingle.store.agentChats(r.agentId)[0]?.id as string;
+      // Simulate the agent's reply landing 5 minutes after the @-mention (past E decay threshold from the @-mention alone).
+      const outMsg = r.mingle.store.chatMessages(groupId, 10).find((m) => m.direction === "out");
+      expect(outMsg).toBeDefined();
+      clock = base + 5 * 60_000;
+      r.mingle.store.db.prepare("UPDATE messages SET created_at = ? WHERE id = ?").run(clock, outMsg?.id as string);
+      // Alice writes a follow-up 2 seconds after the reply, without @-mentioning.
+      clock += 2_000;
+      r.channel.receive({
+        text: "thanks, one more question",
+        addressedToBot: false,
+        sender: { id: "u1", name: "Alice", isBot: false },
+      });
+      // Because the reply at +5m was synced, Alice is still live and her follow-up reaches the agent on the fast lane.
+      await until(() => r.turns.length === 2, 3_000);
+      expect(r.turns[1]?.input).toContain("thanks, one more question");
+    } finally {
+      Date.now = realNow;
+    }
+  });
 });
 
 describe("a thread that is one conversation", () => {

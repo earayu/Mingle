@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -54,6 +54,7 @@ describe("SSH transport", () => {
       "/v1/admin/%73sh/hosts",
       "/v1/admin/%2e%2e/health",
       "/v1/admin/agents/a/open-home",
+      "/v1/admin/agents/a/chat/files/f1/reveal",
     ]) {
       expect((await remoteRequest("/nonexistent", { method: "GET", path })).status).toBe(400);
     }
@@ -205,6 +206,81 @@ describe("remote management", () => {
       await local.close();
     }
     expect(closed).toBe(2);
+  });
+
+  it("preserves private chat file uploads (including JSON and filenames) and non-image downloads over SSH", async () => {
+    const remote = await rig(async () => {});
+    writeFileSync(
+      join(remote.home, "runtime.json"),
+      JSON.stringify({ url: remote.url, adminToken: remote.mingle.adminToken }),
+    );
+    const transport: RemoteTransport = {
+      install: async () => {},
+      prepare: async () => ({ home: remote.home, runtime: resolve(".") }),
+      connect: () => ({
+        request: (request) => remoteRequest(remote.home, request),
+        close: () => {},
+      }),
+    };
+    const local = await rig(async () => {}, { remoteTransport: transport });
+    try {
+      const added = await local.admin("POST", "/v1/admin/ssh/hosts", { host: "dev", home: remote.home });
+      const host = (added.json as { id: string }).id;
+      const agent = remoteId(host, remote.agentId);
+
+      // Upload a JSON file (with non-canonical whitespace): must keep raw bytes and filename.
+      const rawJson = '{\n  "hello": "world"\n}\n';
+      const uploaded = await fetch(`${local.url}/v1/admin/agents/${agent}/chat/uploads`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${local.mingle.adminToken}`,
+          "content-type": "application/json",
+          "x-file-name": encodeURIComponent("config.json"),
+        },
+        body: rawJson,
+      });
+      expect(uploaded.status).toBe(201);
+      const up = (await uploaded.json()) as { id: string; name: string; size: number };
+      expect(up.name).toBe("config.json");
+      expect(up.size).toBe(Buffer.byteLength(rawJson));
+
+      // Send it in private chat and download it back through the SSH gateway.
+      const sent = await local.admin("POST", `/v1/admin/agents/${agent}/chat`, { text: "here", files: [up.id] });
+      expect(sent.status).toBe(201);
+      const fileId = (sent.json as { files: { id: string }[] }).files[0]?.id as string;
+      const downloaded = await fetch(`${local.url}/v1/admin/agents/${agent}/chat/files/${fileId}`, {
+        headers: { authorization: `Bearer ${local.mingle.adminToken}` },
+      });
+      expect(downloaded.status).toBe(200);
+      expect(downloaded.headers.get("content-disposition")).toContain("config.json");
+      expect(await downloaded.text()).toBe(rawJson);
+
+      // Binary non-image file (e.g. PDF bytes with non-UTF-8 octets) survives round-trip verbatim.
+      const pdfBytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x80, 0xff, 0x00, 0xfe]);
+      const pdfUp = await fetch(`${local.url}/v1/admin/agents/${agent}/chat/uploads`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${local.mingle.adminToken}`,
+          "content-type": "application/pdf",
+          "x-file-name": encodeURIComponent("report.pdf"),
+        },
+        body: pdfBytes,
+      });
+      expect(pdfUp.status).toBe(201);
+      const pdf = (await pdfUp.json()) as { id: string; name: string };
+      expect(pdf.name).toBe("report.pdf");
+      const pdfSent = await local.admin("POST", `/v1/admin/agents/${agent}/chat`, { text: "", files: [pdf.id] });
+      const pdfFileId = (pdfSent.json as { files: { id: string }[] }).files[0]?.id as string;
+      const pdfGot = await fetch(`${local.url}/v1/admin/agents/${agent}/chat/files/${pdfFileId}`, {
+        headers: { authorization: `Bearer ${local.mingle.adminToken}` },
+      });
+      expect(pdfGot.status).toBe(200);
+      expect(pdfGot.headers.get("content-type")).toBe("application/pdf");
+      expect(Buffer.from(await pdfGot.arrayBuffer())).toEqual(pdfBytes);
+    } finally {
+      await local.close();
+      await remote.close();
+    }
   });
 
   // The fixture emulates a POSIX remote service, including its paths and graceful signals.

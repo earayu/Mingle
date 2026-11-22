@@ -44,8 +44,14 @@ function fakeLark() {
   const sent: { to: string; input: unknown; opts: unknown }[] = [];
   const reactions: string[] = [];
   /** Streaming cards, as the CardKit calls left them. */
-  const cards: { replyTo: string; contents: string[]; streaming: boolean; summary?: string; sequences: number[] }[] =
-    [];
+  const cards: {
+    replyTo: string;
+    replyInThread?: boolean;
+    contents: string[];
+    streaming: boolean;
+    summary?: string;
+    sequences: number[];
+  }[] = [];
   /** Feishu error codes the next element content updates fail with, one per update. */
   const failUpdates: number[] = [];
   /** Feishu error codes the next full card updates fail with, one per update. */
@@ -159,9 +165,18 @@ function fakeLark() {
       im: {
         v1: {
           message: {
-            async reply({ path, data }: { path: { message_id: string }; data: { content: string } }) {
+            async reply({
+              path,
+              data,
+            }: {
+              path: { message_id: string };
+              data: { content: string; reply_in_thread?: boolean };
+            }) {
               const card = cardAt(JSON.parse(data.content).data.card_id);
-              if (card) card.replyTo = path.message_id;
+              if (card) {
+                card.replyTo = path.message_id;
+                if (data.reply_in_thread !== undefined) card.replyInThread = data.reply_in_thread;
+              }
               return { code: 0, data: { message_id: "om_card" } };
             },
             async list(request: unknown) {
@@ -1070,6 +1085,14 @@ describe("feishu mentions (MING-107)", () => {
     const again = await connection.startLive?.(chat, { replyTo: "om_2", mention: "ou_asker", initial: "…" });
     await again?.finish("好的 @张三", [{ id: "ou_asker", name: "张三" }]);
     expect(lark.cards[1]?.contents.at(-1)).toBe("好的 <at id=ou_asker></at>");
+    expect(lark.cards[1]?.replyInThread).toBeUndefined();
+
+    // A live card inside a group thread replies in thread so it stays in that thread.
+    const thread = { platformId: "oc_1:om_root", kind: "thread" as const };
+    const inThread = await connection.startLive?.(thread, { replyTo: "om_3", mention: "ou_asker", initial: "…" });
+    await inThread?.finish("Got it");
+    expect(lark.cards[2]?.replyTo).toBe("om_3");
+    expect(lark.cards[2]?.replyInThread).toBe(true);
     await connection.close();
   });
 

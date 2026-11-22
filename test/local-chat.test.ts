@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { mimeOf } from "../src/core/mingle.ts";
 import { eventually, messageIds, type Rig, rig, runCli, until } from "./helpers.ts";
 
 /** The owner's private chat in the console (docs/spec.md 6.9). */
@@ -160,5 +161,49 @@ describe("private chat in the console", () => {
     });
     expect(chat.messages).toHaveLength(1);
     expect(r.turns).toEqual([]);
+  });
+
+  it("paginates past Mingle notices without truncating pages or dropping `more`", async () => {
+    current = await rig(async () => {});
+    const r = current;
+    await r.admin("POST", `/v1/admin/agents/${r.agentId}/chat`, { text: "first" });
+    await r.admin("POST", `/v1/admin/agents/${r.agentId}/chat`, { text: "second" });
+    const chat = r.mingle.localChatOf(r.agentId);
+    expect(chat).toBeDefined();
+    // Insert a Mingle notice between normal messages.
+    r.mingle.store.insertOutbound({ chatId: chat?.id as string, body: "system notice", replyTo: null, notice: true });
+    await r.admin("POST", `/v1/admin/agents/${r.agentId}/chat`, { text: "third" });
+
+    const latest = (await r.admin("GET", `/v1/admin/agents/${r.agentId}/chat?limit=2`)).json as Chat;
+    expect(latest.messages.map((m) => m.body)).toEqual(["second", "third"]);
+    expect(latest.more).toBe(true);
+
+    const earlier = (
+      await r.admin("GET", `/v1/admin/agents/${r.agentId}/chat?limit=2&before=${latest.messages[0]?.id}`)
+    ).json as Chat;
+    expect(earlier.messages.map((m) => m.body)).toEqual(["first"]);
+    expect(earlier.more).toBe(false);
+  });
+
+  it("ignores extensionless names in mimeOf and returns 404 when a chat file path is a directory", async () => {
+    expect(mimeOf("json")).toBeUndefined();
+    expect(mimeOf("png")).toBeUndefined();
+    expect(mimeOf(".png")).toBeUndefined();
+    expect(mimeOf("photo.PNG")).toBe("image/png");
+
+    current = await rig(async () => {});
+    const r = current;
+    await r.admin("POST", `/v1/admin/agents/${r.agentId}/chat`, { text: "hi" });
+    const chat = r.mingle.localChatOf(r.agentId);
+    const dir = join(r.home, "not-a-file");
+    mkdirSync(dir, { recursive: true });
+    const record = r.mingle.store.insertOutbound({
+      chatId: chat?.id as string,
+      body: "attached",
+      replyTo: null,
+      attachments: [{ ref: dir, name: "not-a-file" }],
+    });
+    const fileId = record.attachments[0]?.id as string;
+    expect((await r.admin("GET", `/v1/admin/agents/${r.agentId}/chat/files/${fileId}`)).status).toBe(404);
   });
 });

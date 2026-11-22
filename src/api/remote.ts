@@ -15,6 +15,7 @@ export function remoteResponse(result: RemoteResponse): Response {
       status: result.status,
       headers: {
         "content-type": result.contentType ?? "application/json",
+        ...(result.disposition ? { "content-disposition": result.disposition } : {}),
         "cross-origin-resource-policy": "same-origin",
         "x-content-type-options": "nosniff",
         "cache-control": "no-store",
@@ -73,7 +74,14 @@ export function remoteGateway(remotes: Remotes): MiddlewareHandler {
     if (!["GET", "HEAD"].includes(method)) {
       const bytes = await c.req.raw.arrayBuffer();
       if (bytes.byteLength > 2 * 1024 * 1024) throw new MingleError("too_large", "The request is too large.", 413);
-      if (bytes.byteLength) {
+      const isUpload = /\/chat\/uploads$/.test(path);
+      if (isUpload) {
+        request.binary = Buffer.from(bytes).toString("base64");
+        const fileName = c.req.header("x-file-name");
+        const contentType = c.req.header("content-type");
+        if (fileName !== undefined) request.fileName = fileName;
+        if (contentType) request.contentType = contentType;
+      } else if (bytes.byteLength) {
         if (c.req.header("content-type")?.includes("json"))
           request.body = body ?? JSON.parse(Buffer.from(bytes).toString());
         else request.binary = Buffer.from(bytes).toString("base64");

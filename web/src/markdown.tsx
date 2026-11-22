@@ -18,7 +18,8 @@ type Block =
   | { kind: "table"; head: string[]; rows: string[][] }
   | { kind: "hr" };
 
-const FENCE = /^ {0,3}(```|~~~)\s*([\w+-]*)\s*$/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})\s*$/;
 const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
 const BULLET = /^ {0,3}[-*+]\s+(.*)$/;
 const NUMBERED = /^ {0,3}(\d{1,9})[.)]\s+(.*)$/;
@@ -26,26 +27,42 @@ const QUOTE = /^ {0,3}>\s?(.*)$/;
 const RULE = /^ {0,3}([-*_])(\s*\1){2,}\s*$/;
 const TABLE_DIVIDER = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 
+function fenceOpen(line: string): { marker: string; lang: string } | undefined {
+  const m = FENCE.exec(line);
+  if (!m) return undefined;
+  const marker = m[1] as string;
+  const info = (m[2] ?? "").trim();
+  // CommonMark: backtick fence info strings may not contain backticks (otherwise it's inline code).
+  if (marker[0] === "`" && info.includes("`")) return undefined;
+  return { marker, lang: info.split(/\s+/, 1)[0] ?? "" };
+}
+
+function isFenceClose(line: string, open: string): boolean {
+  const m = FENCE_CLOSE.exec(line);
+  if (!m) return false;
+  const close = m[1] as string;
+  return close[0] === open[0] && close.length >= open.length;
+}
+
 function parse(text: string): Block[] {
   const lines = text.split("\n");
   const out: Block[] = [];
   let i = 0;
   const starts = (line: string) =>
-    FENCE.test(line) || HEADING.test(line) || BULLET.test(line) || NUMBERED.test(line) || QUOTE.test(line);
+    Boolean(fenceOpen(line)) || HEADING.test(line) || BULLET.test(line) || NUMBERED.test(line) || QUOTE.test(line);
   while (i < lines.length) {
     const line = lines[i] as string;
     if (!line.trim()) {
       i++;
       continue;
     }
-    const fence = FENCE.exec(line);
+    const fence = fenceOpen(line);
     if (fence) {
       const body: string[] = [];
       i++;
-      while (i < lines.length && !(lines[i] as string).trim().startsWith(fence[1] as string))
-        body.push(lines[i++] as string);
+      while (i < lines.length && !isFenceClose(lines[i] as string, fence.marker)) body.push(lines[i++] as string);
       i++;
-      out.push({ kind: "code", lang: fence[2] ?? "", text: body.join("\n") });
+      out.push({ kind: "code", lang: fence.lang, text: body.join("\n") });
       continue;
     }
     const heading = HEADING.exec(line);

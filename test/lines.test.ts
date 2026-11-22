@@ -597,6 +597,145 @@ describe("lines", () => {
     await lines.close();
   });
 
+  it("does not clobber a newly woken run to idle when the previous session finishes disposing", async () => {
+    current = await rig(async () => {});
+    const { channel, mingle, agentId } = current;
+    channel.receive({ text: "@Alex hi" });
+    await until(() => mingle.store.agentChats(agentId).length > 0);
+    const chat = mingle.store.agentChats(agentId)[0];
+    const from = mingle.store.chatMessages(chat?.id as string, 1)[0]?.id as string;
+    const disposeGate = Promise.withResolvers<void>();
+    const delivered: string[] = [];
+    let events: HarnessEvents | undefined;
+    let opens = 0;
+    const harness = {
+      open: async (_options: unknown, e: HarnessEvents) => {
+        const n = ++opens;
+        events = e;
+        return {
+          id: `s${n}`,
+          resumed: n > 1,
+          deliver: async (input: string) => {
+            delivered.push(input);
+            e.onTurnStarted();
+            return { outcome: "prompted" as const };
+          },
+          abort: async () => false,
+          dispose: async () => {
+            if (n === 1) await disposeGate.promise;
+          },
+        };
+      },
+    } as unknown as Harness;
+    const lines = new Lines({
+      store: mingle.store,
+      harness,
+      dir: () => join(current?.home as string, "lines-race"),
+      manual: () => "",
+      env: () => ({}),
+      agentEnv: () => undefined,
+      note: () => {},
+      unanswered: () => [],
+      paused: () => false,
+    });
+    const task = mingle.store.createLineTask({
+      agentId,
+      title: "Job",
+      fromMessage: from,
+      fromChat: chat?.id as string,
+      brief: "go",
+    });
+    lines.start(task);
+    await until(() => delivered.length === 1);
+    // Turn 1 ends -> rest() enters letGo(), which blocks on s1.dispose().
+    events?.onTurnEnded({ kind: "completed" });
+    // A follow-up arrives while s1.dispose() is still in flight, starting run 2.
+    lines.wake(task.id, "follow-up");
+    await until(() => delivered.length === 2);
+    expect(mingle.store.taskById(task.id)?.lineState).toBe("running");
+    // Now s1.dispose() finishes: rest() must NOT overwrite run 2's lineState to idle.
+    disposeGate.resolve();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(mingle.store.taskById(task.id)?.lineState).toBe("running");
+    events?.onTurnEnded({ kind: "completed" });
+    await until(() => mingle.store.taskById(task.id)?.lineState === "idle");
+    await lines.close();
+  });
+
+  it("delivers a rejected steered follow-up once on the next turn, not twice", async () => {
+    current = await rig(async () => {});
+    const { channel, mingle, agentId } = current;
+    channel.receive({ text: "@Alex hi" });
+    await until(() => mingle.store.agentChats(agentId).length > 0);
+    const chat = mingle.store.agentChats(agentId)[0];
+    const from = mingle.store.chatMessages(chat?.id as string, 1)[0]?.id as string;
+    const follow = mingle.store.insertInbound({
+      chatId: chat?.id as string,
+      platformId: "p-follow",
+      senderId: "u1",
+      senderName: "Alice",
+      body: "also check safari",
+      attachments: [],
+      replyTo: from,
+      triggers: true,
+      createdAt: Date.now(),
+    });
+    expect(follow).toBeDefined();
+    mingle.store.moveInbound([follow?.id as string], "deliver");
+    const delivered: string[] = [];
+    let rejectedOnce = false;
+    let events: HarnessEvents | undefined;
+    const harness = {
+      open: async (_options: unknown, e: HarnessEvents) => {
+        events = e;
+        return {
+          id: "s1",
+          resumed: false,
+          deliver: async (input: string) => {
+            if (!rejectedOnce && input.includes("also check safari")) {
+              rejectedOnce = true;
+              return { outcome: "rejected" as const, reason: "turn ending" };
+            }
+            delivered.push(input);
+            e.onTurnStarted();
+            return { outcome: "prompted" as const };
+          },
+          abort: async () => false,
+          dispose: async () => {},
+        };
+      },
+    } as unknown as Harness;
+    const lines = new Lines({
+      store: mingle.store,
+      harness,
+      dir: () => join(current?.home as string, "lines-steer"),
+      manual: () => "",
+      env: () => ({}),
+      agentEnv: () => undefined,
+      note: () => {},
+      unanswered: () => [],
+      paused: () => false,
+    });
+    const task = mingle.store.createLineTask({
+      agentId,
+      title: "Job",
+      fromMessage: from,
+      fromChat: chat?.id as string,
+      brief: "go",
+    });
+    lines.start(task);
+    await until(() => delivered.length === 1);
+    lines.wake(task.id, "also check safari", follow?.id);
+    // Let the rejected promise settle before ending turn 1.
+    await new Promise((r) => setTimeout(r, 20));
+    events?.onTurnEnded({ kind: "completed" });
+    await until(() => delivered.length === 2);
+    expect(delivered[1]).toBe("also check safari");
+    events?.onTurnEnded({ kind: "completed" });
+    await until(() => mingle.store.taskById(task.id)?.lineState === "idle");
+    await lines.close();
+  });
+
   it("guides the main session to hand off long work, and a line to stay on its task", () => {
     const main = renderManual("Alex", "", "darwin");
     expect(main).toContain("## Doing long work");

@@ -116,10 +116,14 @@ export class Outbox {
         // Kept with the message, so the console can show what went with it.
         ...(files ? { attachments: files.map((f) => sentFile(f.path)) } : {}),
       });
+      // Opening a thread or broadcasting a line's result back to the chat must go through send(),
+      // not into an existing live reply card/placeholder (which cannot open a thread or broadcast).
+      const opening =
+        i === 0 && quoted?.platformId && request.inThread && chat.kind === "group" && live.capabilities().threads;
       // The first piece of a reply goes into the live reply opened for that message, if any.
       // Mingle's own word is not the answer the live reply waits for.
       const intoLive =
-        i === 0 && quoted && chunk && !request.notice
+        i === 0 && quoted && chunk && !request.notice && !opening && !request.inChat
           ? await this.replies?.answer(quoted.id, chunk, found.mentions)
           : undefined;
       let result: SendResult;
@@ -136,8 +140,6 @@ export class Outbox {
           result = { ...result, platformId: intoLive.kind === "sent" ? intoLive.platformId : result.platformId };
       } else {
         // The first piece opens the thread; the rest follow it there.
-        const opening =
-          i === 0 && quoted?.platformId && request.inThread && chat.kind === "group" && live.capabilities().threads;
         result = await this.attempt(live, {
           chat: ref,
           text: chunk,
@@ -229,6 +231,9 @@ export class Outbox {
           "send",
         );
     for (const id of answered) this.replies?.settle(id, "answered");
+    // A quoted reply that skipped the live reply (e.g. to open a thread) may still have an open
+    // live entry even when the message was already marked replied; settle is idempotent.
+    if (quoted) this.replies?.settle(quoted.id, "answered");
   }
 }
 

@@ -126,7 +126,15 @@ export class Lines {
       const session = line.session;
       // Refused (the turn just ended, say): it waits for the line's next turn instead.
       const later = () => {
-        if (line.session === session && line.active) return void line.pending.push(input);
+        if (messageId) line.steered.delete(messageId);
+        if (line.session === session && line.active) {
+          if (messageId) {
+            if (line.pendingIds.has(messageId)) return;
+            line.pendingIds.add(messageId);
+          }
+          line.pending.push(input);
+          return;
+        }
         this.wake(taskId, input, messageId);
       };
       void session.deliver(input, randomUUID()).then((r) => r.outcome === "rejected" && later(), later);
@@ -184,8 +192,10 @@ export class Lines {
       stopped = true;
       line.pending = [];
       line.pendingIds.clear();
-      await this.letGo(line, true);
-      this.deps.store.updateLine(line.taskId, { lineState: "idle" });
+      const gen = await this.letGo(line, true);
+      if (line.generation === gen && this.deps.store.taskById(line.taskId)?.lineState !== "ended") {
+        this.deps.store.updateLine(line.taskId, { lineState: "idle" });
+      }
     }
     return stopped;
   }
@@ -380,8 +390,8 @@ export class Lines {
 
   /** Nothing more to do for now: the session closes until the next follow-up. */
   private async rest(line: Line): Promise<void> {
-    await this.letGo(line, false);
-    if (this.deps.store.taskById(line.taskId)?.lineState === "running") {
+    const gen = await this.letGo(line, false);
+    if (line.generation === gen && this.deps.store.taskById(line.taskId)?.lineState === "running") {
       this.deps.store.updateLine(line.taskId, { lineState: "idle" });
     }
     this.schedule(line.agentId);
@@ -427,15 +437,17 @@ export class Lines {
     void this.letGo(line, false).then(() => this.schedule(task.agentId));
   }
 
-  private async letGo(line: Line, abort: boolean): Promise<void> {
-    line.generation++;
+  private async letGo(line: Line, abort: boolean): Promise<number> {
+    const gen = ++line.generation;
     line.active = false;
     line.turning = false;
+    line.steered.clear();
     this.unwatch(line);
     const session = line.session;
     line.session = undefined;
-    if (!session) return;
+    if (!session) return gen;
     if (abort) await session.abort().catch(() => false);
     await session.dispose().catch(() => {});
+    return gen;
   }
 }
