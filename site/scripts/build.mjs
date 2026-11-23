@@ -434,6 +434,7 @@ function page(key) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="google-site-verification" content="o4zOwPpMt4hI5ixq06JFb7912UG77yDS5_YUwwW8PiQ">
 <title>${t.title}</title>
 <meta name="description" content="${esc(t.description)}">
 <link rel="canonical" href="${ORIGIN}${t.path}">
