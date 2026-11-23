@@ -1,13 +1,23 @@
 # Mingle
 
-English · [中文](README_CN.md) · [mingle.build](https://mingle.build)
+English · [中文](README_CN.md) · [mingle.build](https://mingle.build) · [▶ 40s Film (4K)](https://youtu.be/iuBNwl8VhCc)
 
 **Bring your agent companion into the chat apps you already use. Runs on your machine, no server.**
 
+<a href="https://youtu.be/iuBNwl8VhCc" title="Watch the 40s Mingle product film (4K)">
+  <img alt="Mingle 40s product film — one agent with one shared MEMORY.md across Slack, Discord, and Telegram (click to watch on YouTube)" src="site/media/mingle-film-en-poster.webp">
+</a>
+
+<p align="center"><em><a href="https://youtu.be/iuBNwl8VhCc">▶ Watch the 40s product film in 4K</a> · <a href="https://mingle.build/#film">Play on mingle.build</a></em></p>
+
+<details>
+<summary>See the native console screenshot</summary>
+<br>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="site/img/agent-en-dark.png">
   <img alt="The Mingle console: one agent answering in Telegram, Discord and Slack, with its chat apps, tasks and reminders" src="site/img/agent-en-light.png">
 </picture>
+</details>
 
 Create an agent on your own computer: it has a name, a role, a memory and a home directory, and a coding agent you already use drives it. The agent joins your chat apps as a bot, where people can @-mention it, hand it tasks and hear back from it.
 

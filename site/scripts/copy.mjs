@@ -34,9 +34,12 @@ export const copy = {
       tabFilm: "Product film",
       tabConsole: "Console",
       switchLabel: "Preview mode",
+      youtubeId: "iuBNwl8VhCc",
       name: "Mingle — One agent in every chat app (40s product film)",
       description:
         "Connect your local Claude Code, Codex, or other coding agent into Slack, Discord, Telegram, GitHub, and iMessage with one shared MEMORY.md and zero Mingle server.",
+      transcript:
+        "Pick a local coding agent like Claude Code or Codex, connect Slack, Discord, Telegram, and your other chat apps, and run one agent with one shared MEMORY.md across all of them. Long tasks run in the background while quick questions get answered immediately, with everything running locally on your computer and no Mingle server.",
     },
     parallel: {
       eyebrow: "Several things at once",
@@ -269,9 +272,12 @@ export const copy = {
       tabFilm: "产品影片",
       tabConsole: "控制台界面",
       switchLabel: "首屏预览切换",
+      youtubeId: "TCwlEv-u7oY",
       name: "Mingle — 一个 Agent，住进你所有的聊天软件（40 秒产品宣传片）",
       description:
         "把本机 Claude Code、Codex 等 coding agent 接进飞书、Slack、微信等聊天软件，共享同一份 MEMORY.md，无服务器直连。",
+      transcript:
+        "选定本机已安装的 Claude Code、Codex 等 coding agent，接入微信、飞书、钉钉、Slack、Discord、Telegram 等聊天软件。同一个 Agent 带着同一份 MEMORY.md 记忆跨端实时协作，长任务后台并行处理、简单问题秒回，全程运行在你自己的电脑上，没有 Mingle 服务器。",
     },
     parallel: {
       eyebrow: "同时做几件事",

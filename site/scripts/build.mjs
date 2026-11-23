@@ -134,9 +134,20 @@ const videoJsonLd = (t, lang) =>
     description: t.film.description,
     thumbnailUrl: [`${ORIGIN}/media/mingle-film-${lang}-poster.webp`],
     contentUrl: `${ORIGIN}/media/mingle-film-${lang}.mp4`,
+    embedUrl: `https://www.youtube.com/embed/${t.film.youtubeId}`,
+    sameAs: `https://youtu.be/${t.film.youtubeId}`,
+    encodingFormat: "video/mp4",
+    width: 2560,
+    height: 1440,
     uploadDate: lastmod,
     duration: "PT40S",
     inLanguage: t.lang,
+    transcript: t.film.transcript,
+    isAccessibleForFree: true,
+    potentialAction: {
+      "@type": "WatchAction",
+      target: `${ORIGIN}${t.path}#film`,
+    },
     publisher: { "@type": "Organization", name: "Mingle", url: `${ORIGIN}/`, logo: `${ORIGIN}/favicon.svg` },
   });
 const faqJsonLd = (items) =>
@@ -441,6 +452,11 @@ ${Object.values(copy)
 <meta property="og:image" content="${ORIGIN}/img/og/home-${lang}.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
+<meta property="og:video" content="${ORIGIN}/media/mingle-film-${lang}.mp4">
+<meta property="og:video:secure_url" content="${ORIGIN}/media/mingle-film-${lang}.mp4">
+<meta property="og:video:type" content="video/mp4">
+<meta property="og:video:width" content="2560">
+<meta property="og:video:height" content="1440">
 <meta name="twitter:card" content="summary_large_image">
 ${websiteJsonLd(t)}
 ${softwareJsonLd(t, lang, t.path)}
@@ -1284,6 +1300,7 @@ function llms() {
 Key facts:
 
 - Website: ${ORIGIN}/ (English), ${ORIGIN}/zh/ (Chinese)
+- 40s product film (4K): https://youtu.be/${copy.en.film.youtubeId} (English), https://youtu.be/${copy.zh.film.youtubeId} (Chinese) · direct MP4: ${ORIGIN}/media/mingle-film-en.mp4
 - Full LLM reference: ${ORIGIN}/llms-full.txt
 - Source: ${REPO} (MIT)
 - Latest release: ${releaseURL} (v${version})
@@ -1404,6 +1421,7 @@ function llmsFull() {
 - **Category**: Open-source, local-first AI coding agent chat bridge & companion runtime
 - **License**: MIT (${REPO}/blob/main/LICENSE)
 - **Website**: ${ORIGIN}/ (English), ${ORIGIN}/zh/ (Chinese)
+- **Product film (40s, 4K)**: https://youtu.be/${copy.en.film.youtubeId} (English), https://youtu.be/${copy.zh.film.youtubeId} (Chinese) · Web MP4: ${ORIGIN}/media/mingle-film-en.mp4
 - **Short summary**: ${ORIGIN}/llms.txt
 - **Repository**: ${REPO}
 - **Latest release**: ${releaseURL} (v${version}, updated ${lastmod})
@@ -1521,18 +1539,35 @@ writeFileSync(
   join(OUT, "404.html"),
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Not found · Mingle</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/styles.css?v=${version}"></head><body><main class="section end"><div class="wrap"><img class="end-icon" src="/favicon.svg" alt="" width="64" height="64"><h2>This page isn't here.</h2><p class="lead"><a href="/">mingle.build</a> · <a href="/zh/">中文</a></p></div></main></body></html>\n`,
 );
+const videoSitemapTag = (lang) => {
+  const t = copy[lang];
+  return [
+    "    <video:video>",
+    `      <video:thumbnail_loc>${ORIGIN}/media/mingle-film-${lang}-poster.webp</video:thumbnail_loc>`,
+    `      <video:title>${esc(t.film.name)}</video:title>`,
+    `      <video:description>${esc(t.film.description)}</video:description>`,
+    `      <video:content_loc>${ORIGIN}/media/mingle-film-${lang}.mp4</video:content_loc>`,
+    `      <video:player_loc>https://www.youtube.com/embed/${t.film.youtubeId}</video:player_loc>`,
+    "      <video:duration>40</video:duration>",
+    `      <video:publication_date>${lastmod}</video:publication_date>`,
+    "      <video:family_friendly>yes</video:family_friendly>",
+    "    </video:video>",
+  ].join("\n");
+};
 const sitemapEntries = sitemapPairs.flatMap(([enPath, zhPath]) => {
   const alts = [
     `    <xhtml:link rel="alternate" hreflang="en" href="${ORIGIN}${enPath}"/>`,
     `    <xhtml:link rel="alternate" hreflang="zh-CN" href="${ORIGIN}${zhPath}"/>`,
     `    <xhtml:link rel="alternate" hreflang="x-default" href="${ORIGIN}${enPath}"/>`,
   ].join("\n");
-  return [enPath, zhPath].map(
-    (loc) => `  <url>\n    <loc>${ORIGIN}${loc}</loc>\n    <lastmod>${lastmod}</lastmod>\n${alts}\n  </url>`,
-  );
+  return [enPath, zhPath].map((loc) => {
+    const video =
+      loc === copy.en.path ? `\n${videoSitemapTag("en")}` : loc === copy.zh.path ? `\n${videoSitemapTag("zh")}` : "";
+    return `  <url>\n    <loc>${ORIGIN}${loc}</loc>\n    <lastmod>${lastmod}</lastmod>\n${alts}${video}\n  </url>`;
+  });
 });
 writeFileSync(
   join(OUT, "sitemap.xml"),
-  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${sitemapEntries.join("\n")}\n</urlset>\n`,
+  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">\n${sitemapEntries.join("\n")}\n</urlset>\n`,
 );
 console.log(`site in ${OUT}`);

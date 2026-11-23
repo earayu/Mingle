@@ -1,13 +1,23 @@
 # Mingle
 
-[English](README.md) · 中文 · [官网](https://mingle.build/zh/)
+[English](README.md) · 中文 · [官网](https://mingle.build/zh/) · [▶ 40 秒宣传片（4K）](https://youtu.be/TCwlEv-u7oY)
 
 **把你的 Agent 伙伴请进你已经在用的 IM。本地运行，没有服务器。**
 
+<a href="https://youtu.be/TCwlEv-u7oY" title="观看 40 秒 Mingle 产品宣传片（4K）">
+  <img alt="Mingle 40 秒产品宣传片 — 同一个 Agent 共享同一份 MEMORY.md 贯穿飞书、Slack 与微信（点击观看 4K 影片）" src="site/media/mingle-film-zh-poster.webp">
+</a>
+
+<p align="center"><em><a href="https://youtu.be/TCwlEv-u7oY">▶ 观看 40 秒 4K 产品宣传片</a> · <a href="https://mingle.build/zh/#film">在官网直接播放</a></em></p>
+
+<details>
+<summary>查看原生控制台截图</summary>
+<br>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="site/img/agent-zh-dark.png">
   <img alt="Mingle 控制台：同一个 Agent 在 Telegram、Discord、Slack 里回复，旁边是它连接的聊天软件、任务和提醒" src="site/img/agent-zh-light.png">
 </picture>
+</details>
 
 在自己的电脑上创建 Agent：有名字、角色、记忆和自己的主目录，由你已经在用的编码智能体驱动。Agent 以机器人身份加入你的聊天软件，大家可以 @ 它、交给它任务、听它回报。
 
