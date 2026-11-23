@@ -508,7 +508,14 @@ export interface Reminder {
   nextFireAt: number | null;
   lastFiredAt: number | null;
   /** A command Mingle runs on the rule; the reminder fires when its output changes. */
-  check: { command: string; once: boolean; failures: number; error: string | null } | null;
+  check: {
+    command: string;
+    once: boolean;
+    failures: number;
+    error: string | null;
+    lastCheckedAt?: number | null;
+    until?: number | null;
+  } | null;
 }
 
 export const api = {

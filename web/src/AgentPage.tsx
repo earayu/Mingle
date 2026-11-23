@@ -67,6 +67,7 @@ import {
   ThreadIcon,
   Waiting,
 } from "./ui.tsx";
+import { checkFailureSummary, reminderStatus, taskStatus, type WorkDot } from "./work.ts";
 
 type WorkData = { tasks: Task[]; reminders: Reminder[] };
 
@@ -1041,12 +1042,18 @@ const Work = memo(function Work({
           </p>
         ) : (
           <Group>
-            {work.tasks.map((task) =>
-              task.line ? (
-                <LineRow key={task.id} agentId={agentId} task={task} onDropped={() => onDropped("tasks", task.id)} />
-              ) : (
+            {work.tasks.map((task) => {
+              if (task.line) {
+                return (
+                  <LineRow key={task.id} agentId={agentId} task={task} onDropped={() => onDropped("tasks", task.id)} />
+                );
+              }
+              const status = taskStatus(task);
+              return (
                 <WorkRow
                   key={task.id}
+                  dot={status.dot}
+                  dotLabel={t(status.labelKey)}
                   label={task.title}
                   action={t("task.close")}
                   actionLabel={t("task.closeLabel", { title: task.title })}
@@ -1055,13 +1062,15 @@ const Work = memo(function Work({
                   run={() => api.closeTask(agentId, task.id)}
                   onDone={() => onDropped("tasks", task.id)}
                   aside={
-                    <span className="shrink-0 rounded-full bg-bg3 px-2 py-0.5 text-caption text-ink2">
+                    <span
+                      className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-caption ${task.status === "done" ? "border border-line2 text-green" : "bg-bg3 text-ink2"}`}
+                    >
                       {t(`task.${task.status}` as MessageKey)}
                     </span>
                   }
                 />
-              ),
-            )}
+              );
+            })}
           </Group>
         )}
       </Section>
@@ -1073,59 +1082,94 @@ const Work = memo(function Work({
           </p>
         ) : (
           <Group>
-            {work.reminders.map((r) => (
-              <WorkRow
-                key={r.id}
-                label={r.body}
-                action={t("reminder.cancel")}
-                actionLabel={t("reminder.cancelLabel", { body: r.body })}
-                ask={t("reminder.cancelAsk")}
-                confirm={t("reminder.cancelYes")}
-                danger
-                run={() => api.cancelReminder(agentId, r.id)}
-                onDone={() => onDropped("reminders", r.id)}
-                detail={
-                  <>
-                    {r.nextFireAt
-                      ? r.check
-                        ? t("agent.reminderNextCheck", { time: shortDateTime(r.nextFireAt, locale) })
-                        : shortDateTime(r.nextFireAt, locale)
-                      : ""}
-                    {r.lastFiredAt ? (
-                      <span className="text-ink3">
-                        {" · "}
-                        {t("agent.reminderLastFired", { time: shortDateTime(r.lastFiredAt, locale) })}
-                      </span>
-                    ) : null}
-                    {r.check ? (
-                      <span className="selectable mt-0.5 block truncate font-mono text-ink3" title={r.check.command}>
-                        <span className="sr-only">{t("agent.reminderCheck")} </span>
-                        {r.check.command}
-                      </span>
-                    ) : null}
-                  </>
-                }
-                aside={
-                  r.check && r.check.failures >= CHECK_FAILING ? (
-                    <span
-                      className="shrink-0 rounded-full border border-red-line bg-red-tint px-2 py-0.5 text-caption text-red"
-                      title={r.check.error ?? undefined}
-                    >
-                      {t("agent.reminderCheckFailing")}
+            {work.reminders.map((r) => {
+              const status = reminderStatus(r);
+              const failureSummary = r.check ? checkFailureSummary(t, r.check.failures, r.check.error) : null;
+              const meta: { key: string; node: ReactNode }[] = [];
+              if (r.nextFireAt) {
+                meta.push({
+                  key: "next",
+                  node: r.check
+                    ? t("agent.reminderNextCheck", { time: shortDateTime(r.nextFireAt, locale) })
+                    : shortDateTime(r.nextFireAt, locale),
+                });
+              }
+              if (r.check?.lastCheckedAt != null) {
+                meta.push({
+                  key: "checked",
+                  node: (
+                    <span className="text-ink3">
+                      {t("agent.reminderLastChecked", { time: shortDateTime(r.check.lastCheckedAt, locale) })}
                     </span>
-                  ) : undefined
-                }
-              />
-            ))}
+                  ),
+                });
+              }
+              if (r.lastFiredAt) {
+                meta.push({
+                  key: "fired",
+                  node: (
+                    <span className="text-ink3">
+                      {t("agent.reminderLastFired", { time: shortDateTime(r.lastFiredAt, locale) })}
+                    </span>
+                  ),
+                });
+              }
+              return (
+                <WorkRow
+                  key={r.id}
+                  dot={status.dot}
+                  dotLabel={t(status.labelKey)}
+                  label={r.body}
+                  action={t("reminder.cancel")}
+                  actionLabel={t("reminder.cancelLabel", { body: r.body })}
+                  ask={t("reminder.cancelAsk")}
+                  confirm={t("reminder.cancelYes")}
+                  danger
+                  run={() => api.cancelReminder(agentId, r.id)}
+                  onDone={() => onDropped("reminders", r.id)}
+                  detail={
+                    <>
+                      {meta.map((part, index) => (
+                        <span key={part.key}>
+                          {index > 0 ? <span className="text-ink3">{" · "}</span> : null}
+                          {part.node}
+                        </span>
+                      ))}
+                      {r.check ? (
+                        <span className="selectable mt-0.5 block truncate font-mono text-ink3" title={r.check.command}>
+                          <span className="sr-only">{t("agent.reminderCheck")} </span>
+                          {r.check.command}
+                        </span>
+                      ) : null}
+                      {failureSummary ? (
+                        <span
+                          className={`mt-0.5 block line-clamp-2 wrap-anywhere ${status.problem === "failing" ? "text-red" : "text-amber"}`}
+                          title={failureSummary}
+                        >
+                          {failureSummary}
+                        </span>
+                      ) : null}
+                    </>
+                  }
+                  aside={
+                    status.problem === "failing" ? (
+                      <span
+                        className="shrink-0 whitespace-nowrap rounded-full border border-red-line bg-red-tint px-2 py-0.5 text-caption text-red"
+                        title={failureSummary ?? undefined}
+                      >
+                        {t("agent.reminderCheckFailing")}
+                      </span>
+                    ) : undefined
+                  }
+                />
+              );
+            })}
           </Group>
         )}
       </Section>
     </>
   );
 });
-
-/** Failed checks in a row before a reminder shows it, as many as it takes to tell the agent (docs/spec.md 4.6). */
-const CHECK_FAILING = 3;
 
 /**
  * A task or reminder. The agent owns them; the owner's one action (close, cancel) stays out of the
@@ -1187,15 +1231,18 @@ function LineRow({ agentId, task, onDropped }: { agentId: string; task: Task; on
       {state === "error" && task.error ? <span className="line-clamp-2 text-red">{task.error}</span> : null}
     </span>
   );
+  const workStatus = taskStatus(task);
   const tag = (
     <span
-      className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-caption ${state === "error" ? "bg-red-tint text-red" : state === "done" ? "border border-line2 text-green" : "bg-bg3 text-ink2"}`}
+      className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-caption ${state === "error" ? "border border-red-line bg-red-tint text-red" : state === "done" ? "border border-line2 text-green" : "bg-bg3 text-ink2"}`}
     >
       {status}
     </span>
   );
   return active ? (
     <WorkRow
+      dot={workStatus.dot}
+      dotLabel={t(workStatus.labelKey)}
       label={task.title}
       detail={detail}
       aside={tag}
@@ -1207,11 +1254,13 @@ function LineRow({ agentId, task, onDropped }: { agentId: string; task: Task; on
       onDone={onDropped}
     />
   ) : (
-    <WorkRow label={task.title} detail={detail} aside={tag} />
+    <WorkRow dot={workStatus.dot} dotLabel={t(workStatus.labelKey)} label={task.title} detail={detail} aside={tag} />
   );
 }
 
 function WorkRow({
+  dot,
+  dotLabel,
   label,
   detail,
   aside,
@@ -1223,6 +1272,8 @@ function WorkRow({
   run,
   onDone,
 }: {
+  dot?: WorkDot;
+  dotLabel?: string;
   label: string;
   detail?: ReactNode;
   aside?: ReactNode;
@@ -1247,13 +1298,44 @@ function WorkRow({
   }, [confirming]);
   return (
     <GroupRow
-      className={`group relative min-h-[44px] flex-wrap transition-colors duration-[120ms] ${confirming ? (danger ? "bg-red-tint" : "bg-bg2") : ""}`}
+      compact
+      align="start"
+      className={`group relative flex-wrap transition-colors duration-[120ms] ${confirming ? (danger ? "bg-red-tint" : "bg-bg2") : ""}`}
     >
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="line-clamp-2 wrap-anywhere" title={label}>
-          {label}
+      <span className="flex min-w-0 flex-1 items-start gap-2.5">
+        {dot ? (
+          <span className="flex h-[1lh] shrink-0 items-center" title={dotLabel}>
+            <StatusDot state={dot} />
+            {dotLabel ? <span className="sr-only">{dotLabel}</span> : null}
+          </span>
+        ) : null}
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex min-w-0 items-start gap-2">
+            <span className="min-w-0 flex-1 line-clamp-2 wrap-anywhere" title={label}>
+              {label}
+            </span>
+            {!confirming ? (
+              <>
+                {aside}
+                {/* Over the row's end on hover or focus, so it takes no room from the text otherwise. */}
+                {action ? (
+                  <span className="pointer-events-none absolute top-2 right-3 bg-card pl-1 opacity-0 shadow-[-14px_0_10px_-2px_var(--color-card)] transition-opacity duration-[120ms] group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:static [@media(hover:none)]:-my-1 [@media(hover:none)]:opacity-100 [@media(hover:none)]:shadow-none">
+                    <Button
+                      ref={actionButton}
+                      small
+                      variant="ghost"
+                      aria-label={actionLabel}
+                      onClick={() => setConfirming(true)}
+                    >
+                      {action}
+                    </Button>
+                  </span>
+                ) : null}
+              </>
+            ) : null}
+          </span>
+          {detail ? <span className="text-caption text-ink2">{detail}</span> : null}
         </span>
-        {detail ? <span className="text-caption text-ink2">{detail}</span> : null}
       </span>
       {confirming ? (
         // biome-ignore lint/a11y/noStaticElementInteractions: Escape backs out of the question it belongs to
@@ -1290,25 +1372,7 @@ function WorkRow({
             {t("work.keep")}
           </Button>
         </span>
-      ) : (
-        <>
-          {aside}
-          {/* Over the row's end on hover or focus, so it takes no room from the text otherwise. */}
-          {action ? (
-            <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 bg-card pl-1 opacity-0 shadow-[-14px_0_10px_-2px_var(--color-card)] transition-opacity duration-[120ms] group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:static [@media(hover:none)]:translate-y-0 [@media(hover:none)]:opacity-100 [@media(hover:none)]:shadow-none">
-              <Button
-                ref={actionButton}
-                small
-                variant="ghost"
-                aria-label={actionLabel}
-                onClick={() => setConfirming(true)}
-              >
-                {action}
-              </Button>
-            </span>
-          ) : null}
-        </>
-      )}
+      ) : null}
       {failure ? <p className="w-full text-caption text-red">{failure}</p> : null}
     </GroupRow>
   );

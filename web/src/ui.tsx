@@ -271,30 +271,36 @@ export function Group({ children, className = "" }: { children: ReactNode; class
 export function GroupRow({
   children,
   className = "",
+  align = "center",
+  compact = false,
   onClick,
   id,
   tabIndex,
 }: {
   children: ReactNode;
   className?: string;
+  align?: "center" | "start";
+  /** Sizes rows tightly around content (44px min height, 12px vertical padding) instead of 52px. */
+  compact?: boolean;
   onClick?: () => void;
   /** Lets a link elsewhere on the page land on this row. */
   id?: string;
   tabIndex?: number;
 }) {
+  const layout = `flex ${compact ? "min-h-[44px] py-3" : "min-h-[52px] py-2.5"} ${align === "start" ? "items-start" : "items-center"} gap-3 px-4`;
   if (onClick) {
     return (
       <button
         type="button"
         onClick={onClick}
-        className={`flex min-h-[52px] w-full items-center gap-3 px-4 py-2.5 text-left transition-colors duration-[120ms] hover:bg-bg2 ${className}`}
+        className={`${layout} w-full text-left transition-colors duration-[120ms] hover:bg-bg2 ${className}`}
       >
         {children}
       </button>
     );
   }
   return (
-    <div id={id} tabIndex={tabIndex} className={`flex min-h-[52px] items-center gap-3 px-4 py-2.5 ${className}`}>
+    <div id={id} tabIndex={tabIndex} className={`${layout} ${className}`}>
       {children}
     </div>
   );

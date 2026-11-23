@@ -310,8 +310,17 @@ try {
     now + 3_600_000,
     now - 86_400_000,
     "curl -fsSL https://www.xiangshanpark.com.cn/notice | shasum",
-    "exited with 6: curl: (6) Could not resolve host: www.xiangshanpark.com.cn",
-    now,
+    "exited with 6",
+    now - 5 * 60_000,
+  );
+  insert(
+    "INSERT INTO reminders (id, agent_id, body, rule, timezone, next_fire_at, created_at, check_command, check_failures, check_error, last_checked_at) VALUES ('r5', ?, 'Notify when the new weather feed updates', 'every:15m', 'Asia/Shanghai', ?, ?, ?, 1, ?, ?)",
+    alex.id,
+    now + 15 * 60_000,
+    now - 4 * 3_600_000,
+    "curl -fsSL https://api.weather.example/feed | shasum",
+    "timed out after 60s",
+    now - 2 * 60_000,
   );
   insert(
     "UPDATE agents SET status = 'working', status_detail = 'Bash: curl -s https://api.weather.example/forecast?lat=39.99&lon=116.19' WHERE id = ?",
