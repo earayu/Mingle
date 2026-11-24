@@ -14,7 +14,7 @@ import { contactAlias, MingleError, notFound } from "../core/errors.ts";
 import { excerpt, renderMessage } from "../core/format.ts";
 import { readRole } from "../core/home.ts";
 import { renderManual } from "../core/manual.ts";
-import { AVATAR_MAX_BYTES, type Mingle, mimeOf, UPLOAD_MAX_BYTES } from "../core/mingle.ts";
+import { AVATAR_MAX_BYTES, type Mingle, mimeOf, type ProxyPatch, UPLOAD_MAX_BYTES } from "../core/mingle.ts";
 import * as people from "../core/people.ts";
 import { nextFire, parseDuration } from "../core/schedule.ts";
 import type { HarnessInfo } from "../harness/harness.ts";
@@ -1490,13 +1490,6 @@ export function createApi(mingle: Mingle): Hono<Env> {
     return c.json({ ok: true });
   });
 
-  app.get("/v1/admin/proxy", async (c) => c.json(await mingle.proxyStatus()));
-
-  app.put("/v1/admin/proxy", async (c) => {
-    const body = await c.req.json<{ url?: string | null } | null>().catch(() => null);
-    return c.json(await mingle.setProxy(typeof body?.url === "string" ? body.url : null));
-  });
-
   app.post("/v1/admin/agents/:id/open-home", (c) => {
     const agent = mingle.agent(c.req.param("id"));
     const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
@@ -1704,6 +1697,19 @@ export function createApi(mingle: Mingle): Hono<Env> {
     if (!store.connection(c.req.param("id"))) throw notFound("connection", c.req.param("id"));
     await mingle.removeConnection(c.req.param("id"));
     return c.json({ ok: true });
+  });
+
+  /** Global outbound network proxy configuration and live status (credentials never returned). */
+  app.get("/v1/admin/proxy", async (c) => c.json(await mingle.proxyView(true)));
+
+  app.put("/v1/admin/proxy", async (c) => {
+    const body = await c.req.json<ProxyPatch>();
+    return c.json(await mingle.updateProxy(body));
+  });
+
+  app.post("/v1/admin/proxy/test", async (c) => {
+    const body = await c.req.json<{ url?: string; useSaved?: boolean }>().catch(() => ({}));
+    return c.json(await mingle.testProxy(body));
   });
 
   return app;

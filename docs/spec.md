@@ -1095,6 +1095,7 @@ flowchart TD
 | `reminders` | 所属 Agent、内容、触发规则、下次触发时间 |
 | `agent_env` | 所属 Agent、变量名、更新时间。值不在这里，在凭据存储里（4.9） |
 | `handoffs` | 所属 Agent、正文、来源（命令 / 粘贴）、状态（`waiting` / `delivered`）、时间（4.12） |
+| `proxy_settings` | 全局出站网络代理设置（单行）：模式（`system` / `manual` / `off`）、不含鉴权的手动代理地址、是否存有鉴权、绕过列表、是否透传给 harness（9.1） |
 
 `messages` 上建 FTS5 全文索引供 `mingle message search` 使用，分词器用 `trigram`，中文和英文都能搜（已实测）。三个字符以下的关键词退到 `LIKE`。
 
@@ -1192,7 +1193,11 @@ Agent 沿用原有数据保留规则，不停止整个远端服务。运行位�
 - 外观偏好仍由控制台保存在本地；启动和切换时通过桌面壳的 `Appearance.SetTheme` 同步原生外观，让侧栏毛玻璃、窗口控件和页面使用同一明暗模式。选择“跟随系统”会清除手动外观覆盖。
 - 应用内置 Node.js 24（版本和校验和锁定在 `desktop/scripts/prepare.mjs`）和 Mingle 的构建产物，启动时用它运行 `mingle start --no-open`，进程退出后自动重启，退出应用时先让它正常关闭。核心仍是同一个 Node 进程，桌面壳不碰业务逻辑。
 - 从 Finder 打开的应用拿到的环境很少：`PATH` 找不到用户用 Homebrew、npm 装的 harness，用户在 `~/.zshrc` 里给 harness 配的 API Key、`ANTHROPIC_BASE_URL`、代理也都没有，harness 会表现为"没有登录"。所以应用用 `mingle start --login-shell-env` 启动 Mingle：Mingle 通过 OAR 的 `userShellEnvironment()` 读一次用户登录 shell 的完整环境并采用（`MINGLE_*` 以应用给的为准），内置的 Node.js 放在 `PATH` 最后兜底。读不到时照常启动，日志里只记原因，不记任何变量值。Windows 应用本来就拿到用户环境，不读。
-- **网络代理（#199）**：Node.js 的 `fetch` 和 `WebSocket` 默认不读系统代理，也不读 `HTTP_PROXY`/`HTTPS_PROXY`。Mingle 启动时按"手动配置 → 环境变量（含登录 shell）→ 系统代理（macOS `scutil --proxy`、Windows 注册表 `Internet Settings`）→ 直连"的顺序设置全局代理分发器（`undici` `EnvHttpProxyAgent`），并始终把 `127.0.0.1`、`localhost`、`::1` 加入 `NO_PROXY` 以保证本地 API 与隧道直连。在控制台"设置 → 网络"可手动配置或清除 HTTP/HTTPS 代理（`GET`/`PUT /v1/admin/proxy`）；手动地址保存在系统凭据存储（`mingle:proxy`），API 响应、诊断信息和日志都剥离其中的账号密码。设置后立即生效并触发离线或重连中的机器人重试；自动模式下，唤醒、接入和重连前都会重新读取系统代理。
+- **网络代理**（MING-153）：Node.js 的 `fetch` 和全局 `WebSocket` 默认不读操作系统代理也不读环境变量，导致只开系统代理（非 TUN 模式）的用户无法连接 Telegram、Discord、Slack、GitHub 等平台。Mingle 启动时在 `src/platform/net.ts` 安装全局动态代理分发器（覆盖 `fetch`、`WebSocket` 以及第三方 SDK 使用的 `https.globalAgent`），支持 `http://`、`https://`、`socks5://`、`socks5h://`（内置纯 Node RFC 1928/1929 SOCKS5 隧道，域名交由代理远端解析 DNS），并强制绕过回环地址（`localhost`、`127.0.0.1`、`::1`）。
+  - **三种模式**：默认「跟随系统」（macOS 读 `scutil --proxy`，Windows 读 WinINET 注册表，Linux 及系统未配置时兜底读 `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`/`NO_PROXY`；只开启 PAC 自动配置脚本时不执行脚本，界面明确提示可切到手动）、「手动」（填写代理 URL 和可选绕过列表，支持连通性测试——只验证代理端口与协议握手，不访问任何外部第三方服务器）、「关闭」（忽略系统代理与环境变量，全部直连）。
+  - **存储与安全**：模式、不含密码的地址、绕过列表和是否透传给 harness 存在 SQLite 的 `proxy_settings` 表；代理 URL 包含用户名/密码时，凭据剥离后只存入系统凭据存储（键 `proxy:auth`），不落库、不进日志、不通过 API 明文回传。
+  - **热生效与自动探测**：通过 `GET/PUT /v1/admin/proxy`、`POST /v1/admin/proxy/test` 或 `mingle proxy` 修改后立即更新网络层并重连所有外部聊天软件连接，无需重启。跟随系统模式下，接入、重连和设置页聚焦时会按短缓存重新探测系统代理，后开代理工具也能自动恢复。
+  - **透传给 harness**：默认开启「同时用于大脑（Harness）」，把生效代理作为默认环境变量传给 harness 子进程，优先级为 `MINGLE_*` > Agent 环境变量 > Mingle 手动代理 > 登录 shell 环境变量 > 操作系统代理；关闭代理或关闭开关时不额外注入。仅作用于本机实例，不影响 Remote SSH 远端主机。
 - 已经有一个 Mingle 在跑（比如在终端里 `mingle start`），应用直接显示它，不另起一个。
 - 日志：Mingle 自己的日志照常写 `~/.mingle/logs/mingle.log`；应用把 Mingle 的标准错误（Node 的报错、崩溃堆栈）另写到系统日志目录的 `mingle.log`（macOS `~/Library/Logs/Mingle/`，其他系统 `os.UserConfigDir()/Mingle/logs/`），标准输出带 admin token，丢弃。菜单的"查看日志"打开后者所在目录，`mingle log` 两份都读（MING-84）。
 - 窗口在控制台能打开之前显示等待页（`desktop/page.go`，2026-11-15，MING-78）：居中的图标、转圈和一句"正在启动…"，跟随系统明暗，整页可拖动窗口；Mingle 退出重启时换成"已停止，正在重新启动…"，下面一行说明一直停在这里时去哪查看日志，不显示内部错误（原因只写日志）。等待页用 `LoadHTML` 放在控制台同一站点的地址下，不用 `data:` URL：mygo 会把 `data:` URL 再编码一次，样式失效；同站点也让打开控制台时不切换网页进程。网页进程崩溃或被系统结束时（mygo `OnRenderProcessGone`），窗口重新打开当时该显示的页面，连续发生时至少间隔 10 秒，不会一直白屏。
@@ -1211,6 +1216,7 @@ macOS、Windows、Linux 都发桌面应用，每个系统都有 x64 和 ARM64 �
 | Agent 调用的 `mingle` 命令 | sh 脚本 | `mingle.cmd` | sh 脚本 |
 | 桌面应用停止 Mingle | 关闭它的标准输入（三个系统相同；Windows 没有 SIGTERM，而且应用崩溃时 Mingle 也会跟着退出） | 同左 | 同左 |
 | 应用的环境 | 从登录 shell 读取完整环境，找得到 Homebrew、npm 装的 harness 和 shell 里配的 API Key | 系统给应用的就是用户环境 | 从登录 shell 读取完整环境 |
+| 系统代理探测 | `scutil --proxy`（HTTP/HTTPS/SOCKS 与 `ExceptionsList`），无显式代理时回退环境变量 | WinINET 注册表（`Internet Settings`），无显式代理时回退环境变量 | 环境变量（`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` / `NO_PROXY`） |
 | 窗口 | 隐藏标题栏，红绿灯放在侧栏，半透明材质 | 系统标题栏，不透明 | 系统标题栏，不透明 |
 | 托盘图标 | 菜单栏模板图，点击弹菜单 | 彩色小图标，左键打开窗口、右键弹菜单 | 彩色小图标，需要 AppIndicator（deb、rpm 已声明依赖） |
 | 保持唤醒 | 阻止空闲睡眠；合盖仍睡眠（接外接显示器时除外） | 阻止空闲睡眠；合盖按电源设置 | 同 Windows |

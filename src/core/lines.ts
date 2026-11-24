@@ -24,6 +24,8 @@ export interface LineDeps {
   readonly manual: (agent: Agent, task: Task) => string;
   /** Mingle's variables for this line: its own token, scoped to the task. */
   readonly env: (agent: Agent, task: Task) => Record<string, string>;
+  /** Global defaults passed below agent variables (e.g. network proxy). */
+  readonly baseEnv?: () => Readonly<Record<string, string>>;
   /** The variables the owner set for the agent. */
   readonly agentEnv: (agentId: string) => Promise<Record<string, string>> | undefined;
   /** Told with the agent's next input: no turn of its own (like the owner's notes). */
@@ -317,7 +319,7 @@ export class Lines {
       model: agent.model,
       cwd: dir,
       appendSystemPrompt: this.deps.manual(agent, task),
-      env: { ...own, ...this.deps.env(agent, task) },
+      env: { ...this.deps.baseEnv?.(), ...own, ...this.deps.env(agent, task) },
     };
     const events = {
       onTurnStarted: () => {

@@ -379,6 +379,7 @@ export const AgentPage = memo(function AgentPage({
       onIgnore={ignore}
       onDecide={decide}
       onConnect={connect}
+      {...(!agent.remote ? { onProxySettings: () => onNavigate({ kind: "settings", focus: "network" }) } : {})}
     />
   ) : null;
 
@@ -808,6 +809,7 @@ const NeedsYou = memo(function NeedsYou({
   onRetry,
   onIgnore,
   onDecide,
+  onProxySettings,
 }: {
   agent: AgentView;
   unanswered: string[];
@@ -817,6 +819,7 @@ const NeedsYou = memo(function NeedsYou({
   onRetry: (ids: string[]) => Promise<void>;
   onIgnore: (ids: string[]) => Promise<void>;
   onDecide: (request: AccessRequest, access: "allowed" | "blocked") => Promise<void>;
+  onProxySettings?: () => void;
 }) {
   const { t } = useI18n();
   // Retrying while the harness still fails only fails again; say so, but let the person try.
@@ -836,8 +839,17 @@ const NeedsYou = memo(function NeedsYou({
         {c.state === "error" ? (
           <>
             {connectionDetail(t, c)}
-            <div className="mt-2">
+            <div className="mt-2 flex flex-wrap items-center gap-3">
               <ReconnectButton connection={c} />
+              {c.detail === "network" && onProxySettings ? (
+                <button
+                  type="button"
+                  onClick={onProxySettings}
+                  className="text-small font-medium text-accent hover:underline"
+                >
+                  {t("proxy.openSettings")}
+                </button>
+              ) : null}
             </div>
           </>
         ) : (

@@ -81,7 +81,13 @@ export function ConnectPage({
               <Spinner /> {t("qr.loading")}
             </p>
           ) : info?.onboarding ? (
-            <PlatformFlow key={info.platform} agent={agent} info={info} onDone={done} />
+            <PlatformFlow
+              key={info.platform}
+              agent={agent}
+              info={info}
+              onDone={done}
+              {...(!agent.remote ? { onProxySettings: () => onNavigate({ kind: "settings", focus: "network" }) } : {})}
+            />
           ) : (
             <PlatformGrid
               agent={agent}
@@ -153,7 +159,17 @@ function PlatformGrid({
   );
 }
 
-function PlatformFlow({ agent, info, onDone }: { agent: AgentView; info: PlatformInfo; onDone: () => void }) {
+function PlatformFlow({
+  agent,
+  info,
+  onDone,
+  onProxySettings,
+}: {
+  agent: AgentView;
+  info: PlatformInfo;
+  onDone: () => void;
+  onProxySettings?: () => void;
+}) {
   const [manual, setManual] = useState(false);
   if (info.setup) return <SetupFlow agent={agent} info={info} onDone={onDone} />;
   if (info.onboarding?.kind === "credentials") {
@@ -165,6 +181,7 @@ function PlatformFlow({ agent, info, onDone }: { agent: AgentView; info: Platfor
         stepsKey={`${info.platform}.steps` as MessageKey}
         {...(info.onboarding.setupUrl ? { setupUrl: withAgentName(info.onboarding.setupUrl, agent.name) } : {})}
         onDone={onDone}
+        {...(onProxySettings ? { onProxySettings } : {})}
       />
     );
   }
@@ -183,11 +200,20 @@ function PlatformFlow({ agent, info, onDone }: { agent: AgentView; info: Platfor
           : { setupLabelKey: "connect.openConsole" as MessageKey })}
         onDone={onDone}
         onBack={() => setManual(false)}
+        {...(onProxySettings ? { onProxySettings } : {})}
       />
     );
   }
   if (info.onboarding?.kind === "device") {
-    return <DeviceFlow agent={agent} info={info} onDone={onDone} onManual={() => setManual(true)} />;
+    return (
+      <DeviceFlow
+        agent={agent}
+        info={info}
+        onDone={onDone}
+        onManual={() => setManual(true)}
+        {...(onProxySettings ? { onProxySettings } : {})}
+      />
+    );
   }
   return (
     <QrFlow
@@ -195,6 +221,7 @@ function PlatformFlow({ agent, info, onDone }: { agent: AgentView; info: Platfor
       info={info}
       onDone={onDone}
       {...(info.manualFields.length ? { onManual: () => setManual(true) } : {})}
+      {...(onProxySettings ? { onProxySettings } : {})}
     />
   );
 }
@@ -226,6 +253,7 @@ function CredentialsFlow({
   backKey,
   onDone,
   onBack,
+  onProxySettings,
 }: {
   agent: AgentView;
   info: PlatformInfo;
@@ -236,11 +264,12 @@ function CredentialsFlow({
   backKey?: MessageKey;
   onDone: () => void;
   onBack?: () => void;
+  onProxySettings?: () => void;
 }) {
   const { t } = useI18n();
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ text: string; network: boolean } | null>(null);
   const [connected, setConnected] = useState(false);
   const [bot, setBot] = useState<string | null>(null);
   /** What was last sent automatically, so a failed token is not sent again until it changes. */
@@ -261,7 +290,8 @@ function CredentialsFlow({
         // A platform with something to say once connected (where to try it) leaves time to read it.
         setTimeout(onDone, doneText ? 4000 : 900);
       } catch (e) {
-        setError(errorText(t, e));
+        const code = (e as { code?: string }).code;
+        setError({ text: errorText(t, e), network: code === "onboarding_network" || code === "network" });
       } finally {
         setBusy(false);
       }
@@ -330,7 +360,22 @@ function CredentialsFlow({
                 </Field>
               );
             })}
-            {error ? <Problem title={t("connect.failed")}>{error}</Problem> : null}
+            {error ? (
+              <Problem title={t("connect.failed")} tone={error.network ? "red" : "amber"}>
+                {error.text}
+                {error.network && onProxySettings ? (
+                  <div className="mt-1.5">
+                    <button
+                      type="button"
+                      onClick={onProxySettings}
+                      className="text-small font-medium text-accent hover:underline"
+                    >
+                      {t("proxy.checkSettings")} →
+                    </button>
+                  </div>
+                ) : null}
+              </Problem>
+            ) : null}
             <div className="flex items-center gap-2">
               <Button type="submit" variant="primary" disabled={busy || !filled}>
                 {busy ? (
@@ -580,11 +625,13 @@ function DeviceFlow({
   info,
   onDone,
   onManual,
+  onProxySettings,
 }: {
   agent: AgentView;
   info: PlatformInfo;
   onDone: () => void;
   onManual: () => void;
+  onProxySettings?: () => void;
 }) {
   const { t } = useI18n();
   const platform = info.platform;
@@ -658,6 +705,17 @@ function DeviceFlow({
             <div className="flex flex-col gap-2">
               <Problem title={t("connect.failed")} tone="red">
                 {errorTextFor(t, state.code)}
+                {state.code === "network" && onProxySettings ? (
+                  <div className="mt-1.5">
+                    <button
+                      type="button"
+                      onClick={onProxySettings}
+                      className="text-small font-medium text-accent hover:underline"
+                    >
+                      {t("proxy.checkSettings")} →
+                    </button>
+                  </div>
+                ) : null}
               </Problem>
               <Button className="self-start" onClick={restart}>
                 {t("connect.retry")}
@@ -764,6 +822,7 @@ export function QrFlow({
   adding,
   onDone,
   onManual,
+  onProxySettings,
 }: {
   agent: AgentView;
   info: PlatformInfo;
@@ -773,6 +832,7 @@ export function QrFlow({
   adding?: readonly PermissionId[];
   onDone: () => void;
   onManual?: () => void;
+  onProxySettings?: () => void;
 }) {
   const { t } = useI18n();
   const { sessionId, state, now, restart } = useOnboarding(
@@ -842,6 +902,17 @@ export function QrFlow({
               {s === "failed" && !expired ? (
                 <Problem title={t("connect.failed")} tone="red">
                   {errorTextFor(t, state.state === "failed" ? state.code : "unknown")}
+                  {state.state === "failed" && state.code === "network" && onProxySettings ? (
+                    <div className="mt-1.5">
+                      <button
+                        type="button"
+                        onClick={onProxySettings}
+                        className="text-small font-medium text-accent hover:underline"
+                      >
+                        {t("proxy.checkSettings")} →
+                      </button>
+                    </div>
+                  ) : null}
                 </Problem>
               ) : expired ? (
                 <p className="text-small text-ink2">{t("qr.expired")}</p>

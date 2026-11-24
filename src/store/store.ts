@@ -5,6 +5,7 @@ import type { HearTier } from "../core/hearing.ts";
 import { shortId } from "../core/ids.ts";
 import { INBOUND, type InboundEvent } from "../core/inbound.ts";
 import { searchTerms } from "../core/terms.ts";
+import { defaultProxySettings, type ProxyMode, type ProxySettings } from "../platform/proxy.ts";
 
 export type AgentStatus = "offline" | "idle" | "thinking" | "working" | "error" | "paused";
 export type ConnectionStateKind = "awaiting_credentials" | "awaiting_approval" | "connected" | "reconnecting" | "error";
@@ -1966,6 +1967,45 @@ export class Store {
   deleteOwnerNotes(agentId: string, ids: readonly number[]): void {
     const remove = this.db.prepare("DELETE FROM owner_notes WHERE id = ? AND agent_id = ?");
     for (const id of ids) remove.run(id, agentId);
+  }
+
+  // ------------------------------------------------------------------- proxy
+
+  proxySettings(): ProxySettings {
+    const row = this.stmt("SELECT * FROM proxy_settings WHERE id = 1").get() as Row | undefined;
+    if (!row) return defaultProxySettings();
+    return {
+      mode: String(row.mode) as ProxyMode,
+      url: str(row.url),
+      hasAuth: Number(row.has_auth) === 1,
+      bypass: String(row.bypass ?? ""),
+      passToHarness: Number(row.pass_to_harness) === 1,
+      updatedAt: Number(row.updated_at ?? 0),
+    };
+  }
+
+  setProxySettings(input: {
+    readonly mode: ProxyMode;
+    readonly url: string | null;
+    readonly hasAuth: boolean;
+    readonly bypass: string;
+    readonly passToHarness: boolean;
+  }): ProxySettings {
+    const now = this.now();
+    this.db
+      .prepare(
+        `INSERT INTO proxy_settings (id, mode, url, has_auth, bypass, pass_to_harness, updated_at)
+         VALUES (1, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           mode = excluded.mode,
+           url = excluded.url,
+           has_auth = excluded.has_auth,
+           bypass = excluded.bypass,
+           pass_to_harness = excluded.pass_to_harness,
+           updated_at = excluded.updated_at`,
+      )
+      .run(input.mode, input.url, input.hasAuth ? 1 : 0, input.bypass, input.passToHarness ? 1 : 0, now);
+    return this.proxySettings();
   }
 }
 

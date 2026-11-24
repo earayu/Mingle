@@ -20,6 +20,8 @@ export interface RuntimeDeps {
   readonly homeDir: string;
   /** Environment for the harness process: API address, token, CLI path. */
   readonly env: () => Readonly<Record<string, string>>;
+  /** Global defaults passed below agent variables (e.g. network proxy), never listed in the guide. */
+  readonly baseEnv?: () => Readonly<Record<string, string>>;
   /**
    * The agent's own variables, read from the secret store each time a session opens.
    * Undefined when it has none, so opening then takes no extra turn of the event loop.
@@ -866,8 +868,8 @@ export class AgentRuntime {
         cwd: this.deps.homeDir,
         resume: fresh ? null : agent.sessionId,
         appendSystemPrompt: renderManual(agent.name, readRole(this.deps.homeDir), process.platform, Object.keys(own)),
-        // Mingle's own variables win over the agent's.
-        env: { ...own, ...this.deps.env() },
+        // Mingle's own variables win over the agent's; agent variables win over global proxy defaults.
+        env: { ...this.deps.baseEnv?.(), ...own, ...this.deps.env() },
       },
       {
         onTurnStarted: (self) => {

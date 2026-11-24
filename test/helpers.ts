@@ -21,7 +21,6 @@ import type { InboundEvent } from "../src/core/inbound.ts";
 import { Mingle } from "../src/core/mingle.ts";
 import { resolvePaths } from "../src/core/paths.ts";
 import { type Harness, oarHarness } from "../src/harness/harness.ts";
-import type { ProxyController } from "../src/platform/proxy.ts";
 import { memorySecrets, type SecretStore } from "../src/platform/secrets.ts";
 import type { InboundState, Store } from "../src/store/store.ts";
 
@@ -315,8 +314,10 @@ export async function rig(
     engage?: Partial<Engage>;
     /** The agent's role; a hiking helper unless a test needs another. */
     role?: string;
-    /** Override the network proxy controller (for testing system/env/manual proxy behavior). */
-    proxy?: ProxyController;
+    proxy?: import("../src/platform/net.ts").NetworkProxyController;
+    shellProxyEnv?: Readonly<Record<string, string | undefined>>;
+    detectSystemProxy?: () => Promise<import("../src/platform/proxy.ts").SystemProxyInfo>;
+    testProxy?: (url: string) => Promise<import("../src/platform/net.ts").ProxyTestResult>;
   } = {},
 ): Promise<Rig> {
   const home = mkdtempSync(join(tmpdir(), "mingle-test-"));
@@ -369,6 +370,19 @@ export async function rig(
     ...(options.hearing ? { hearing: options.hearing } : {}),
     ...(options.engage ? { engage: options.engage } : {}),
     ...(options.proxy ? { proxy: options.proxy } : {}),
+    ...(options.shellProxyEnv ? { shellProxyEnv: options.shellProxyEnv } : {}),
+    detectSystemProxy:
+      options.detectSystemProxy ??
+      (async () => ({
+        url: null,
+        httpUrl: null,
+        httpsUrl: null,
+        socksUrl: null,
+        bypass: [],
+        pacOnly: false,
+        source: "none" as const,
+      })),
+    ...(options.testProxy ? { testProxy: options.testProxy } : {}),
     // MINGLE_E2E_LOG=1 prints what Mingle logs, to see why a real harness did not answer.
     ...(process.env.MINGLE_E2E_LOG ? { log: (line: string) => console.log(`[mingle] ${line}`) } : {}),
     ...(options.log ? { log: options.log } : {}),

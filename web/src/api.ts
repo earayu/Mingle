@@ -518,17 +518,36 @@ export interface Reminder {
   } | null;
 }
 
-export interface ProxyStatus {
-  readonly configured: string | null;
-  readonly hasCredentials: boolean;
-  readonly effective: string | null;
-  readonly source: "manual" | "env" | "system" | "none";
+export type ProxyMode = "system" | "manual" | "off";
+
+export interface ProxyView {
+  mode: ProxyMode;
+  url: string | null;
+  hasAuth: boolean;
+  authMissing: boolean;
+  bypass: string;
+  passToHarness: boolean;
+  effective: {
+    url: string | null;
+    source: "os" | "env" | "manual" | "none";
+    pacOnly: boolean;
+  };
 }
+
+export interface ProxyPatch {
+  mode?: ProxyMode;
+  url?: string | null;
+  keepAuth?: boolean;
+  bypass?: string;
+  passToHarness?: boolean;
+}
+
+export type ProxyTestResult =
+  | { ok: true; latencyMs: number }
+  | { ok: false; code: "proxy_timeout" | "proxy_auth_failed" | "proxy_unreachable" };
 
 export const api = {
   status: () => call<{ version: string; agents: AgentView[] }>("GET", "/v1/admin/status"),
-  proxy: () => call<ProxyStatus>("GET", "/v1/admin/proxy"),
-  setProxy: (url: string | null) => call<ProxyStatus>("PUT", "/v1/admin/proxy", { url }),
   sshHosts: () => call<SshHost[]>("GET", "/v1/admin/ssh/hosts"),
   sshConfig: () => call<{ hosts: string[]; incomplete: boolean }>("GET", "/v1/admin/ssh/config"),
   addSshHost: (host: string, home: string) => call<SshHost>("POST", "/v1/admin/ssh/hosts", { host, home }),
@@ -695,4 +714,8 @@ export const api = {
   onboarding: (id: string) => call<OnboardingState>("GET", `/v1/admin/onboarding/${id}`),
   cancelOnboarding: (id: string) => call("DELETE", `/v1/admin/onboarding/${id}`),
   submitCode: (id: string, code: string) => call("POST", `/v1/admin/onboarding/${id}/code`, { code }),
+  proxy: () => call<ProxyView>("GET", "/v1/admin/proxy"),
+  setProxy: (patch: ProxyPatch) => call<ProxyView>("PUT", "/v1/admin/proxy", patch),
+  testProxy: (input: { url?: string; useSaved?: boolean }) =>
+    call<ProxyTestResult>("POST", "/v1/admin/proxy/test", input),
 };

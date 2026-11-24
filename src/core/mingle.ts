@@ -17,12 +17,24 @@ import type {
 import { LOCAL_OWNER, type LocalChannel, type LocalFile, localChannel } from "../channels/local/local.ts";
 import type { Harness, HarnessInfo, HarnessStatus } from "../harness/harness.ts";
 import { checkEnvironment, runCommand } from "../platform/command.ts";
+import { type NetworkProxyController, type ProxyTestResult, testProxyConnection } from "../platform/net.ts";
 import {
-  createProxyController,
-  PROXY_SECRET_REF,
-  type ProxyController,
-  type ProxyStatus,
+  applyProxyAuth,
+  buildHarnessProxyEnv,
+  decodeProxyAuth,
+  detectSystemProxy,
+  encodeProxyAuth,
+  maskProxyUrl,
+  maskRawProxyUrl,
+  PROXY_AUTH_KEY,
+  type ProxyAuth,
+  type ProxyMode,
+  type ProxySettings,
+  parseBypassList,
   parseProxyUrl,
+  type ResolvedProxy,
+  type SystemProxyInfo,
+  validateProxyMode,
 } from "../platform/proxy.ts";
 import type { SecretStore } from "../platform/secrets.ts";
 import {
@@ -180,9 +192,38 @@ export interface MingleOptions {
   readonly hearing?: { readonly quietMs: number; readonly maxWaitMs: number; readonly gapMs: number };
   /** Engagement in a group that hears everything (docs/spec.md 4.2); `ENGAGE` from hearing.ts otherwise. */
   readonly engage?: Partial<Engage>;
-  /** Network proxy controller; `mingle start` passes one that applies globally. */
-  readonly proxy?: ProxyController;
   readonly log?: (line: string) => void;
+  /** Outbound network proxy controller; installed by the daemon (`cli/main.ts`). */
+  readonly proxy?: NetworkProxyController;
+  /** Proxy variables inherited from the login shell, captured at startup. */
+  readonly shellProxyEnv?: Readonly<Record<string, string | undefined>>;
+  /** Override OS system proxy detection (for tests). */
+  readonly detectSystemProxy?: () => Promise<SystemProxyInfo>;
+  /** Override proxy connectivity test (for tests). */
+  readonly testProxy?: (url: string) => Promise<ProxyTestResult>;
+}
+
+/** Public proxy configuration and live status returned by `/v1/admin/proxy`. Never contains credentials. */
+export interface ProxyView {
+  readonly mode: ProxyMode;
+  readonly url: string | null;
+  readonly hasAuth: boolean;
+  readonly authMissing: boolean;
+  readonly bypass: string;
+  readonly passToHarness: boolean;
+  readonly effective: {
+    readonly url: string | null;
+    readonly source: "os" | "env" | "manual" | "none";
+    readonly pacOnly: boolean;
+  };
+}
+
+export interface ProxyPatch {
+  readonly mode?: ProxyMode;
+  readonly url?: string | null;
+  readonly keepAuth?: boolean;
+  readonly bypass?: string;
+  readonly passToHarness?: boolean;
 }
 
 /** Variables that give an agent a sign-in of its own, so it does not share the computer's usage limit. */
@@ -300,6 +341,10 @@ export class Mingle {
   private readonly active = new Map<string, { n: number; at: number }>();
   /** Sessions of just-paused agents that are still closing; resuming waits for them. */
   private readonly closing = new Map<string, Promise<void>>();
+  /** Active outbound proxy state (in memory only; credentials never logged or returned). */
+  private activeProxy: ResolvedProxy | null = null;
+  private lastSystemProxy: { at: number; info: SystemProxyInfo } | undefined;
+  private systemProxyProbe: Promise<SystemProxyInfo> | undefined;
   /**
    * Usage limits by sign-in (docs/spec.md 4.3): the account-wide wait each session reports
    * against. `revision` distinguishes reports, so a turn that began under an older wait cannot
@@ -328,12 +373,10 @@ export class Mingle {
   readonly localChat: LocalChannel = localChannel();
   /** The chat apps, and the built-in private chat. */
   private readonly channels: Partial<Record<Platform, Channel>>;
-  private readonly proxy: ProxyController;
 
   constructor(options: MingleOptions) {
     this.options = options;
     this.channels = { ...options.channels, local: this.localChat };
-    this.proxy = options.proxy ?? createProxyController({ applyGlobal: false, log: (line) => this.log(line) });
     this.book = new HearingBook(() => this.pace(), options.engage);
     this.remotes = new Remotes(options.paths.home, options.remoteTransport);
     for (const dir of [
@@ -371,6 +414,7 @@ export class Mingle {
         MINGLE_TOKEN: this.lineToken(agent.id, task.id),
         MINGLE_CLI: this.cliPath,
       }),
+      baseEnv: () => this.harnessProxyEnv(),
       agentEnv: (id) => this.agentEnv(id),
       ...(options.lineSettleMs !== undefined ? { settleMs: options.lineSettleMs } : {}),
       note: (id, body) => this.store.addOwnerNote(id, body),
@@ -405,7 +449,9 @@ export class Mingle {
   async start(apiUrl: string): Promise<void> {
     this.apiUrl = apiUrl;
     this.writeCliWrapper();
-    await this.initProxy();
+    // Apply configured or OS network proxy before restoring chat app connections.
+    await this.migrateLegacyProxy();
+    await this.refreshProxy(true).catch((error) => this.log(`proxy setup failed: ${(error as Error).message}`));
     // Warm the harness list and the catalog so the console's first look at either does not
     // wait on the probe. One after the other: each starts every harness's executable.
     void this.probeHarnesses()
@@ -498,7 +544,6 @@ export class Mingle {
   resume(reason: string): Promise<void> {
     this.resuming ??= (async () => {
       this.log(`${reason}: reconnecting the chat apps`);
-      await this.refreshProxy();
       await Promise.all(this.store.connections().map((connection) => this.reconnect(connection.id)));
       this.fireReminders();
       this.resumeWaiting();
@@ -542,57 +587,210 @@ export class Mingle {
     this.runtimes.clear();
     await this.lines.close();
     await this.checksSettled();
+    this.options.proxy?.restore();
     this.store.close();
-  }
-
-  log(line: string): void {
-    this.options.log?.(line);
   }
 
   // ------------------------------------------------------------------- proxy
 
-  private async initProxy(): Promise<void> {
-    const saved = await this.options.secrets.get(PROXY_SECRET_REF).catch(() => undefined);
+  private async probeSystemProxy(force = false): Promise<SystemProxyInfo> {
+    if (!force && this.lastSystemProxy && Date.now() - this.lastSystemProxy.at < 2_000) {
+      return this.lastSystemProxy.info;
+    }
+    this.systemProxyProbe ??= (async () => {
+      const info = this.options.detectSystemProxy
+        ? await this.options.detectSystemProxy()
+        : await detectSystemProxy({ env: this.options.shellProxyEnv ?? process.env });
+      this.lastSystemProxy = { at: Date.now(), info };
+      return info;
+    })().finally(() => {
+      this.systemProxyProbe = undefined;
+    });
+    return this.systemProxyProbe;
+  }
+
+  // ------------------------------------------------------------------- proxy
+
+  /** One-time migration from MING-152's single `mingle:proxy` secret into `proxy_settings` + `proxy:auth`. */
+  private async migrateLegacyProxy(): Promise<void> {
+    const current = this.store.proxySettings();
+    if (current.mode !== "system" || current.url !== null) return;
+    const legacy = await this.options.secrets.get("mingle:proxy").catch(() => undefined);
+    if (!legacy?.trim()) return;
     try {
-      await this.proxy.apply(saved ?? null);
-    } catch (error) {
-      this.log(`ignored invalid saved proxy: ${(error as Error).message}`);
-      await this.proxy.apply(null);
-    }
-  }
-
-  /** Re-read OS system proxy when no manual proxy is set (e.g. VPN turned on after start). */
-  async refreshProxy(): Promise<ProxyStatus> {
-    return this.proxy.refresh();
-  }
-
-  /** Current network proxy settings (redacted) and active source. */
-  async proxyStatus(): Promise<ProxyStatus> {
-    return this.proxy.refresh();
-  }
-
-  /** Save or clear (null/empty) the manual HTTP proxy, apply immediately, and nudge offline bots. */
-  async setProxy(raw: string | null): Promise<ProxyStatus> {
-    const normalized = parseProxyUrl(raw);
-    if (normalized) {
-      try {
-        await this.options.secrets.set(PROXY_SECRET_REF, normalized);
-      } catch {
-        throw new MingleError("proxy_save_failed", "the system credential store did not save it; try again", 500);
+      const parsed = parseProxyUrl(legacy);
+      let hasAuth = false;
+      if (parsed.auth) {
+        await this.options.secrets.set(PROXY_AUTH_KEY, encodeProxyAuth(parsed.auth));
+        hasAuth = true;
       }
-    } else {
-      await this.options.secrets.delete(PROXY_SECRET_REF).catch(() => {});
+      this.store.setProxySettings({
+        mode: "manual",
+        url: parsed.cleanUrl,
+        hasAuth,
+        bypass: current.bypass,
+        passToHarness: current.passToHarness,
+      });
+      await this.options.secrets.delete("mingle:proxy").catch(() => {});
+    } catch {
+      this.log("ignored invalid legacy proxy setting");
     }
-    const status = await this.proxy.apply(normalized);
-    // Reconnect bots that are currently waiting or connecting so a new proxy takes effect immediately.
+  }
+
+  private async readManualProxyAuth(settings: ProxySettings): Promise<{ auth: ProxyAuth | null; missing: boolean }> {
+    if (!settings.hasAuth) return { auth: null, missing: false };
+    const stored = await this.options.secrets.get(PROXY_AUTH_KEY).catch(() => undefined);
+    const decoded = stored ? decodeProxyAuth(stored) : null;
+    if (!decoded) return { auth: null, missing: true };
+    return { auth: decoded, missing: false };
+  }
+
+  async refreshProxy(force = false): Promise<{
+    readonly settings: ProxySettings;
+    readonly system: SystemProxyInfo | null;
+    readonly resolved: ResolvedProxy | null;
+    readonly authMissing: boolean;
+  }> {
+    const settings = this.store.proxySettings();
+    let system: SystemProxyInfo | null = null;
+    let resolved: ResolvedProxy | null = null;
+    let authMissing = false;
+
+    if (settings.mode === "manual") {
+      if (settings.url) {
+        const { auth, missing } = await this.readManualProxyAuth(settings);
+        authMissing = missing;
+        resolved = {
+          url: applyProxyAuth(settings.url, auth),
+          displayUrl: maskProxyUrl(settings.url, settings.hasAuth),
+          bypass: parseBypassList(settings.bypass),
+          source: "manual",
+        };
+      }
+    } else if (settings.mode === "system") {
+      system = await this.probeSystemProxy(force);
+      if (system.url) {
+        resolved = {
+          url: system.url,
+          displayUrl: maskRawProxyUrl(system.url),
+          bypass: system.bypass,
+          source: system.source === "os" ? "os" : "env",
+        };
+      }
+    }
+
+    this.activeProxy = resolved;
+    this.options.proxy?.apply(resolved);
+    return { settings, system, resolved, authMissing };
+  }
+
+  /** Proxy variables injected below agent env vars when `passToHarness` is enabled. */
+  private harnessProxyEnv(): Record<string, string> {
+    const settings = this.store.proxySettings();
+    return buildHarnessProxyEnv(this.activeProxy, {
+      mode: settings.mode,
+      passToHarness: settings.passToHarness,
+      shellEnv: this.options.shellProxyEnv ?? {},
+    });
+  }
+
+  async proxyView(force = true): Promise<ProxyView> {
+    const { settings, system, resolved, authMissing } = await this.refreshProxy(force);
+    return {
+      mode: settings.mode,
+      url: settings.url ? maskProxyUrl(settings.url, settings.hasAuth) : null,
+      hasAuth: settings.hasAuth,
+      authMissing,
+      bypass: settings.bypass,
+      passToHarness: settings.passToHarness,
+      effective: {
+        url: resolved?.displayUrl ?? null,
+        source: resolved?.source ?? "none",
+        pacOnly: Boolean(system?.pacOnly && !resolved),
+      },
+    };
+  }
+
+  async updateProxy(patch: ProxyPatch): Promise<ProxyView> {
+    const current = this.store.proxySettings();
+    const prevHarnessEnv = JSON.stringify(this.harnessProxyEnv());
+    const mode = patch.mode !== undefined ? validateProxyMode(patch.mode) : current.mode;
+    const bypass = patch.bypass !== undefined ? String(patch.bypass).trim() : current.bypass;
+    const passToHarness = patch.passToHarness !== undefined ? Boolean(patch.passToHarness) : current.passToHarness;
+
+    let cleanUrl = current.url;
+    let hasAuth = current.hasAuth;
+
+    if (patch.url !== undefined) {
+      if (patch.url === null || patch.url.trim() === "") {
+        cleanUrl = null;
+        hasAuth = false;
+        await this.options.secrets.delete(PROXY_AUTH_KEY).catch(() => {});
+      } else {
+        const parsed = parseProxyUrl(patch.url);
+        cleanUrl = parsed.cleanUrl;
+        if (parsed.auth) {
+          try {
+            await this.options.secrets.set(PROXY_AUTH_KEY, encodeProxyAuth(parsed.auth));
+          } catch {
+            // Never surface the raw error: it could carry the password.
+            throw new MingleError("proxy_save_failed", "could not save proxy credentials in the system keychain", 500);
+          }
+          hasAuth = true;
+        } else if (patch.keepAuth && current.hasAuth && current.url === parsed.cleanUrl) {
+          hasAuth = true;
+        } else {
+          hasAuth = false;
+          await this.options.secrets.delete(PROXY_AUTH_KEY).catch(() => {});
+        }
+      }
+    }
+
+    this.store.setProxySettings({ mode, url: cleanUrl, hasAuth, bypass, passToHarness });
+    const view = await this.proxyView(true);
+    this.log(`proxy updated: ${view.mode} (${view.effective.url ?? "direct"})`);
+
+    // Reconnect external chat apps so the new proxy takes effect without restarting Mingle.
     for (const connection of this.store.connections()) {
-      if (this.isBuiltin(connection)) continue;
-      const kind = this.links.get(connection.id)?.state.kind;
-      if (kind === "waiting" || kind === "connecting") {
-        void this.reconnect(connection.id).catch(() => {});
+      if (connection.platform === "local") continue;
+      void this.reconnect(connection.id).catch((error) =>
+        this.log(`connection ${connection.id} reconnect after proxy change failed: ${(error as Error).message}`),
+      );
+    }
+
+    // Refresh idle runtimes when the proxy environment seen by harnesses changed.
+    if (JSON.stringify(this.harnessProxyEnv()) !== prevHarnessEnv) {
+      for (const runtime of this.runtimes.values()) {
+        void runtime.refresh().catch(() => {});
       }
     }
-    return status;
+
+    return view;
+  }
+
+  async testProxy(input: { readonly url?: string; readonly useSaved?: boolean }): Promise<ProxyTestResult> {
+    let targetUrl: string;
+    if (typeof input.url === "string" && input.url.trim()) {
+      targetUrl = input.url.trim();
+      parseProxyUrl(targetUrl);
+    } else if (input.useSaved) {
+      const settings = this.store.proxySettings();
+      if (!settings.url) {
+        throw new MingleError("proxy_url_required", "save a proxy URL before testing it");
+      }
+      const { auth, missing } = await this.readManualProxyAuth(settings);
+      if (missing) {
+        throw new MingleError("proxy_auth_missing", "proxy credentials are missing from the keychain; re-enter them");
+      }
+      targetUrl = applyProxyAuth(settings.url, auth);
+    } else {
+      throw new MingleError("proxy_url_required", "enter a proxy URL to test");
+    }
+    return this.options.testProxy ? this.options.testProxy(targetUrl) : testProxyConnection(targetUrl);
+  }
+
+  log(line: string): void {
+    this.options.log?.(line);
   }
 
   // ------------------------------------------------------------------ agents
@@ -940,8 +1138,12 @@ export class Mingle {
     const last = this.store.lastMessageTimes(agent.id);
     const quota = this.store.quotaWait(agent.id);
     const wait = quota && quota.until > now ? quota : undefined;
-    const proxy = await this.proxyStatus();
-    const proxyLine = proxy.effective ? `${proxy.source} (${proxy.effective})` : "direct";
+    const proxy = await this.proxyView(false).catch(() => null);
+    const proxyLine = proxy?.effective.url
+      ? `${proxy.effective.source} (${proxy.effective.url})`
+      : proxy?.mode === "off"
+        ? "off (direct)"
+        : "direct";
     // Only structured states belong in a shareable report; raw provider/adapter errors may
     // contain request data.
     const lines = [
@@ -1070,6 +1272,7 @@ export class Mingle {
       harness: this.options.harness,
       homeDir: this.homeDir(agent),
       env: () => ({ MINGLE_API: this.apiUrl, MINGLE_TOKEN: token, MINGLE_CLI: this.cliPath }),
+      baseEnv: () => this.harnessProxyEnv(),
       agentEnv: () => this.agentEnv(agent.id),
       ...(this.options.coalesceMs !== undefined ? { coalesceMs: this.options.coalesceMs } : {}),
       ...(this.options.emptyTurnWaitMs !== undefined ? { emptyTurnWaitMs: this.options.emptyTurnWaitMs } : {}),
@@ -1188,7 +1391,9 @@ export class Mingle {
   /** Connect a bot with credentials (token-style platforms, or manual App ID / Secret). */
   async addConnection(agentId: string, platform: Platform, credentials: Credentials): Promise<Connection> {
     const agent = this.agent(agentId);
-    await this.refreshProxy();
+    if (platform !== "local" && this.store.proxySettings().mode === "system") {
+      await this.refreshProxy(false).catch(() => {});
+    }
     const abort = new AbortController();
     for await (const event of this.channel(platform).onboard(credentials, abort.signal, { agentName: agent.name })) {
       if (event.kind === "failed") throw onboardingError(platform, event.code);
@@ -1234,7 +1439,9 @@ export class Mingle {
     };
     void (async () => {
       try {
-        await this.refreshProxy();
+        if (platform !== "local" && this.store.proxySettings().mode === "system") {
+          await this.refreshProxy(false).catch(() => {});
+        }
         const awaitCode = () =>
           new Promise<string>((resolve) => {
             session.submitCode = (code) => {
@@ -1582,12 +1789,14 @@ export class Mingle {
     let reported: Extract<ConnectionState, { kind: "error" }>["code"] | undefined;
     let live: ChannelConnection;
     try {
+      if (connection.platform !== "local" && this.store.proxySettings().mode === "system") {
+        await this.refreshProxy(false).catch(() => {});
+      }
       const credentials = given ?? (await this.credentials(connection));
       if (!credentials) {
         await this.drive(id, { kind: "failed", code: "credentials_missing" }, gen);
         return;
       }
-      if (!this.isBuiltin(connection)) await this.refreshProxy();
       live = await this.channel(connection.platform).connect(credentials, {
         onMessage: (message) => {
           if (this.links.get(id)?.gen !== gen) return;

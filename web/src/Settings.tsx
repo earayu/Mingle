@@ -1,15 +1,26 @@
-import { type FormEvent, useState } from "react";
-import { api, type BrainStatus, type ProxyStatus } from "./api.ts";
+import { type FormEvent, useEffect, useRef, useState } from "react";
+import { api, type BrainStatus, type ProxyMode, type ProxyView } from "./api.ts";
 import { BrainRow } from "./Brains.tsx";
-import { useCached } from "./cache.ts";
-import { errorText, type LocalePreference, useI18n } from "./i18n.ts";
+import { remember, useCached } from "./cache.ts";
+import { errorText, type LocalePreference, type MessageKey, useI18n } from "./i18n.ts";
 import { type OnlineState, online, useOnline } from "./online.ts";
-import { onEscape } from "./shortcuts.ts";
 import { applyTheme, savedTheme, type Theme } from "./theme.ts";
-import { Button, Group, GroupRow, Input, PageHeader, Section, Segmented } from "./ui.tsx";
+import {
+  AlertIcon,
+  Button,
+  Field,
+  Group,
+  GroupRow,
+  Input,
+  PageHeader,
+  Section,
+  Segmented,
+  Spinner,
+  StatusDot,
+} from "./ui.tsx";
 import { type UpdateState, updates, useUpdates } from "./updates.ts";
 
-export function SettingsPage({ version }: { version: string }) {
+export function SettingsPage({ version, focus }: { version: string; focus?: "network" }) {
   const { t, localePreference, setLocale } = useI18n();
   const [theme, setTheme] = useState<Theme>(savedTheme);
   const update = useUpdates();
@@ -52,6 +63,7 @@ export function SettingsPage({ version }: { version: string }) {
               </GroupRow>
             </Group>
           </Section>
+          <NetworkProxy focus={focus === "network"} />
           {keep ? (
             <Section title={t("online.title")}>
               <Group>
@@ -59,7 +71,6 @@ export function SettingsPage({ version }: { version: string }) {
               </Group>
             </Section>
           ) : null}
-          <NetworkSection />
           <Brains />
           <Section title={t("settings.about")}>
             <Group>
@@ -79,6 +90,357 @@ export function SettingsPage({ version }: { version: string }) {
         </div>
       </div>
     </>
+  );
+}
+
+function hasProxyCredentials(raw: string): boolean {
+  try {
+    const parsed = new URL(raw.trim());
+    return Boolean(parsed.username || parsed.password);
+  } catch {
+    return false;
+  }
+}
+
+function stripMaskedAuth(url: string | null): string {
+  return url ? url.replace("//••••••@", "//") : "";
+}
+
+/** Global outbound network proxy settings (docs/spec.md 9.1). */
+function NetworkProxy({ focus }: { focus: boolean }) {
+  const { t } = useI18n();
+  const { value: cached, reload } = useCached<ProxyView>("proxy", api.proxy);
+  const [latest, setLatest] = useState<ProxyView | null>(null);
+  const [draftManual, setDraftManual] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [urlInput, setUrlInput] = useState("");
+  const [bypassInput, setBypassInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [feedback, setFeedback] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [applied, setApplied] = useState(false);
+  const [highlighted, setHighlighted] = useState(false);
+  const sectionRef = useRef<HTMLDivElement>(null);
+
+  const proxy = latest ?? cached;
+
+  const commit = (next: ProxyView) => {
+    remember("proxy", next);
+    setLatest(next);
+  };
+
+  // Refresh live OS proxy status when the window comes back to the front.
+  useEffect(() => {
+    const onFocus = () => {
+      setLatest(null);
+      void reload();
+    };
+    addEventListener("focus", onFocus);
+    return () => removeEventListener("focus", onFocus);
+  }, [reload]);
+
+  useEffect(() => {
+    if (!focus) return;
+    sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlighted(true);
+    const timer = setTimeout(() => setHighlighted(false), 1600);
+    return () => clearTimeout(timer);
+  }, [focus]);
+
+  const showApplied = () => {
+    setApplied(true);
+    setTimeout(() => setApplied(false), 3200);
+  };
+
+  if (!proxy) return null;
+
+  const selectedMode: ProxyMode = draftManual ? "manual" : proxy.mode;
+  const manualNeedsForm = selectedMode === "manual" && (!proxy.url || editing || draftManual);
+
+  const openManualEdit = () => {
+    setUrlInput(stripMaskedAuth(proxy.url));
+    setBypassInput(proxy.bypass);
+    setFeedback(null);
+    setEditing(true);
+  };
+
+  const cancelManualEdit = () => {
+    setDraftManual(false);
+    setEditing(false);
+    setFeedback(null);
+  };
+
+  const changeMode = async (mode: ProxyMode) => {
+    if (mode === selectedMode) return;
+    setFeedback(null);
+    if (mode === "manual" && !proxy.url) {
+      setUrlInput("");
+      setBypassInput(proxy.bypass);
+      setDraftManual(true);
+      setEditing(true);
+      return;
+    }
+    if (draftManual && mode === proxy.mode) {
+      cancelManualEdit();
+      return;
+    }
+    setBusy(true);
+    try {
+      const next = await api.setProxy({ mode });
+      commit(next);
+      setDraftManual(false);
+      setEditing(false);
+      showApplied();
+    } catch (e) {
+      setFeedback({ kind: "err", text: errorText(t, e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveManual = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const trimmed = urlInput.trim();
+      const unchangedAuthUrl = proxy.hasAuth && trimmed === stripMaskedAuth(proxy.url);
+      const next = await api.setProxy({
+        mode: "manual",
+        url: trimmed,
+        ...(unchangedAuthUrl ? { keepAuth: true } : {}),
+        bypass: bypassInput.trim(),
+      });
+      commit(next);
+      setDraftManual(false);
+      setEditing(false);
+      showApplied();
+    } catch (e) {
+      setFeedback({ kind: "err", text: errorText(t, e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runTest = async (useSaved: boolean) => {
+    setTesting(true);
+    setFeedback(null);
+    try {
+      const input = useSaved
+        ? { useSaved: true }
+        : proxy.hasAuth && urlInput.trim() === stripMaskedAuth(proxy.url)
+          ? { useSaved: true }
+          : { url: urlInput.trim() };
+      const result = await api.testProxy(input);
+      if (result.ok) {
+        setFeedback({ kind: "ok", text: t("proxy.testOk", { ms: String(result.latencyMs) }) });
+      } else {
+        const key = `error.${result.code}` as MessageKey;
+        setFeedback({ kind: "err", text: t(key) !== key ? t(key) : t("error.proxy_unreachable") });
+      }
+    } catch (e) {
+      setFeedback({ kind: "err", text: errorText(t, e) });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const toggleHarness = async (passToHarness: boolean) => {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const next = await api.setProxy({ passToHarness });
+      commit(next);
+    } catch (e) {
+      setFeedback({ kind: "err", text: errorText(t, e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  let statusDot: "connected" | "reconnecting" | "offline" = "offline";
+  let statusText = t("proxy.statusDirect");
+  let statusTone = "text-ink2";
+  if (proxy.mode === "system") {
+    if (proxy.effective.url) {
+      statusDot = "connected";
+      statusText = t("proxy.statusUsing", { url: proxy.effective.url });
+    } else if (proxy.effective.pacOnly) {
+      statusDot = "reconnecting";
+      statusText = t("proxy.statusPac");
+      statusTone = "text-amber";
+    } else {
+      statusDot = "offline";
+      statusText = t("proxy.statusDirect");
+    }
+  } else if (proxy.mode === "manual") {
+    if (proxy.authMissing) {
+      statusDot = "reconnecting";
+      statusText = t("proxy.authMissing");
+      statusTone = "text-amber";
+    } else if (proxy.url) {
+      statusDot = "connected";
+      statusText = t("proxy.statusUsing", { url: proxy.url });
+    } else {
+      statusDot = "reconnecting";
+      statusText = t("proxy.statusManualUnset");
+    }
+  } else {
+    statusDot = "offline";
+    statusText = t("proxy.statusOff");
+  }
+
+  return (
+    <div ref={sectionRef}>
+      <Section title={t("settings.network")}>
+        <Group
+          className={
+            highlighted ? "!border-accent ring-3 ring-accent/20 transition-[border-color,box-shadow] duration-200" : ""
+          }
+        >
+          <GroupRow className="flex-wrap">
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span>{t("proxy.title")}</span>
+              <span className={`flex items-start gap-1.5 text-small ${statusTone}`}>
+                <span className="mt-[6px] inline-flex shrink-0">
+                  <StatusDot state={statusDot} />
+                </span>
+                <span className="selectable min-w-0 break-all">{statusText}</span>
+              </span>
+            </span>
+            <Segmented<ProxyMode>
+              label={t("proxy.title")}
+              value={selectedMode}
+              onChange={(next) => void changeMode(next)}
+              options={[
+                { value: "system", label: t("proxy.modeSystem") },
+                { value: "manual", label: t("proxy.modeManual") },
+                { value: "off", label: t("proxy.modeOff") },
+              ]}
+            />
+          </GroupRow>
+
+          {selectedMode === "manual" ? (
+            <div className="rise flex flex-col gap-3 bg-group px-4 py-3.5">
+              {manualNeedsForm ? (
+                <form
+                  onSubmit={saveManual}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && (proxy.url || draftManual)) {
+                      cancelManualEdit();
+                    }
+                  }}
+                  className="flex flex-col gap-3"
+                >
+                  <Field label={t("proxy.url")} hint={t("proxy.urlHint")}>
+                    <Input
+                      autoFocus={editing}
+                      value={urlInput}
+                      onChange={(e) => {
+                        setUrlInput(e.target.value);
+                        if (feedback) setFeedback(null);
+                      }}
+                      placeholder={t("proxy.urlPlaceholder")}
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="font-mono text-small"
+                    />
+                  </Field>
+                  {hasProxyCredentials(urlInput) ? (
+                    <p className="flex items-center gap-1.5 rounded-control border border-line bg-bg px-2.5 py-1.5 text-caption text-ink2">
+                      <AlertIcon className="text-accent" />
+                      <span>{t("proxy.keychainHint")}</span>
+                    </p>
+                  ) : null}
+                  <Field label={t("proxy.bypass")} hint={t("proxy.bypassHint")}>
+                    <Input
+                      value={bypassInput}
+                      onChange={(e) => setBypassInput(e.target.value)}
+                      placeholder={t("proxy.bypassPlaceholder")}
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="font-mono text-small"
+                    />
+                  </Field>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button type="submit" variant="primary" small disabled={busy || !urlInput.trim()}>
+                      {t("proxy.save")}
+                    </Button>
+                    <Button small disabled={testing || !urlInput.trim()} onClick={() => void runTest(false)}>
+                      {testing ? (
+                        <>
+                          <Spinner /> {t("proxy.testing")}
+                        </>
+                      ) : (
+                        t("proxy.test")
+                      )}
+                    </Button>
+                    {proxy.url || draftManual ? (
+                      <Button variant="ghost" small onClick={cancelManualEdit}>
+                        {t("agent.cancel")}
+                      </Button>
+                    ) : null}
+                  </div>
+                </form>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line bg-bg px-3 py-2">
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="selectable truncate font-mono text-small">{proxy.url}</span>
+                    <span className="truncate text-caption text-ink3">
+                      {proxy.bypass ? t("proxy.bypassSummary", { list: proxy.bypass }) : t("proxy.bypassLoopbackOnly")}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    <Button small disabled={testing} onClick={() => void runTest(true)}>
+                      {testing ? (
+                        <>
+                          <Spinner /> {t("proxy.testing")}
+                        </>
+                      ) : (
+                        t("proxy.test")
+                      )}
+                    </Button>
+                    <Button small onClick={openManualEdit}>
+                      {t("proxy.edit")}
+                    </Button>
+                  </span>
+                </div>
+              )}
+
+              {feedback ? (
+                <p role="status" className={`text-small ${feedback.kind === "ok" ? "text-green" : "text-red"}`}>
+                  {feedback.text}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <GroupRow>
+            <label
+              className={`flex min-w-0 flex-1 items-center gap-3 ${selectedMode === "off" ? "opacity-50" : "cursor-pointer"}`}
+            >
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span>{t("proxy.passToHarness")}</span>
+                <span className="text-small text-ink2">{t("proxy.passToHarnessHint")}</span>
+              </span>
+              <input
+                type="checkbox"
+                className="size-4 shrink-0 accent-[var(--accent-btn)]"
+                checked={proxy.passToHarness}
+                disabled={selectedMode === "off" || busy}
+                onChange={(e) => void toggleHarness(e.target.checked)}
+              />
+            </label>
+          </GroupRow>
+        </Group>
+        {feedback && selectedMode !== "manual" ? (
+          <p role="status" className={`px-1 text-small ${feedback.kind === "ok" ? "text-green" : "text-red"}`}>
+            {feedback.text}
+          </p>
+        ) : null}
+        {applied ? <p className="rise px-1 text-small text-ink2">{t("proxy.applied")}</p> : null}
+      </Section>
+    </div>
   );
 }
 
@@ -188,131 +550,6 @@ function ToggleRow({
         />
       </label>
     </GroupRow>
-  );
-}
-
-/** Network proxy settings: automatic (system / env) by default, or a custom HTTP proxy. */
-function NetworkSection() {
-  const { t } = useI18n();
-  const { value: proxy, reload } = useCached<ProxyStatus>("proxy", api.proxy);
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const summary = !proxy
-    ? ""
-    : proxy.source === "manual" && proxy.effective
-      ? t("settings.proxyManual", { url: proxy.effective })
-      : proxy.source === "system" && proxy.effective
-        ? t("settings.proxySystem", { url: proxy.effective })
-        : proxy.source === "env" && proxy.effective
-          ? t("settings.proxyEnv", { url: proxy.effective })
-          : t("settings.proxyDirect");
-
-  const startEdit = () => {
-    setValue(proxy?.configured && !proxy.hasCredentials ? proxy.configured : "");
-    setError(null);
-    setEditing(true);
-  };
-
-  const cancel = () => {
-    setEditing(false);
-    setError(null);
-  };
-
-  const save = async (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await api.setProxy(value.trim() || null);
-      setEditing(false);
-      await reload();
-    } catch (err) {
-      setError(errorText(t, err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const clear = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.setProxy(null);
-      setEditing(false);
-      await reload();
-    } catch (err) {
-      setError(errorText(t, err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Section title={t("settings.network")}>
-      <Group>
-        {editing ? (
-          <GroupRow>
-            <form
-              className="flex min-w-0 flex-1 flex-col gap-3"
-              onSubmit={(e) => void save(e)}
-              onKeyDown={onEscape(cancel)}
-            >
-              <div className="flex flex-col gap-0.5">
-                <span>{t("settings.proxy")}</span>
-                <span className="text-small text-ink2">{t("settings.proxyHint")}</span>
-              </div>
-              <Input
-                type="text"
-                inputMode="url"
-                autoComplete="off"
-                spellCheck={false}
-                autoFocus
-                className="font-mono text-small"
-                placeholder={proxy?.configured ?? "http://127.0.0.1:7890"}
-                value={value}
-                onChange={(e) => {
-                  setValue(e.target.value);
-                  if (error) setError(null);
-                }}
-                disabled={busy}
-              />
-              {proxy?.hasCredentials && !error ? (
-                <p className="text-caption text-ink3">{t("settings.proxyCredentialsHint")}</p>
-              ) : null}
-              {error ? <p className="text-small text-red">{error}</p> : null}
-              <div className="flex justify-end gap-2">
-                <Button onClick={cancel} disabled={busy}>
-                  {t("agent.cancel")}
-                </Button>
-                <Button variant="primary" type="submit" disabled={busy}>
-                  {t("agent.save")}
-                </Button>
-              </div>
-            </form>
-          </GroupRow>
-        ) : (
-          <GroupRow className="flex-wrap">
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span>{t("settings.proxy")}</span>
-              <span className="selectable truncate text-small text-ink2">{summary}</span>
-            </span>
-            <div className="flex shrink-0 items-center gap-2">
-              {proxy?.configured ? (
-                <Button variant="ghost" onClick={() => void clear()} disabled={busy}>
-                  {t("settings.proxyClear")}
-                </Button>
-              ) : null}
-              <Button onClick={startEdit} disabled={busy}>
-                {proxy?.configured ? t("settings.proxyChange") : t("settings.proxyConfigure")}
-              </Button>
-            </div>
-          </GroupRow>
-        )}
-      </Group>
-    </Section>
   );
 }
 

@@ -28,7 +28,7 @@ import { Welcome } from "./Welcome.tsx";
 export type View =
   | { kind: "home" }
   | { kind: "new" }
-  | { kind: "settings" }
+  | { kind: "settings"; focus?: "network" }
   /** `tab`: a link straight to the private chat (`/a/<slug>/chat`), as the desktop app's notifications open. */
   | { kind: "agent"; slug: string; tab?: "chat" }
   | { kind: "connect"; slug: string; platform?: string };
@@ -186,7 +186,8 @@ function Shell() {
       </div>
     ) : null;
   if (agents !== null) {
-    if (view.kind === "settings") page = <SettingsPage version={version} />;
+    if (view.kind === "settings")
+      page = <SettingsPage version={version} {...(view.focus ? { focus: view.focus } : {})} />;
     else if (view.kind === "new")
       page = (
         <NewAgent

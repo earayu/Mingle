@@ -63,6 +63,7 @@ const OPTIONS = {
   agent: { type: "string" },
   lines: { type: "string" },
   prompt: { type: "boolean" },
+  bypass: { type: "string" },
 } as const;
 
 type Flags = ReturnType<typeof parse>["values"];
@@ -862,6 +863,59 @@ async function adminCommand(group: string, action: string | undefined, args: str
       print({ url }, () => url);
       return true;
     }
+    case "proxy": {
+      const sub = action;
+      const formatProxy = (p: {
+        mode: string;
+        url: string | null;
+        bypass: string;
+        passToHarness: boolean;
+        effective: { url: string | null; source: string; pacOnly: boolean };
+      }) => {
+        const eff = p.effective.url
+          ? `${p.effective.url} (${p.effective.source})`
+          : p.effective.pacOnly
+            ? "direct (PAC auto-config detected; set manual proxy)"
+            : "direct";
+        return [
+          `mode: ${p.mode}`,
+          `effective: ${eff}`,
+          ...(p.url ? [`manual: ${p.url}`] : []),
+          ...(p.bypass ? [`bypass: ${p.bypass}`] : []),
+          `pass to harness: ${p.passToHarness ? "yes" : "no"}`,
+        ].join("\n");
+      };
+      if (flags.clear !== undefined || sub === "clear") {
+        const view = await adminClient()<Parameters<typeof formatProxy>[0]>("PUT", "/v1/admin/proxy", {
+          mode: "system",
+          url: null,
+        });
+        print(view, () => formatProxy(view));
+        return true;
+      }
+      if (!sub) {
+        const view = await adminClient()<Parameters<typeof formatProxy>[0]>("GET", "/v1/admin/proxy");
+        print(view, () => formatProxy(view));
+        return true;
+      }
+      if (sub === "system" || sub === "off") {
+        const view = await adminClient()<Parameters<typeof formatProxy>[0]>("PUT", "/v1/admin/proxy", { mode: sub });
+        print(view, () => formatProxy(view));
+        return true;
+      }
+      if (sub === "set") {
+        const url = args[0];
+        if (!url) throw new CliError("usage", "mingle proxy set <url> [--bypass <list>]");
+        const view = await adminClient()<Parameters<typeof formatProxy>[0]>("PUT", "/v1/admin/proxy", {
+          mode: "manual",
+          url,
+          ...(flags.bypass !== undefined ? { bypass: flags.bypass } : {}),
+        });
+        print(view, () => formatProxy(view));
+        return true;
+      }
+      throw new CliError("usage", "mingle proxy [system | off | set <url> [--bypass <list>]]");
+    }
   }
   return false;
 }
@@ -955,20 +1009,24 @@ async function start(flags: Flags): Promise<void> {
     { loadChannels },
     { Mingle },
     harnessModule,
-    { createProxyController },
     { defaultSecrets },
+    { installNetworkProxy },
+    { captureShellProxyEnv },
   ] = await Promise.all([
     import("../api/server.ts"),
     import("../channels/registry.ts"),
     import("../core/mingle.ts"),
     import("../harness/harness.ts"),
-    import("../platform/proxy.ts"),
     import("../platform/secrets.ts"),
+    import("../platform/net.ts"),
+    import("../platform/proxy.ts"),
   ]);
   // The desktop app starts us with the bare environment the system gives apps. Take the
   // user's login-shell environment, so harness setup in ~/.zshrc (API keys, base URLs,
   // proxies, PATH) works the same as in a terminal.
   if (flags["login-shell-env"]) await adoptLoginShellEnvironment(harnessModule.loginShellEnvironment, log);
+  const shellProxyEnv = captureShellProxyEnv(process.env);
+  const proxy = installNetworkProxy();
   const { oarHarness } = harnessModule;
   const mingle = new Mingle({
     paths,
@@ -977,7 +1035,8 @@ async function start(flags: Flags): Promise<void> {
     channels: await loadChannels(),
     secrets: defaultSecrets(resolve(paths.home, "secrets.json")),
     cliEntry: fileURLToPath(import.meta.url),
-    proxy: createProxyController({ applyGlobal: true, log }),
+    proxy,
+    shellProxyEnv,
     ...(process.env.MINGLE_COLD_START ? { coldStart: process.env.MINGLE_COLD_START } : {}),
     log,
   });
@@ -1066,6 +1125,7 @@ const HELP = `mingle ${VERSION}
 For the owner:
   mingle start [--port 7419] [--no-open]   run Mingle in this terminal and open the console
   mingle open                              open the console of the running Mingle
+  mingle proxy [system|off|set <url>]      show or change outbound network proxy settings
   mingle status                            agents and their connections
   mingle harnesses                         harnesses installed on this computer
   mingle agent create --name <n> --harness <id> [--model <m>] [--role <text> | --role-file <path>]
