@@ -138,6 +138,8 @@ describe("slack messages", () => {
     expect(manifest.features.slash_commands).toEqual([
       { command: "/stop", description: "Stop the agent's current work", should_escape: false },
     ]);
+    // Slack refuses the whole manifest when slash commands lack the `commands` scope (#205).
+    expect(manifest.oauth_config.scopes.bot).toContain("commands");
   });
 });
 

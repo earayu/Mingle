@@ -91,6 +91,8 @@ const MANIFEST = {
         "files:read",
         "files:write",
         "users:read",
+        // Slack rejects a manifest that declares slash commands without this scope.
+        "commands",
       ],
     },
   },
