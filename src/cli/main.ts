@@ -950,14 +950,21 @@ async function start(flags: Flags): Promise<void> {
     } catch {}
   };
   // Loaded here so agent commands, which run often, do not pay for OAR and the server.
-  const [{ createApi, listen, serveConsole }, { loadChannels }, { Mingle }, harnessModule, { defaultSecrets }] =
-    await Promise.all([
-      import("../api/server.ts"),
-      import("../channels/registry.ts"),
-      import("../core/mingle.ts"),
-      import("../harness/harness.ts"),
-      import("../platform/secrets.ts"),
-    ]);
+  const [
+    { createApi, listen, serveConsole },
+    { loadChannels },
+    { Mingle },
+    harnessModule,
+    { createProxyController },
+    { defaultSecrets },
+  ] = await Promise.all([
+    import("../api/server.ts"),
+    import("../channels/registry.ts"),
+    import("../core/mingle.ts"),
+    import("../harness/harness.ts"),
+    import("../platform/proxy.ts"),
+    import("../platform/secrets.ts"),
+  ]);
   // The desktop app starts us with the bare environment the system gives apps. Take the
   // user's login-shell environment, so harness setup in ~/.zshrc (API keys, base URLs,
   // proxies, PATH) works the same as in a terminal.
@@ -970,6 +977,7 @@ async function start(flags: Flags): Promise<void> {
     channels: await loadChannels(),
     secrets: defaultSecrets(resolve(paths.home, "secrets.json")),
     cliEntry: fileURLToPath(import.meta.url),
+    proxy: createProxyController({ applyGlobal: true, log }),
     ...(process.env.MINGLE_COLD_START ? { coldStart: process.env.MINGLE_COLD_START } : {}),
     log,
   });
@@ -1008,6 +1016,13 @@ async function start(flags: Flags): Promise<void> {
     await mingle.stop();
     process.exit(0);
   };
+  process.on("unhandledRejection", (reason) => {
+    const detail = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+    log(`unhandled rejection: ${detail}`);
+  });
+  process.on("uncaughtExceptionMonitor", (error) => {
+    log(`uncaught exception: ${error.stack ?? error.message}`);
+  });
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
   // The desktop app holds our stdin open and closes it to stop us. Windows has no

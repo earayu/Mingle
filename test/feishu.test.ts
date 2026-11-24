@@ -393,6 +393,53 @@ describe("feishu onboarding", () => {
     expect(updated).toEqual(["cli_1"]);
     expect(events.at(-1)).toMatchObject({ kind: "succeeded", credentials: { appId: "cli_1" } });
   });
+
+  it("retries botInfo transiently and keeps credentials when botInfo fails after QR creation (#199)", async () => {
+    // Transient failure on the first botInfo call recovers on retry.
+    let attempts = 0;
+    const base = fakeApi({ activated: () => true });
+    const recovering = feishuChannel({
+      botInfoRetryMs: 1,
+      api: {
+        ...base,
+        async botInfo(credentials) {
+          attempts++;
+          if (attempts === 1) throw new Error("Feishu /open-apis/bot/v3/info/ failed: bot not ready");
+          return base.botInfo(credentials);
+        },
+      },
+    });
+    const recovered = await collect(recovering.onboard(undefined, new AbortController().signal, { agentName: "Alex" }));
+    expect(attempts).toBe(2);
+    expect(recovered.at(-1)).toMatchObject({
+      kind: "succeeded",
+      credentials: { appId: "cli_1", appSecret: "secret", domain: "feishu" },
+      bot: { id: "ou_bot", name: "Alex" },
+      pendingApproval: false,
+    });
+
+    // Even when botInfo keeps failing, onboarding does not crash or discard the created app.
+    let persistentAttempts = 0;
+    const failing = feishuChannel({
+      botInfoRetryMs: 1,
+      api: {
+        ...base,
+        async botInfo() {
+          persistentAttempts++;
+          throw new Error("Feishu /open-apis/bot/v3/info/ failed: 99991663");
+        },
+      },
+    });
+    const kept = await collect(failing.onboard(undefined, new AbortController().signal, { agentName: "Alex" }));
+    expect(persistentAttempts).toBe(3);
+    expect(kept.at(-1)).toEqual({
+      kind: "succeeded",
+      credentials: { appId: "cli_1", appSecret: "secret", domain: "feishu" },
+      bot: { id: "cli_1", name: "Alex" },
+      ownerId: "ou_owner",
+      pendingApproval: true,
+    });
+  });
 });
 
 describe("feishu connection", () => {

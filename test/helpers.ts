@@ -21,6 +21,7 @@ import type { InboundEvent } from "../src/core/inbound.ts";
 import { Mingle } from "../src/core/mingle.ts";
 import { resolvePaths } from "../src/core/paths.ts";
 import { type Harness, oarHarness } from "../src/harness/harness.ts";
+import type { ProxyController } from "../src/platform/proxy.ts";
 import { memorySecrets, type SecretStore } from "../src/platform/secrets.ts";
 import type { InboundState, Store } from "../src/store/store.ts";
 
@@ -314,6 +315,8 @@ export async function rig(
     engage?: Partial<Engage>;
     /** The agent's role; a hiking helper unless a test needs another. */
     role?: string;
+    /** Override the network proxy controller (for testing system/env/manual proxy behavior). */
+    proxy?: ProxyController;
   } = {},
 ): Promise<Rig> {
   const home = mkdtempSync(join(tmpdir(), "mingle-test-"));
@@ -365,6 +368,7 @@ export async function rig(
     reconnectDelaysMs: [30],
     ...(options.hearing ? { hearing: options.hearing } : {}),
     ...(options.engage ? { engage: options.engage } : {}),
+    ...(options.proxy ? { proxy: options.proxy } : {}),
     // MINGLE_E2E_LOG=1 prints what Mingle logs, to see why a real harness did not answer.
     ...(process.env.MINGLE_E2E_LOG ? { log: (line: string) => console.log(`[mingle] ${line}`) } : {}),
     ...(options.log ? { log: options.log } : {}),

@@ -38,6 +38,9 @@ importers:
       qrcode:
         specifier: 1.5.4
         version: 1.5.4
+      undici:
+        specifier: 8.12.3
+        version: 8.12.3
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.6.6

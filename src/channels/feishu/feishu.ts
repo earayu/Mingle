@@ -164,6 +164,8 @@ export interface FeishuOptions {
   readonly api?: FeishuApi;
   /** How often to check whether an admin has approved the app. */
   readonly approvalPollMs?: number;
+  /** Delay between retries when bot/v3/info fails immediately after QR app creation. */
+  readonly botInfoRetryMs?: number;
   readonly createChannel?: (options: lark.LarkChannelOptions) => LarkChannelLike;
 }
 
@@ -184,6 +186,7 @@ export type LarkChannelLike = Pick<
 export function feishuChannel(options: FeishuOptions = {}): Channel {
   const api = options.api ?? officialApi();
   const pollMs = options.approvalPollMs ?? 30_000;
+  const botInfoRetryMs = options.botInfoRetryMs ?? 1_000;
   const create = options.createChannel ?? ((o) => lark.createLarkChannel(o));
 
   return {
@@ -238,39 +241,50 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
         queue.push(event);
         wake?.();
       };
-      const done = api
-        .register({
-          signal,
-          ...(context?.agentName ? { agentName: context.agentName } : {}),
-          ...(context?.reauthorize?.appId ? { appId: context.reauthorize.appId } : {}),
-          scopes,
-          onQRCodeReady: ({ url, expireIn }) =>
-            push({ kind: "qr_ready", qrContent: url, expiresAt: Date.now() + expireIn * 1000 }),
-        })
-        .then(
-          async (result) => {
-            const credentials = { appId: result.appId, appSecret: result.appSecret, domain: result.domain };
-            const bot = await api.botInfo(credentials);
-            push({
-              kind: "succeeded",
-              credentials,
-              bot: { id: bot.openId, name: bot.name },
-              ...(result.ownerId ? { ownerId: result.ownerId } : {}),
-              pendingApproval: !bot.activated,
-            });
-          },
-          (error: { code?: string }) => {
-            const code =
-              error?.code === "expired_token"
+      const done = (async () => {
+        try {
+          const result = await api.register({
+            signal,
+            ...(context?.agentName ? { agentName: context.agentName } : {}),
+            ...(context?.reauthorize?.appId ? { appId: context.reauthorize.appId } : {}),
+            scopes,
+            onQRCodeReady: ({ url, expireIn }) =>
+              push({ kind: "qr_ready", qrContent: url, expiresAt: Date.now() + expireIn * 1000 }),
+          });
+          const credentials = { appId: result.appId, appSecret: result.appSecret, domain: result.domain };
+          // Right after QR app creation, bot/v3/info can transiently fail while Feishu finishes
+          // provisioning the bot (or while the tenant has not activated it yet). Retry briefly,
+          // and if it still fails keep the created credentials instead of crashing or discarding
+          // them, so Mingle saves the connection and retries instead of leaving orphaned bots.
+          let bot: BotInfo | undefined;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              bot = await api.botInfo(credentials);
+              break;
+            } catch {
+              if (signal.aborted || attempt === 2) break;
+              await wait(botInfoRetryMs, signal);
+            }
+          }
+          push({
+            kind: "succeeded",
+            credentials,
+            bot: { id: bot?.openId ?? credentials.appId, name: bot?.name ?? context?.agentName ?? "Feishu bot" },
+            ...(result.ownerId ? { ownerId: result.ownerId } : {}),
+            pendingApproval: !(bot?.activated ?? false),
+          });
+        } catch (error) {
+          const code =
+            signal.aborted || (error as { code?: string })?.code === "abort"
+              ? "cancelled"
+              : (error as { code?: string })?.code === "expired_token"
                 ? "expired"
-                : error?.code === "access_denied"
+                : (error as { code?: string })?.code === "access_denied"
                   ? "denied"
-                  : error?.code === "abort"
-                    ? "cancelled"
-                    : "network";
-            push({ kind: "failed", code });
-          },
-        );
+                  : "network";
+          push({ kind: "failed", code });
+        }
+      })();
       for (;;) {
         while (queue.length > 0) {
           const event = queue.shift() as OnboardingEvent;
@@ -439,6 +453,10 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
         instance.on("reconnecting", () => events.onState({ kind: "reconnecting", attempt: 1 }));
         instance.on("reconnected", () => events.onState({ kind: "connected" }));
         await instance.connect();
+        if (closed) {
+          await instance.disconnect().catch(() => {});
+          return;
+        }
         events.onState({ kind: "connected" });
       };
 
@@ -451,12 +469,13 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
           if (closed) return;
           try {
             info = await api.botInfo(credentials);
+            if (closed) return;
             if (info.activated) {
               await start();
               return;
             }
           } catch {}
-          approvalTimer = setTimeout(check, pollMs);
+          if (!closed) approvalTimer = setTimeout(check, pollMs);
         };
         approvalTimer = setTimeout(check, pollMs);
       }
@@ -1052,13 +1071,36 @@ async function feishuGet<T>(
     body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
     signal: AbortSignal.timeout(15_000),
   });
-  const token = (await tokenResponse.json()) as { code: number; msg?: string; tenant_access_token?: string };
-  if (token.code !== 0 || !token.tenant_access_token) throw new Error(`Feishu auth failed: ${token.msg ?? token.code}`);
+  const token = (await tokenResponse.json().catch(() => null)) as {
+    code?: number;
+    msg?: string;
+    tenant_access_token?: string;
+  } | null;
+  if (token?.code !== 0 || !token.tenant_access_token) {
+    throw new Error(`Feishu auth failed: ${token?.msg ?? token?.code ?? `HTTP ${tokenResponse.status}`}`);
+  }
   const response = await fetch(`${origin}${path}`, {
     headers: { authorization: `Bearer ${token.tenant_access_token}` },
     signal: AbortSignal.timeout(15_000),
   });
-  const body = (await response.json()) as T & { code: number; msg?: string };
-  if (body.code !== 0) throw new Error(`Feishu ${path} failed: ${body.msg ?? body.code}`);
+  const body = (await response.json().catch(() => null)) as (T & { code?: number; msg?: string }) | null;
+  if (body?.code !== 0) {
+    throw new Error(`Feishu ${path} failed: ${body?.msg ?? body?.code ?? `HTTP ${response.status}`}`);
+  }
   return body;
+}
+
+function wait(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }

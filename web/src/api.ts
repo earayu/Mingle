@@ -518,8 +518,17 @@ export interface Reminder {
   } | null;
 }
 
+export interface ProxyStatus {
+  readonly configured: string | null;
+  readonly hasCredentials: boolean;
+  readonly effective: string | null;
+  readonly source: "manual" | "env" | "system" | "none";
+}
+
 export const api = {
   status: () => call<{ version: string; agents: AgentView[] }>("GET", "/v1/admin/status"),
+  proxy: () => call<ProxyStatus>("GET", "/v1/admin/proxy"),
+  setProxy: (url: string | null) => call<ProxyStatus>("PUT", "/v1/admin/proxy", { url }),
   sshHosts: () => call<SshHost[]>("GET", "/v1/admin/ssh/hosts"),
   sshConfig: () => call<{ hosts: string[]; incomplete: boolean }>("GET", "/v1/admin/ssh/config"),
   addSshHost: (host: string, home: string) => call<SshHost>("POST", "/v1/admin/ssh/hosts", { host, home }),

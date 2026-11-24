@@ -1,11 +1,12 @@
-import { useState } from "react";
-import { api, type BrainStatus } from "./api.ts";
+import { type FormEvent, useState } from "react";
+import { api, type BrainStatus, type ProxyStatus } from "./api.ts";
 import { BrainRow } from "./Brains.tsx";
 import { useCached } from "./cache.ts";
-import { type LocalePreference, useI18n } from "./i18n.ts";
+import { errorText, type LocalePreference, useI18n } from "./i18n.ts";
 import { type OnlineState, online, useOnline } from "./online.ts";
+import { onEscape } from "./shortcuts.ts";
 import { applyTheme, savedTheme, type Theme } from "./theme.ts";
-import { Button, Group, GroupRow, PageHeader, Section, Segmented } from "./ui.tsx";
+import { Button, Group, GroupRow, Input, PageHeader, Section, Segmented } from "./ui.tsx";
 import { type UpdateState, updates, useUpdates } from "./updates.ts";
 
 export function SettingsPage({ version }: { version: string }) {
@@ -58,6 +59,7 @@ export function SettingsPage({ version }: { version: string }) {
               </Group>
             </Section>
           ) : null}
+          <NetworkSection />
           <Brains />
           <Section title={t("settings.about")}>
             <Group>
@@ -186,6 +188,131 @@ function ToggleRow({
         />
       </label>
     </GroupRow>
+  );
+}
+
+/** Network proxy settings: automatic (system / env) by default, or a custom HTTP proxy. */
+function NetworkSection() {
+  const { t } = useI18n();
+  const { value: proxy, reload } = useCached<ProxyStatus>("proxy", api.proxy);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const summary = !proxy
+    ? ""
+    : proxy.source === "manual" && proxy.effective
+      ? t("settings.proxyManual", { url: proxy.effective })
+      : proxy.source === "system" && proxy.effective
+        ? t("settings.proxySystem", { url: proxy.effective })
+        : proxy.source === "env" && proxy.effective
+          ? t("settings.proxyEnv", { url: proxy.effective })
+          : t("settings.proxyDirect");
+
+  const startEdit = () => {
+    setValue(proxy?.configured && !proxy.hasCredentials ? proxy.configured : "");
+    setError(null);
+    setEditing(true);
+  };
+
+  const cancel = () => {
+    setEditing(false);
+    setError(null);
+  };
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.setProxy(value.trim() || null);
+      setEditing(false);
+      await reload();
+    } catch (err) {
+      setError(errorText(t, err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clear = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.setProxy(null);
+      setEditing(false);
+      await reload();
+    } catch (err) {
+      setError(errorText(t, err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section title={t("settings.network")}>
+      <Group>
+        {editing ? (
+          <GroupRow>
+            <form
+              className="flex min-w-0 flex-1 flex-col gap-3"
+              onSubmit={(e) => void save(e)}
+              onKeyDown={onEscape(cancel)}
+            >
+              <div className="flex flex-col gap-0.5">
+                <span>{t("settings.proxy")}</span>
+                <span className="text-small text-ink2">{t("settings.proxyHint")}</span>
+              </div>
+              <Input
+                type="text"
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
+                autoFocus
+                className="font-mono text-small"
+                placeholder={proxy?.configured ?? "http://127.0.0.1:7890"}
+                value={value}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  if (error) setError(null);
+                }}
+                disabled={busy}
+              />
+              {proxy?.hasCredentials && !error ? (
+                <p className="text-caption text-ink3">{t("settings.proxyCredentialsHint")}</p>
+              ) : null}
+              {error ? <p className="text-small text-red">{error}</p> : null}
+              <div className="flex justify-end gap-2">
+                <Button onClick={cancel} disabled={busy}>
+                  {t("agent.cancel")}
+                </Button>
+                <Button variant="primary" type="submit" disabled={busy}>
+                  {t("agent.save")}
+                </Button>
+              </div>
+            </form>
+          </GroupRow>
+        ) : (
+          <GroupRow className="flex-wrap">
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span>{t("settings.proxy")}</span>
+              <span className="selectable truncate text-small text-ink2">{summary}</span>
+            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              {proxy?.configured ? (
+                <Button variant="ghost" onClick={() => void clear()} disabled={busy}>
+                  {t("settings.proxyClear")}
+                </Button>
+              ) : null}
+              <Button onClick={startEdit} disabled={busy}>
+                {proxy?.configured ? t("settings.proxyChange") : t("settings.proxyConfigure")}
+              </Button>
+            </div>
+          </GroupRow>
+        )}
+      </Group>
+    </Section>
   );
 }
 

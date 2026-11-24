@@ -17,6 +17,13 @@ import type {
 import { LOCAL_OWNER, type LocalChannel, type LocalFile, localChannel } from "../channels/local/local.ts";
 import type { Harness, HarnessInfo, HarnessStatus } from "../harness/harness.ts";
 import { checkEnvironment, runCommand } from "../platform/command.ts";
+import {
+  createProxyController,
+  PROXY_SECRET_REF,
+  type ProxyController,
+  type ProxyStatus,
+  parseProxyUrl,
+} from "../platform/proxy.ts";
 import type { SecretStore } from "../platform/secrets.ts";
 import {
   type Agent,
@@ -173,6 +180,8 @@ export interface MingleOptions {
   readonly hearing?: { readonly quietMs: number; readonly maxWaitMs: number; readonly gapMs: number };
   /** Engagement in a group that hears everything (docs/spec.md 4.2); `ENGAGE` from hearing.ts otherwise. */
   readonly engage?: Partial<Engage>;
+  /** Network proxy controller; `mingle start` passes one that applies globally. */
+  readonly proxy?: ProxyController;
   readonly log?: (line: string) => void;
 }
 
@@ -319,10 +328,12 @@ export class Mingle {
   readonly localChat: LocalChannel = localChannel();
   /** The chat apps, and the built-in private chat. */
   private readonly channels: Partial<Record<Platform, Channel>>;
+  private readonly proxy: ProxyController;
 
   constructor(options: MingleOptions) {
     this.options = options;
     this.channels = { ...options.channels, local: this.localChat };
+    this.proxy = options.proxy ?? createProxyController({ applyGlobal: false, log: (line) => this.log(line) });
     this.book = new HearingBook(() => this.pace(), options.engage);
     this.remotes = new Remotes(options.paths.home, options.remoteTransport);
     for (const dir of [
@@ -394,6 +405,7 @@ export class Mingle {
   async start(apiUrl: string): Promise<void> {
     this.apiUrl = apiUrl;
     this.writeCliWrapper();
+    await this.initProxy();
     // Warm the harness list and the catalog so the console's first look at either does not
     // wait on the probe. One after the other: each starts every harness's executable.
     void this.probeHarnesses()
@@ -486,6 +498,7 @@ export class Mingle {
   resume(reason: string): Promise<void> {
     this.resuming ??= (async () => {
       this.log(`${reason}: reconnecting the chat apps`);
+      await this.refreshProxy();
       await Promise.all(this.store.connections().map((connection) => this.reconnect(connection.id)));
       this.fireReminders();
       this.resumeWaiting();
@@ -534,6 +547,52 @@ export class Mingle {
 
   log(line: string): void {
     this.options.log?.(line);
+  }
+
+  // ------------------------------------------------------------------- proxy
+
+  private async initProxy(): Promise<void> {
+    const saved = await this.options.secrets.get(PROXY_SECRET_REF).catch(() => undefined);
+    try {
+      await this.proxy.apply(saved ?? null);
+    } catch (error) {
+      this.log(`ignored invalid saved proxy: ${(error as Error).message}`);
+      await this.proxy.apply(null);
+    }
+  }
+
+  /** Re-read OS system proxy when no manual proxy is set (e.g. VPN turned on after start). */
+  async refreshProxy(): Promise<ProxyStatus> {
+    return this.proxy.refresh();
+  }
+
+  /** Current network proxy settings (redacted) and active source. */
+  async proxyStatus(): Promise<ProxyStatus> {
+    return this.proxy.refresh();
+  }
+
+  /** Save or clear (null/empty) the manual HTTP proxy, apply immediately, and nudge offline bots. */
+  async setProxy(raw: string | null): Promise<ProxyStatus> {
+    const normalized = parseProxyUrl(raw);
+    if (normalized) {
+      try {
+        await this.options.secrets.set(PROXY_SECRET_REF, normalized);
+      } catch {
+        throw new MingleError("proxy_save_failed", "the system credential store did not save it; try again", 500);
+      }
+    } else {
+      await this.options.secrets.delete(PROXY_SECRET_REF).catch(() => {});
+    }
+    const status = await this.proxy.apply(normalized);
+    // Reconnect bots that are currently waiting or connecting so a new proxy takes effect immediately.
+    for (const connection of this.store.connections()) {
+      if (this.isBuiltin(connection)) continue;
+      const kind = this.links.get(connection.id)?.state.kind;
+      if (kind === "waiting" || kind === "connecting") {
+        void this.reconnect(connection.id).catch(() => {});
+      }
+    }
+    return status;
   }
 
   // ------------------------------------------------------------------ agents
@@ -881,12 +940,15 @@ export class Mingle {
     const last = this.store.lastMessageTimes(agent.id);
     const quota = this.store.quotaWait(agent.id);
     const wait = quota && quota.until > now ? quota : undefined;
+    const proxy = await this.proxyStatus();
+    const proxyLine = proxy.effective ? `${proxy.source} (${proxy.effective})` : "direct";
     // Only structured states belong in a shareable report; raw provider/adapter errors may
     // contain request data.
     const lines = [
       "Mingle diagnostic info",
       `time: ${new Date(now).toISOString()}`,
       `mingle: ${VERSION} · node ${process.version} · ${process.platform} ${arch()} ${release()}`,
+      `proxy: ${proxyLine}`,
       `agent: ${agent.id} · status ${agent.status}${agent.statusFailure ? ` (${agent.statusFailure})` : ""}`,
       `brain: ${agent.harness}${harness?.version ? ` ${harness.version}` : ""}${harness ? "" : " (not found on this computer)"} · model ${agent.model ?? "default"}`,
       `session: ${agent.sessionId ?? "none"}`,
@@ -1126,6 +1188,7 @@ export class Mingle {
   /** Connect a bot with credentials (token-style platforms, or manual App ID / Secret). */
   async addConnection(agentId: string, platform: Platform, credentials: Credentials): Promise<Connection> {
     const agent = this.agent(agentId);
+    await this.refreshProxy();
     const abort = new AbortController();
     for await (const event of this.channel(platform).onboard(credentials, abort.signal, { agentName: agent.name })) {
       if (event.kind === "failed") throw onboardingError(platform, event.code);
@@ -1171,6 +1234,7 @@ export class Mingle {
     };
     void (async () => {
       try {
+        await this.refreshProxy();
         const awaitCode = () =>
           new Promise<string>((resolve) => {
             session.submitCode = (code) => {
@@ -1523,6 +1587,7 @@ export class Mingle {
         await this.drive(id, { kind: "failed", code: "credentials_missing" }, gen);
         return;
       }
+      if (!this.isBuiltin(connection)) await this.refreshProxy();
       live = await this.channel(connection.platform).connect(credentials, {
         onMessage: (message) => {
           if (this.links.get(id)?.gen !== gen) return;

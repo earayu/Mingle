@@ -1490,6 +1490,13 @@ export function createApi(mingle: Mingle): Hono<Env> {
     return c.json({ ok: true });
   });
 
+  app.get("/v1/admin/proxy", async (c) => c.json(await mingle.proxyStatus()));
+
+  app.put("/v1/admin/proxy", async (c) => {
+    const body = await c.req.json<{ url?: string | null } | null>().catch(() => null);
+    return c.json(await mingle.setProxy(typeof body?.url === "string" ? body.url : null));
+  });
+
   app.post("/v1/admin/agents/:id/open-home", (c) => {
     const agent = mingle.agent(c.req.param("id"));
     const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
