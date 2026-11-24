@@ -881,6 +881,8 @@ const en = {
   "usage.reachedUntil": "Usage limit reached until {time}. Messages wait and are answered then.",
   "brain.noneInstall": "Install one below. Mingle runs the vendor's own installer.",
   "brain.more": "Install another harness ({count})",
+  "brain.showMore": "Show {count} more",
+  "brain.showLess": "Show less",
   "brain.signInBody": "Sign {name} in once, then pick a model.",
   "settings.brains": "Harnesses",
   "settings.brainsBody":
@@ -1755,6 +1757,8 @@ const zh: Record<MessageKey, string> = {
   "usage.reachedUntil": "额度已用完，{time}恢复。消息会先等着，恢复后自动回复。",
   "brain.noneInstall": "在下面装一个。Mingle 会运行官方的安装命令。",
   "brain.more": "安装其他 harness（{count} 个）",
+  "brain.showMore": "展开其余 {count} 个",
+  "brain.showLess": "收起",
   "brain.signInBody": "先登录 {name}，然后选模型。",
   "settings.brains": "Harness",
   "settings.brainsBody": "这台电脑上替 Agent 思考的编码智能体。可以在这里安装、登录和更新。",

@@ -216,6 +216,11 @@ function Shell() {
     [refresh],
   );
 
+  const localHarnesses = useMemo(
+    () => new Set((agents ?? []).filter((a) => !a.remote).map((a) => a.harness)),
+    [agents],
+  );
+
   if (problem === "unauthorized") return <Unauthorized />;
 
   const slug = view.kind === "agent" || view.kind === "connect" ? view.slug : undefined;
@@ -231,7 +236,9 @@ function Shell() {
     ) : null;
   if (agents !== null) {
     if (view.kind === "settings")
-      page = <SettingsPage version={version} {...(view.focus ? { focus: view.focus } : {})} />;
+      page = (
+        <SettingsPage version={version} usedHarnesses={localHarnesses} {...(view.focus ? { focus: view.focus } : {})} />
+      );
     else if (view.kind === "new")
       page = (
         <NewAgent

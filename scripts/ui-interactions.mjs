@@ -81,6 +81,8 @@ const LOCALES = {
     edit: "Edit",
     roleSaved: "Saved. It applies from the next message.",
     navMenu: "Agents and settings",
+    showMore: (n) => `Show ${n} more`,
+    showLess: "Show less",
   },
   "zh-CN": {
     storage: "zh-CN",
@@ -148,6 +150,8 @@ const LOCALES = {
     edit: "编辑",
     roleSaved: "已保存，从下一条消息起生效。",
     navMenu: "Agent 与设置",
+    showMore: (n) => `展开其余 ${n} 个`,
+    showLess: "收起",
   },
 };
 
@@ -166,6 +170,17 @@ const INSTALL_MOCK = String.raw`(() => {
       { id: "other-test", name: "Other Test", installed: false, canInstall: true, canSignIn: false },
       { id: "update-test", name: "Update Test", installed: true, version: "1.0.0", canInstall: false, canSignIn: false, canUpdate: true },
     ];
+    if (s.many) {
+      list.push(
+        { id: "extra-1", name: "Extra Installed 1", installed: true, version: "1.0.0", canInstall: false, canSignIn: false },
+        { id: "extra-2", name: "Extra Installed 2", installed: true, version: "1.0.0", canInstall: false, canSignIn: false },
+        { id: "extra-3", name: "Extra Installed 3", installed: true, version: "1.0.0", canInstall: false, canSignIn: false },
+        { id: "extra-4", name: "Extra Installed 4", installed: true, version: "1.0.0", canInstall: false, canSignIn: false },
+        { id: "extra-5", name: "Extra Uninstalled 1", installed: false, canInstall: true, canSignIn: false },
+        { id: "extra-6", name: "Extra Uninstalled 2", installed: false, canInstall: true, canSignIn: false },
+        { id: "extra-7", name: "Extra Uninstalled 3", installed: false, canInstall: true, canSignIn: false },
+      );
+    }
     if (s.job && s.job.state === "running") list[0].installJob = s.job;
     return list;
   };
@@ -183,7 +198,7 @@ const INSTALL_MOCK = String.raw`(() => {
       return Promise.resolve(json({ kind: "unsupported", detail: "not offered here" }));
     if (method === "GET" && path === "/v1/admin/brains/update-test/update")
       return Promise.resolve(json({ kind: "available", installed: "1.0.0", latest: "1.1.0" }));
-    if (method === "GET" && /^\/v1\/admin\/brains\/(install-test|other-test|update-test)\/sign-in$/.test(path))
+    if (method === "GET" && /^\/v1\/admin\/brains\/(install-test|other-test|update-test|extra-\d+)\/(sign-in|update|usage)$/.test(path))
       return Promise.resolve(json({ kind: "unknown" }));
     if (method === "POST" && path === "/v1/admin/brains/install-test/install") {
       const s = read();
@@ -1101,6 +1116,79 @@ export async function reviewInteractions({
         await installScenario(localeName, labels, width);
         passed++;
         console.log(`install ${localeName} ${width}: passed`);
+      }
+    }
+
+    // --- Settings Harnesses collapse/expand when there are many harnesses (MING-157) ---
+    const brainsCollapseScenario = async (localeName, labels, width) => {
+      const tag = `brains-collapse ${localeName} ${width}`;
+      await metrics(width);
+      await call(() => {
+        sessionStorage.setItem(
+          "mingle.install-review",
+          JSON.stringify({ job: null, installed: false, starts: 0, many: true }),
+        );
+      });
+      await send("Page.navigate", { url: `${url}/settings#token=${token}` });
+      await until("page load", () => document.readyState === "complete" && !!document.querySelector("header"));
+      await call((locale) => localStorage.setItem("mingle.locale", locale), labels.storage);
+      await send("Page.reload");
+      const toggleCenter = (wanted) => {
+        const btn = [...document.querySelectorAll("button[aria-expanded]")].find(
+          (b) => b.textContent.trim() === wanted,
+        );
+        if (!btn) return null;
+        btn.scrollIntoView({ block: "center" });
+        const r = btn.getBoundingClientRect();
+        return r.width && r.height
+          ? { x: r.left + r.width / 2, y: r.top + r.height / 2, expanded: btn.getAttribute("aria-expanded") }
+          : null;
+      };
+      // 10 harnesses total (5 installed, 5 uninstalled): collapsed shows 4 installed + 6 hidden.
+      const collapsedBtn = await until("collapsed toggle", toggleCenter, labels.showMore(6));
+      assert(collapsedBtn.expanded === "false", `${tag}: aria-expanded should be false while collapsed`);
+      assert(await call(rowHas, "Update Test", "1.0.0"), `${tag}: first installed harness missing`);
+      assert(!(await call(rowHas, "Extra Installed 4", "1.0.0")), `${tag}: 5th installed harness should be folded`);
+      assert(!(await call(rowHas, "Other Test", labels.notInstalled)), `${tag}: uninstalled harness should be folded`);
+      assert(await call(pageFits), `${tag}: horizontal overflow while collapsed`);
+      await shot(`${localeName}-${width}-brains-collapsed`);
+
+      // Expand reveals all 10 harnesses and flips toggle to "Show less".
+      await clickEl(collapsedBtn);
+      const expandedBtn = await until("expanded toggle", toggleCenter, labels.showLess);
+      assert(expandedBtn.expanded === "true", `${tag}: aria-expanded should be true while expanded`);
+      await until("extra installed visible", rowHas, "Extra Installed 4", "1.0.0");
+      await until("other test visible", rowHas, "Other Test", labels.notInstalled);
+      assert(await call(pageFits), `${tag}: horizontal overflow while expanded`);
+      await shot(`${localeName}-${width}-brains-expanded`);
+
+      // Collapse hides the overflow rows again.
+      await clickEl(expandedBtn);
+      await until("re-collapsed toggle", toggleCenter, labels.showMore(6));
+      assert(!(await call(rowHas, "Other Test", labels.notInstalled)), `${tag}: uninstalled harness still visible`);
+
+      // A running install on an otherwise-hidden harness stays visible even after reload.
+      await call(() => {
+        sessionStorage.setItem(
+          "mingle.install-review",
+          JSON.stringify({
+            job: { id: "j-install-test", kind: "install", harness: "install-test", state: "running", events: [] },
+            installed: false,
+            starts: 1,
+            many: true,
+          }),
+        );
+      });
+      await send("Page.reload");
+      await until("running install stays visible", rowHas, "Install Test", labels.installing);
+      await until("collapsed count accounts for pinned row", toggleCenter, labels.showMore(5));
+      await resetFixture();
+    };
+    for (const [localeName, labels] of Object.entries(LOCALES)) {
+      for (const width of [1440, 560]) {
+        await brainsCollapseScenario(localeName, labels, width);
+        passed++;
+        console.log(`brains-collapse ${localeName} ${width}: passed`);
       }
     }
 

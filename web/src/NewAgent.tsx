@@ -1,7 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { Navigate } from "./App.tsx";
 import { type AgentView, api, type BrainStatus, type ModelList, type SshHost } from "./api.ts";
-import { BrainRow, SignInBrain, useSignIn } from "./Brains.tsx";
+import { BrainList, SignInBrain, useSignIn } from "./Brains.tsx";
 import { useCached } from "./cache.ts";
 import { errorText, type Locale, type MessageKey, useI18n } from "./i18n.ts";
 import { LocationSentence, type Place, SshSetup, useSshHosts } from "./SshLocation.tsx";
@@ -380,6 +380,7 @@ export function BrainPicker({
   }
   const installed = harnesses.filter((h) => h.installed);
   const others = harnesses.filter((h) => !h.installed && !h.unsupported);
+  const otherInstalling = others.some((h) => h.installJob?.state === "running");
   const selected = installed.find((h) => h.id === harness);
   return (
     <div className="flex flex-col gap-3">
@@ -411,14 +412,10 @@ export function BrainPicker({
         ))}
       </div>
       {others.length ? (
-        more || installed.length === 0 ? (
-          <div className="overflow-hidden rounded-card border border-line">
-            <div className="divide-y divide-line">
-              {others.map((b) => (
-                <BrainRow key={b.id} brain={b} onChanged={onBrainsChanged} />
-              ))}
-            </div>
-          </div>
+        installed.length === 0 ? (
+          <BrainList brains={others} onChanged={onBrainsChanged} />
+        ) : more || otherInstalling ? (
+          <BrainList brains={others} onChanged={onBrainsChanged} onCollapse={() => setMore(false)} />
         ) : (
           <button
             type="button"

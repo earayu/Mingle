@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import {
   type AccountUsage,
   api,
@@ -9,10 +9,21 @@ import {
   type UpdateInfo,
   type UsageWindow,
 } from "./api.ts";
+import { selectBrains } from "./brains-list.ts";
 import { useCached } from "./cache.ts";
 import { type MessageKey, useI18n } from "./i18n.ts";
 import { followJob } from "./jobs.ts";
-import { Button, HarnessIcon, Input, LinkButton, Problem, StatusDot, shortDateTime, Waiting } from "./ui.tsx";
+import {
+  Button,
+  ChevronIcon,
+  HarnessIcon,
+  Input,
+  LinkButton,
+  Problem,
+  StatusDot,
+  shortDateTime,
+  Waiting,
+} from "./ui.tsx";
 
 /**
  * Every harness OAR drives, installed or not. One that is missing can be installed from here
@@ -271,7 +282,16 @@ function useResumableJob(resumeId: string | undefined) {
 }
 
 /** One harness as a settings row: installed or not, signed in or not, and what to do about it. */
-export function BrainRow({ brain, onChanged }: { brain: BrainStatus; onChanged: () => void }) {
+export function BrainRow({
+  brain,
+  onChanged,
+  onActiveChange,
+}: {
+  brain: BrainStatus;
+  onChanged: () => void;
+  /** Lets a collapsible parent keep this row visible while an install or update is running or failed. */
+  onActiveChange?: (id: string, active: boolean) => void;
+}) {
   const { t } = useI18n();
   const { state, reread } = useSignIn(brain);
   const [open, setOpen] = useState(false);
@@ -293,6 +313,14 @@ export function BrainRow({ brain, onChanged }: { brain: BrainStatus; onChanged: 
   const installing = installJob?.state === "running";
   const updating = upgradeJob?.state === "running";
   const busy = installing || updating;
+  const active = busy || installJob?.state === "failed" || upgradeJob?.state === "failed";
+  useEffect(() => {
+    if (!onActiveChange) return;
+    onActiveChange(brain.id, active);
+    return () => {
+      if (active) onActiveChange(brain.id, false);
+    };
+  }, [brain.id, active, onActiveChange]);
   const expanded = open || installing || installJob?.state === "failed";
   const signedOut = brain.installed && state?.kind === "signed_out" && brain.canSignIn;
   const status = installing
@@ -382,3 +410,72 @@ export function BrainRow({ brain, onChanged }: { brain: BrainStatus; onChanged: 
 
 export const brainHint = (t: (key: MessageKey) => string, brain: BrainStatus) =>
   brain.installed ? (brain.version ?? "") : t("brain.notInstalled");
+
+/**
+ * Rounded card of harnesses that stays compact when there are many: shows installed harnesses
+ * first (capped, with in-use ones at the top) and folds the rest behind a disclosure footer row.
+ */
+export function BrainList({
+  brains,
+  used,
+  onChanged,
+  onCollapse,
+  className = "",
+}: {
+  brains: readonly BrainStatus[];
+  /** Harness ids currently used by local agents. */
+  used?: ReadonlySet<string>;
+  onChanged: () => void;
+  /** Optional parent-owned collapse handler (shows a collapse footer when the list is already open). */
+  onCollapse?: () => void;
+  className?: string;
+}) {
+  const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const [pinned, setPinned] = useState<ReadonlySet<string>>(() => new Set());
+  const onActiveChange = useCallback((id: string, active: boolean) => {
+    setPinned((current) => {
+      if (current.has(id) === active) return current;
+      const next = new Set(current);
+      if (active) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const { visible, hiddenCount, collapsible } = selectBrains(brains, {
+    ...(used ? { used } : {}),
+    pinned,
+    expanded: onCollapse ? true : expanded,
+  });
+
+  if (brains.length === 0) return null;
+  const hasRunning = brains.some(
+    (b) => b.installJob?.state === "running" || b.upgradeJob?.state === "running" || pinned.has(b.id),
+  );
+  const showFooter = onCollapse ? !hasRunning : collapsible;
+  const isExpanded = onCollapse ? true : expanded;
+
+  return (
+    <div className={`overflow-hidden rounded-card border border-line bg-card ${className}`}>
+      <div className="divide-y divide-line">
+        {visible.map((brain) => (
+          <BrainRow key={brain.id} brain={brain} onChanged={onChanged} onActiveChange={onActiveChange} />
+        ))}
+        {showFooter ? (
+          <button
+            type="button"
+            aria-expanded={isExpanded}
+            onClick={() => (onCollapse ? onCollapse() : setExpanded((current) => !current))}
+            className="flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-small font-medium text-ink2 transition-colors duration-[120ms] hover:bg-bg2 hover:text-ink"
+          >
+            <span>{isExpanded ? t("brain.showLess") : t("brain.showMore", { count: String(hiddenCount) })}</span>
+            <ChevronIcon
+              className={`text-ink3 transition-transform duration-[180ms] ${isExpanded ? "rotate-180" : ""}`}
+            />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}

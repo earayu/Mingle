@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { api, type BrainStatus, type ProxyMode, type ProxyView } from "./api.ts";
-import { BrainRow } from "./Brains.tsx";
+import { BrainList } from "./Brains.tsx";
 import { remember, useCached } from "./cache.ts";
 import { errorText, type LocalePreference, type MessageKey, useI18n } from "./i18n.ts";
 import { type OnlineState, online, useOnline } from "./online.ts";
@@ -20,7 +20,15 @@ import {
 } from "./ui.tsx";
 import { type UpdateState, updates, useUpdates } from "./updates.ts";
 
-export function SettingsPage({ version, focus }: { version: string; focus?: "network" }) {
+export function SettingsPage({
+  version,
+  focus,
+  usedHarnesses,
+}: {
+  version: string;
+  focus?: "network";
+  usedHarnesses?: ReadonlySet<string>;
+}) {
   const { t, localePreference, setLocale } = useI18n();
   const [theme, setTheme] = useState<Theme>(savedTheme);
   const update = useUpdates();
@@ -71,7 +79,7 @@ export function SettingsPage({ version, focus }: { version: string; focus?: "net
               </Group>
             </Section>
           ) : null}
-          <Brains />
+          <Brains used={usedHarnesses} />
           <Section title={t("settings.about")}>
             <Group>
               <GroupRow>
@@ -554,7 +562,7 @@ function ToggleRow({
 }
 
 /** Every harness Mingle can drive: what is installed, signed in, and a way to fix the rest. */
-function Brains() {
+function Brains({ used }: { used?: ReadonlySet<string> }) {
   const { t } = useI18n();
   const { value: brains, reload } = useCached<BrainStatus[]>(
     "brains",
@@ -566,13 +574,7 @@ function Brains() {
     <Section title={t("settings.brains")}>
       <p className="-mt-1 px-1 text-small text-ink2">{t("settings.brainsBody")}</p>
       {brains === null ? null : (
-        <div className="overflow-hidden rounded-card border border-line bg-card">
-          <div className="divide-y divide-line">
-            {brains.map((b) => (
-              <BrainRow key={b.id} brain={b} onChanged={() => void reload()} />
-            ))}
-          </div>
-        </div>
+        <BrainList brains={brains} {...(used ? { used } : {})} onChanged={() => void reload()} />
       )}
     </Section>
   );
