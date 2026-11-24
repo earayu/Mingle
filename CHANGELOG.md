@@ -3,6 +3,13 @@
 Each version's section is its release notes, and what the update window shows.
 Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
+## 0.4.10
+
+- Tasks and reminders in the work panel now show status dots, the last checked time for check reminders, and inline error details when a check fails.
+- The console feels snappier and uses less background polling: typing in Chat no longer re-renders the message list, pages prefetch as you move to them, and unchanged views skip redundant work.
+- Fixed Grok agents closing a parallel task early while a background command or monitor is still running, so the task stays open until the result comes back.
+- Fixed several bugs across threads, private chat, remote SSH, and group conversations: long-task threads now open reliably on Feishu and Discord, remote SSH agents preserve filenames and raw bytes for private chat uploads and downloads (including JSON and binary files), Chat pagination no longer breaks around notices, and Markdown code fences with extended language tags or nested backticks render cleanly.
+
 ## 0.4.9
 
 - Chat with your agent right in the Mingle app: open its new Chat tab. It is the same agent with the same memory as in your chat apps, and it works before any chat app is connected. Replies render with formatting, and files go both ways: drop, paste or attach them, and open what the agent sends in Finder.
