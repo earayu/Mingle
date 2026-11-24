@@ -792,10 +792,11 @@ describe("site build", () => {
     expect(llms).toContain("v9.8.7");
     expect(llms).toContain("release notes");
     expect(en).toContain("/releases/latest/download/install.sh");
-    // Hero LCP image loads eagerly with fetchpriority="high"; below-the-fold screenshots stay lazy.
+    // Hero LCP poster is preloaded while the video uses preload="none"; hidden/below-the-fold screenshots stay lazy.
+    expect(en).toContain('<link rel="preload" as="image" href="/media/mingle-film-en-poster.webp">');
+    expect(en).toContain('poster="/media/mingle-film-en-poster.webp"');
     expect(en).toContain('src="/img/agent-en-light.png"');
-    expect(en).toMatch(/<img src="\/img\/agent-en-light\.png"[^>]*fetchpriority="high"/);
-    expect(en).not.toMatch(/<img src="\/img\/agent-en-light\.png"[^>]*loading="lazy"/);
+    expect(en).toMatch(/<img src="\/img\/agent-en-light\.png"[^>]*loading="lazy"/);
     expect(en).toMatch(/<img src="\/img\/new-en-light\.png"[^>]*loading="lazy"/);
     // Structured data: SoftwareApplication + FAQPage in both languages, using the snapshot version.
     for (const [html, lang, path] of [

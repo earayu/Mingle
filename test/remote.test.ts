@@ -224,7 +224,8 @@ describe("remote management", () => {
     };
     const local = await rig(async () => {}, { remoteTransport: transport });
     try {
-      const added = await local.admin("POST", "/v1/admin/ssh/hosts", { host: "dev", home: remote.home });
+      const added = await local.admin("POST", "/v1/admin/ssh/hosts", { host: "dev", home: "~/data" });
+      expect(added.status).toBe(201);
       const host = (added.json as { id: string }).id;
       const agent = remoteId(host, remote.agentId);
 
