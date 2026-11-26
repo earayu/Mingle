@@ -388,7 +388,7 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
             const normalized = await lark.normalize(raw, { botIdentity, stripBotMentions: true });
             const app = item.sender?.sender_type === "app";
             const senderName = app ? undefined : await userName(normalized.senderId);
-            const inbound = toInbound(senderName ? { ...normalized, senderName } : normalized, bot, name, app);
+            const inbound = toInbound({ ...normalized, raw, ...(senderName ? { senderName } : {}) }, bot, name, app);
             if (inbound) events.onMessage({ ...inbound, earlier: true });
           }
         } catch {
@@ -418,11 +418,21 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
         });
         channel = instance;
         instance.on("message", async (message) => {
-          const isBot = (message.raw as lark.RawMessageEvent | undefined)?.sender?.sender_type === "app";
+          const raw = message.raw as lark.RawMessageEvent | undefined;
+          const isBot = raw?.sender?.sender_type === "app";
           // A contact lookup resolves only people; other bots stay unnamed.
           const senderName = message.senderName ?? (isBot ? undefined : await userName(message.senderId));
+          let resolved = senderName ? { ...message, senderName } : message;
+          if (isUnparsedInteractive(resolved, raw) && !extractInteractiveText(raw?.message?.content ?? "")) {
+            const fetched = await instance.rawClient.im.v1.message
+              .get({ path: { message_id: message.messageId } })
+              .then((r) => r.data?.items?.[0]?.body?.content)
+              .catch(() => undefined);
+            const text = fetched ? extractInteractiveText(fetched) : undefined;
+            if (text) resolved = { ...resolved, content: text };
+          }
           const inbound = toInbound(
-            senderName ? { ...message, senderName } : message,
+            resolved,
             bot,
             message.chatType === "group" ? await chatName(message.chatId) : undefined,
             isBot,
@@ -757,6 +767,131 @@ function originOf(domain: Domain): string {
   return domain === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
 }
 
+const INTERACTIVE_PLACEHOLDER = "[interactive card]";
+
+function isUnparsedInteractive(message: lark.NormalizedMessage, raw: lark.RawMessageEvent | undefined): boolean {
+  const isCard = message.rawContentType === "interactive" || raw?.message?.message_type === "interactive";
+  return isCard && message.content.trim() === INTERACTIVE_PLACEHOLDER;
+}
+
+/**
+ * Extract readable text from a Feishu `interactive` card's raw JSON content.
+ *
+ * The official SDK's `normalize()` only walks card JSON 1.0/2.0 `plain_text`, `lark_md`, and
+ * `markdown` nodes (with string `content`), missing Feishu's simplified card shape delivered in
+ * `im.message.receive_v1` and `im.v1.message.list` (`{ title, elements: [[{ tag: "text", text }]] }`)
+ * as well as `a`/`at`/`md` inline nodes and CardKit 2.0 summaries. Exported for tests.
+ */
+export function extractInteractiveText(rawContent: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawContent);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const root = parsed as Record<string, unknown>;
+  const lines: string[] = [];
+
+  if (typeof root.title === "string" && root.title.trim()) {
+    lines.push(root.title.trim());
+  }
+  visitCardNode(root, lines);
+
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    deduped.push(trimmed);
+  }
+  if (deduped.length > 0) return deduped.join("\n");
+
+  // Last resort: CardKit 2.0 summary text when the card carries no inline body elements.
+  const summary = (root.config as { summary?: { content?: unknown } } | undefined)?.summary?.content;
+  if (typeof summary === "string") {
+    const trimmed = summary.trim();
+    if (trimmed && trimmed !== "..." && trimmed !== "…") return trimmed;
+  }
+  return undefined;
+}
+
+function isInlineCardNode(node: unknown): boolean {
+  if (!node || typeof node !== "object" || Array.isArray(node)) return false;
+  const tag = (node as Record<string, unknown>).tag;
+  return tag === "text" || tag === "a" || tag === "at" || tag === "md" || tag === "emotion";
+}
+
+function inlineCardText(node: Record<string, unknown>): string {
+  switch (node.tag) {
+    case "text":
+      return typeof node.text === "string" ? node.text : "";
+    case "md":
+      return typeof node.text === "string" ? node.text : typeof node.content === "string" ? node.content : "";
+    case "a": {
+      const label = typeof node.text === "string" ? node.text.trim() : "";
+      const href = typeof node.href === "string" ? node.href.trim() : "";
+      if (label && href && label !== href) return `[${label}](${href})`;
+      return label || href;
+    }
+    case "at": {
+      const text = typeof node.text === "string" ? node.text.trim() : "";
+      if (text) return text.startsWith("@") ? text : `@${text}`;
+      const name = typeof node.user_name === "string" ? node.user_name.trim() : "";
+      return name ? `@${name}` : "";
+    }
+    default:
+      return "";
+  }
+}
+
+function visitCardNode(node: unknown, out: string[]): void {
+  if (node == null || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    // Feishu's simplified card format stores each paragraph line as an array of inline nodes.
+    if (node.length > 0 && node.every((item) => isInlineCardNode(item))) {
+      const line = node.map((item) => inlineCardText(item as Record<string, unknown>)).join("");
+      if (line.trim()) out.push(line);
+      return;
+    }
+    for (const child of node) visitCardNode(child, out);
+    return;
+  }
+  const obj = node as Record<string, unknown>;
+  const tag = obj.tag;
+  if (tag === "plain_text" || tag === "lark_md" || tag === "markdown") {
+    if (typeof obj.content === "string" && obj.content.trim()) out.push(obj.content);
+    return;
+  }
+  if (isInlineCardNode(obj)) {
+    const text = inlineCardText(obj);
+    if (text.trim()) out.push(text);
+    return;
+  }
+  if (obj.header && typeof obj.header === "object") {
+    const header = obj.header as Record<string, unknown>;
+    if (typeof header.title === "string" && header.title.trim()) out.push(header.title);
+    else if (header.title) visitCardNode(header.title, out);
+    if (typeof header.subtitle === "string" && header.subtitle.trim()) out.push(header.subtitle);
+    else if (header.subtitle) visitCardNode(header.subtitle, out);
+  }
+  if (typeof obj.text === "string" && obj.text.trim()) out.push(obj.text);
+  else if (obj.text) visitCardNode(obj.text, out);
+  if (obj.label) visitCardNode(obj.label, out);
+  if (obj.placeholder) visitCardNode(obj.placeholder, out);
+  if (Array.isArray(obj.options)) {
+    for (const opt of obj.options) {
+      if (opt && typeof opt === "object" && "text" in opt) visitCardNode((opt as { text?: unknown }).text, out);
+    }
+  }
+  for (const key of ["elements", "fields", "actions", "columns"] as const) {
+    const list = obj[key];
+    if (Array.isArray(list)) visitCardNode(list, out);
+  }
+  if (obj.body) visitCardNode(obj.body, out);
+}
+
 /** Map a normalized Feishu message to Mingle's shape. Exported for tests. */
 export function toInbound(
   message: lark.NormalizedMessage,
@@ -767,8 +902,12 @@ export function toInbound(
   if (message.senderId === bot.id) return undefined;
   const dm = message.chatType === "p2p";
   // The SDK strips mentions of this bot; also drop a leftover "@Name" if a client typed it as text.
+  const raw = message.raw as lark.RawMessageEvent | undefined;
   let text = message.content;
-  if (bot.name) text = text.replaceAll(`@${bot.name}`, "");
+  if (isUnparsedInteractive(message, raw) && raw?.message?.content) {
+    text = extractInteractiveText(raw.message.content) ?? text;
+  }
+  if (bot.name) text = text.replaceAll(`@${bot.name} `, "").replaceAll(`@${bot.name}`, "");
   text = text.replace(/[ \t]{2,}/g, " ").trim();
 
   const attachments: InboundAttachment[] = message.resources.map((r, i) => ({
