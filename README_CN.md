@@ -2,6 +2,8 @@
 
 [English](README.md) · 中文 · [官网](https://mingle.build/zh/) · [▶ 40 秒宣传片（4K）](https://youtu.be/TCwlEv-u7oY)
 
+[![Listed on Awesome MyGo](https://awesomemygo.dev/badge.svg)](https://awesomemygo.dev/apps/mingle)
+
 **把你的 Agent 伙伴请进你已经在用的 IM。本地运行，没有服务器。**
 
 <a href="https://youtu.be/TCwlEv-u7oY" title="观看 40 秒 Mingle 产品宣传片（4K）">

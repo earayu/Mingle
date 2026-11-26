@@ -2,6 +2,8 @@
 
 English · [中文](README_CN.md) · [mingle.build](https://mingle.build) · [▶ 40s Film (4K)](https://youtu.be/iuBNwl8VhCc)
 
+[![Listed on Awesome MyGo](https://awesomemygo.dev/badge.svg)](https://awesomemygo.dev/apps/mingle)
+
 **Bring your agent companion into the chat apps you already use. Runs on your machine, no server.**
 
 <a href="https://youtu.be/iuBNwl8VhCc" title="Watch the 40s Mingle product film (4K)">
