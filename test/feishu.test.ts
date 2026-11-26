@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChannelEvents, ConnectionState, InboundMessage, OnboardingEvent } from "../src/channels/channel.ts";
 import {
   BOT_MESSAGES_SCOPES,
+  extractInteractiveText,
   FEISHU_SCOPES,
   type FeishuApi,
   feishuChannel,
@@ -346,6 +347,54 @@ describe("feishu toInbound", () => {
       { id: "om_1|file|file_k", name: "route.gpx" },
       { id: "om_1|image|img_k", name: "image-2.png", mime: "image/png" },
     ]);
+  });
+
+  it("extracts readable text from Feishu simplified interactive cards instead of [interactive card]", () => {
+    const rawContent = JSON.stringify({
+      title: "精度实验结论",
+      elements: [
+        [
+          { tag: "at", user_id: "ou_bot", user_name: "Alex" },
+          { tag: "text", text: " 已读群聊，看到了 b300_job2_run_config.yaml。" },
+        ],
+        [
+          { tag: "text", text: "详情见 " },
+          { tag: "a", text: "实验报告", href: "https://example.com/report" },
+        ],
+      ],
+    });
+    const inbound = toInbound(
+      message({
+        content: "[interactive card]",
+        rawContentType: "interactive",
+        raw: {
+          sender: { sender_id: { open_id: "ou_other_bot" }, sender_type: "app" },
+          message: {
+            message_id: "om_card_1",
+            chat_id: "oc_1",
+            chat_type: "group",
+            message_type: "interactive",
+            content: rawContent,
+          },
+        },
+      }),
+      bot,
+      "精度群",
+      true,
+    ) as InboundMessage;
+    expect(inbound.text).toBe(
+      "精度实验结论\n已读群聊，看到了 b300_job2_run_config.yaml。\n详情见 [实验报告](https://example.com/report)",
+    );
+  });
+
+  it("handles CardKit summaries and returns undefined for bare card_id references", () => {
+    expect(
+      extractInteractiveText(JSON.stringify({ schema: "2.0", config: { summary: { content: "已完成对比" } } })),
+    ).toBe("已完成对比");
+    expect(
+      extractInteractiveText(JSON.stringify({ schema: "2.0", config: { summary: { content: "..." } } })),
+    ).toBeUndefined();
+    expect(extractInteractiveText(JSON.stringify({ type: "card", data: { card_id: "card_123" } }))).toBeUndefined();
   });
 });
 
