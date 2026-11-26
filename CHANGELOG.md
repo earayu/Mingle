@@ -3,6 +3,10 @@
 Each version's section is its release notes, and what the update window shows.
 Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
+## 0.4.13
+
+- Fixed Feishu interactive card messages from other bots or apps showing up as `[interactive card]` instead of their readable text, in both live group messages and history backfill.
+
 ## 0.4.12
 
 - @-mentions in DingTalk group messages now actually notify the people mentioned, and live replies no longer start with a doubled `@@name`.
