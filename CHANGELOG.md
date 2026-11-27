@@ -3,6 +3,10 @@
 Each version's section is its release notes, and what the update window shows.
 Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
+## 0.4.15
+
+- When Feishu, Slack, Discord, Telegram or GitHub rejects a bot's credentials while connecting, Mingle now stops the bot and tells you to update its credentials, instead of reporting a network problem and retrying every five minutes. Feishu rate limits and server errors are still treated as temporary and retried.
+
 ## 0.4.14
 
 - OpenCode 2.x can now drive your agents. Mingle no longer limits OpenCode to 1.x.
