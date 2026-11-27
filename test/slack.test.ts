@@ -167,6 +167,23 @@ describe("slack onboarding", () => {
     }
     expect(bad).toEqual([{ kind: "failed", code: "invalid_credentials" }]);
   });
+
+  it("tells a token refused at connect from other failures", async () => {
+    for (const [error, expected] of [
+      ["invalid_auth", [{ kind: "error", code: "credentials_revoked" }]],
+      ["internal_error", []],
+    ] as const) {
+      const http = fakeHttp({ "auth.test": () => ({ ok: false, error }) });
+      const states: unknown[] = [];
+      await expect(
+        slackChannel({ fetch: http.fetchImpl }).connect(
+          { botToken: "xoxb-1", appToken: "xapp-1" },
+          { onMessage: () => {}, onState: (s) => states.push(s), onMembership: () => {} },
+        ),
+      ).rejects.toThrow();
+      expect(states).toEqual(expected);
+    }
+  });
 });
 
 describe("slack connection", () => {

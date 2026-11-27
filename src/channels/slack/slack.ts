@@ -226,7 +226,13 @@ export function slackChannel(options: SlackOptions = {}): Channel {
       const botToken = credentials.botToken ?? "";
       const call = client(botToken);
       const appCall = client(credentials.appToken ?? "");
-      const auth = await call<{ user_id: string; user: string; bot_id: string }>("auth.test");
+      const auth = await call<{ user_id: string; user: string; bot_id: string }>("auth.test").catch((error) => {
+        // A refused token will not start working by trying again: say so, not "offline".
+        if (error instanceof SlackError && REVOKED.has(error.code)) {
+          events.onState({ kind: "error", code: "credentials_revoked" });
+        }
+        throw error;
+      });
       const bot: BotIdentity = { id: auth.user_id, name: credentials.name ?? auth.user };
       const names = new Map<string, string>();
       const nameOf = async (userId: string) => {

@@ -165,6 +165,23 @@ describe("discord onboarding", () => {
     expect(denied).toEqual([{ kind: "failed", code: "invalid_credentials" }]);
   });
 
+  it("tells a token refused at connect from a network problem", async () => {
+    for (const [status, expected] of [
+      [401, [{ kind: "error", code: "credentials_revoked" }]],
+      [502, []],
+    ] as const) {
+      const http = fakeHttp({ "GET /users/@me": () => new Response("{}", { status }) });
+      const states: unknown[] = [];
+      await expect(
+        discordChannel({ fetch: http.fetchImpl }).connect(
+          { token: TOKEN },
+          { onMessage: () => {}, onState: (s) => states.push(s), onMembership: () => {} },
+        ),
+      ).rejects.toThrow();
+      expect(states).toEqual(expected);
+    }
+  });
+
   it("builds an invite link for the bot", () => {
     const url = new URL(discordChannel().inviteUrl?.({ id: "B1", name: "Alex" }) ?? "");
     expect(url.searchParams.get("client_id")).toBe("B1");

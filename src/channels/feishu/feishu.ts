@@ -303,7 +303,15 @@ export function feishuChannel(options: FeishuOptions = {}): Channel {
 
     async connect(raw: Credentials, events: ChannelEvents): Promise<ChannelConnection> {
       const credentials = { appId: raw.appId ?? "", appSecret: raw.appSecret ?? "", domain: domainOf(raw) };
-      let info = await api.botInfo(credentials);
+      let info: BotInfo;
+      try {
+        info = await api.botInfo(credentials);
+      } catch (error) {
+        // Feishu answered and refused the app (secret changed, app disabled, platform policy):
+        // trying again will not help, so say so instead of reporting a network problem.
+        if (error instanceof FeishuRefused) events.onState({ kind: "error", code: "credentials_revoked" });
+        throw error;
+      }
       const bot: BotIdentity = { id: info.openId, name: info.name };
       let channel: LarkChannelLike | undefined;
       let closed = false;
@@ -1198,6 +1206,12 @@ function officialApi(): FeishuApi {
   };
 }
 
+/** Feishu answered the tenant token request and refused it: the app cannot sign in as it is. */
+export class FeishuRefused extends Error {}
+
+/** Feishu's "too many requests" code: a refusal that passes by itself. */
+const RATE_LIMITED = 99991400;
+
 /** A GET with a fresh tenant token. Throws on any non-zero Feishu code. */
 async function feishuGet<T>(
   { appId, appSecret, domain }: { appId: string; appSecret: string; domain: Domain },
@@ -1216,7 +1230,10 @@ async function feishuGet<T>(
     tenant_access_token?: string;
   } | null;
   if (token?.code !== 0 || !token.tenant_access_token) {
-    throw new Error(`Feishu auth failed: ${token?.msg ?? token?.code ?? `HTTP ${tokenResponse.status}`}`);
+    const message = `Feishu auth failed: ${token?.msg ?? token?.code ?? `HTTP ${tokenResponse.status}`}`;
+    const refused =
+      typeof token?.code === "number" && token.code !== 0 && token.code !== RATE_LIMITED && tokenResponse.status < 500;
+    throw refused ? new FeishuRefused(message) : new Error(message);
   }
   const response = await fetch(`${origin}${path}`, {
     headers: { authorization: `Bearer ${token.tenant_access_token}` },

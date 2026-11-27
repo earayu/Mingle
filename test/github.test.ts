@@ -142,6 +142,20 @@ describe("github onboarding", () => {
     ).toEqual([{ kind: "failed", code: "invalid_credentials" }]);
   });
 
+  it("tells a token refused at connect from a network problem", async () => {
+    const refused = fakeGitHub({ "GET /user": () => Response.json({ message: "Bad credentials" }, { status: 401 }) });
+    const rec = recorder();
+    await expect(githubChannel({ fetch: refused.fetchImpl }).connect({ token: "ghp_x" }, rec.events)).rejects.toThrow();
+    expect(rec.states).toEqual([{ kind: "error", code: "credentials_revoked" }]);
+
+    const down = fakeGitHub({ "GET /user": () => new Response("", { status: 502 }) });
+    const offline = recorder();
+    await expect(
+      githubChannel({ fetch: down.fetchImpl }).connect({ token: "ghp_x" }, offline.events),
+    ).rejects.toThrow();
+    expect(offline.states).toEqual([]);
+  });
+
   it("pastes a token when there is no OAuth app, and signs in with a code when there is", () => {
     expect(githubChannel({ clientId: "" }).onboarding.kind).toBe("credentials");
     const device = githubChannel({ clientId: "Iv1.abc" });

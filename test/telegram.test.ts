@@ -202,6 +202,20 @@ describe("telegram connection", () => {
     await connection.close();
   });
 
+  it("tells a token refused at connect from a network problem", async () => {
+    const refused = fakeBot({ getMe: () => ({ ok: false, status: 401, description: "Unauthorized" }) });
+    const rec = recorder();
+    await expect(telegramChannel({ fetch: refused.fetchImpl }).connect({ token: TOKEN }, rec.events)).rejects.toThrow();
+    expect(rec.states).toEqual([{ kind: "error", code: "credentials_revoked" }]);
+
+    const down = fakeBot({ getMe: () => ({ ok: false, status: 502, description: "Bad Gateway" }) });
+    const offline = recorder();
+    await expect(
+      telegramChannel({ fetch: down.fetchImpl }).connect({ token: TOKEN }, offline.events),
+    ).rejects.toThrow();
+    expect(offline.states).toEqual([]);
+  });
+
   it("reports a revoked token and stops", async () => {
     const bot = fakeBot();
     const rec = recorder();

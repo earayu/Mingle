@@ -492,6 +492,33 @@ describe("feishu onboarding", () => {
 });
 
 describe("feishu connection", () => {
+  it("tells an app Feishu refuses from a network problem (#216)", async () => {
+    const answers: Record<string, () => Response> = {
+      refused: () => Response.json({ code: 10014, msg: "Access denied due to platform policy" }),
+      throttled: () => Response.json({ code: 99991400, msg: "request trigger frequency limit" }),
+      down: () => new Response("Bad Gateway", { status: 502 }),
+    };
+    for (const [answer, expected] of [
+      ["refused", [{ kind: "error", code: "credentials_revoked" }]],
+      ["throttled", []],
+      ["down", []],
+    ] as const) {
+      vi.stubGlobal("fetch", async () => answers[answer]?.());
+      const states: ConnectionState[] = [];
+      try {
+        await expect(
+          feishuChannel({ createChannel: () => fakeLark().channel }).connect(
+            { appId: "cli_1", appSecret: "s" },
+            { onMessage: () => {}, onState: (s) => states.push(s), onMembership: () => {} },
+          ),
+        ).rejects.toThrow(/Feishu auth failed/);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+      expect(states).toEqual(expected);
+    }
+  });
+
   it("waits for admin approval, then connects and relays messages", async () => {
     let active = false;
     const lark = fakeLark();

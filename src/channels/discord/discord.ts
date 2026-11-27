@@ -237,7 +237,13 @@ export function discordChannel(options: DiscordOptions = {}): Channel {
     async connect(credentials: Credentials, events: ChannelEvents): Promise<ChannelConnection> {
       const token = credentials.token ?? "";
       const request = client(token);
-      const { user, app } = await identify(token);
+      const { user, app } = await identify(token).catch((error) => {
+        // A refused token will not start working by trying again: say so, not "offline".
+        if (error instanceof DiscordError && error.status === 401) {
+          events.onState({ kind: "error", code: "credentials_revoked" });
+        }
+        throw error;
+      });
       const bot: BotIdentity = { id: user.id, name: credentials.name ?? displayName(user) };
       let messageContent = ((app.flags ?? 0) & FLAG_MESSAGE_CONTENT) !== 0;
 

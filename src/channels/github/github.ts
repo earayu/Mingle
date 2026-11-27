@@ -304,7 +304,12 @@ export function githubChannel(options: GitHubOptions = {}): Channel {
 
     async connect(credentials: Credentials, events: ChannelEvents): Promise<ChannelConnection> {
       const api = client(credentials.token ?? "");
-      const me = (await api.call<GhUser>("GET", "/user")) as GhUser;
+      const me = (await api.call<GhUser>("GET", "/user").catch((error) => {
+        // A refused token will not start working by trying again: say so, not "offline".
+        if (error instanceof GhError && error.status === 401)
+          events.onState({ kind: "error", code: "credentials_revoked" });
+        throw error;
+      })) as GhUser;
       const bot = identity(me);
       const stop = new AbortController();
       /** The last listing's ETag: asking with it costs no rate limit while nothing changed. */
