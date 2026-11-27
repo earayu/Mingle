@@ -13,6 +13,7 @@ import {
   defaultRuntimes,
   type ExecutableInstallation,
   type InstallationSnapshot,
+  installedSessionCapabilities,
   type Runtime,
   RuntimeFailureError,
   runtimeBrandIcon,
@@ -77,6 +78,7 @@ export type Failure =
   | "runtime_exited"
   | "limit_reached"
   | "output_schema"
+  | "model_refused"
   | "not_installed"
   | "unknown";
 
@@ -302,25 +304,17 @@ export interface RuntimeSource {
 }
 
 /**
- * Whether an installed harness can serve Mingle. OAR's declarations do not cover
- * OpenCode's version difference (1.x supports appended prompts, 2.x fails on them
- * at open), so OpenCode gets a version check here.
+ * What this installation refuses, version-specific refusals included (OpenCode takes an appended
+ * prompt from 1.x and from 2.0.30 on, not on 2.0.0 to 2.0.29). A refused appended prompt or
+ * environment does not keep a harness from serving Mingle: `open` then carries the guide, and
+ * the CLI's settings, in the session's first message.
  */
-function incompatibility(runtime: Runtime, install: AvailableInstallation): HarnessInfo["disabled"] {
-  // A refused appended prompt or environment is no longer a blocker: `open` then carries the
-  // guide, and the CLI's settings, in the session's first message.
-  if (runtime.id === "opencode") {
-    const version = install.via === "executable" ? install.version?.trim() : undefined;
-    // OAR 0.97 supports prompt injection on OpenCode 1.x only. Its public
-    // refusal map omits this version-specific restriction.
-    if (!version || !/^(?:opencode\s+)?v?1\.\d+\.\d+(?:\S*)$/u.test(version)) {
-      return {
-        code: "harness_opencode_version",
-        reason: "This OpenCode version is not compatible with Mingle. Use OpenCode 1.x or choose another harness.",
-      };
-    }
+function refusedBy(runtime: Runtime, install: AvailableInstallation): Readonly<Record<string, unknown>> {
+  try {
+    return installedSessionCapabilities(runtime, install).refusedSessionOptions ?? {};
+  } catch {
+    return runtime.refusedSessionOptions ?? {};
   }
-  return undefined;
 }
 
 /**
@@ -351,18 +345,26 @@ async function resumeOrReplace(
   return { session: await runtime.session(install, base), resumed: false, keptGuide: false };
 }
 
+/**
+ * Any other refusal the declarations did not cover: report it as incompatibility, not as a raw
+ * harness error. The harness's own reason goes into the message so the log says which setting
+ * it refused.
+ */
+function incompatible(error: unknown): unknown {
+  if (!(error instanceof UnsupportedOptionError)) return error;
+  return new MingleError(
+    "harness_incompatible",
+    `This harness cannot apply the settings Mingle needs (${error.option}: ${error.message}). Choose another harness.`,
+  );
+}
+
 /** The saved session is gone, or the harness will not resume it as asked: a new one takes its place. */
 function replaceable(error: unknown): boolean {
   return error instanceof UnsupportedOptionError || (error as Error).name === "SessionNotFoundError";
 }
 
-function requireCompatible(runtime: Runtime, install: AvailableInstallation): void {
-  const issue = incompatibility(runtime, install);
-  if (issue) throw new MingleError(issue.code, issue.reason);
-}
-
 const CURSOR_SDK = "@cursor/sdk";
-const CURSOR_SDK_VERSION = "1.3.1";
+const CURSOR_SDK_VERSION = "1.4.1";
 
 /**
  * Cursor runs in process through its SDK, which is Cursor's own package under Cursor's terms:
@@ -544,10 +546,8 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
         const runtime = lookup(id);
         const found = await probe(runtime).catch(() => undefined);
         const available = found?.kind === "available" ? found : undefined;
-        const disabled = available ? incompatibility(runtime, available) : undefined;
         return {
           ...info(id, runtime, available),
-          ...(disabled ? { disabled } : {}),
           installed: Boolean(available),
           ...(found?.kind === "unsupported" ? { unsupported: found.reason } : {}),
           canInstall: Boolean(runtime.install),
@@ -728,7 +728,6 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
     async models(id) {
       const runtime = lookup(id);
       const install = await installation(runtime);
-      requireCompatible(runtime, install);
       if (!runtime.listModels) return { kind: "unsupported" };
       const result = await runtime.listModels(install, { timeoutMs: 20_000 });
       if (result.kind !== "ok") return { kind: result.kind };
@@ -747,14 +746,13 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
     async open(options, events) {
       const runtime = lookup(options.harness);
       const install = await installation(runtime);
-      requireCompatible(runtime, install);
-      // Some harnesses take no appended system prompt (Kimi, DeepSeek Harness, CodeBuddy, Cursor)
-      // or no environment for their shell (Cursor, which runs in this process). The guide then
-      // rides on the first message of a new session, and tells the agent how to call the CLI
-      // without the environment.
-      const refused = runtime.refusedSessionOptions ?? {};
-      const canAppend = !("appendSystemPrompt" in refused);
-      const canEnv = !refusesEnv(runtime);
+      // Some harnesses take no appended system prompt (DeepSeek Harness, CodeBuddy, Cursor, Devin,
+      // OpenCode 2.0.0 to 2.0.29) or no environment for their shell (Cursor, which runs in this
+      // process). The guide then rides on the first message of a new session, and tells the
+      // agent how to call the CLI without the environment.
+      const refused = refusedBy(runtime, install);
+      let canAppend = !("appendSystemPrompt" in refused);
+      const canEnv = !("env" in refused);
       const instructions = canEnv
         ? options.appendSystemPrompt
         : `${options.appendSystemPrompt}\n${inlineEnvNote(options.env)}`;
@@ -778,16 +776,21 @@ export function oarHarness(source: RuntimeSource = defaultRuntimes, options: { v
           session = await runtime.session(install, base);
         }
       } catch (error) {
-        // A refusal the declarations did not cover (like OpenCode's version split):
-        // report it as incompatibility, not as a raw harness error. The harness's own reason
-        // goes into the message so the log says which setting it refused.
-        if (error instanceof UnsupportedOptionError) {
-          throw new MingleError(
-            "harness_incompatible",
-            `This harness cannot apply the settings Mingle needs (${error.option}: ${error.message}). Choose another harness.`,
-          );
-        }
-        throw error;
+        // An appended prompt refused at open that the declarations did not name: open without it
+        // and carry the guide in the first message, as for a harness that declares the refusal.
+        if (
+          error instanceof UnsupportedOptionError &&
+          error.option === "appendSystemPrompt" &&
+          base.appendSystemPrompt
+        ) {
+          canAppend = false;
+          const { appendSystemPrompt: _, ...rest } = base;
+          try {
+            session = await runtime.session(install, rest);
+          } catch (retry) {
+            throw incompatible(retry);
+          }
+        } else throw incompatible(error);
       }
 
       /** A turn is running: one Mingle prompted, or one the harness began itself. */

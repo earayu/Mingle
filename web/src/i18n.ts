@@ -457,8 +457,6 @@ const en = {
     "This harness cannot receive the agent's role and operating guide. Choose another harness.",
   "error.harness_env_unsupported":
     "This harness cannot receive the connection settings needed to reply in chat. Choose another harness.",
-  "error.harness_opencode_version":
-    "This OpenCode version is not compatible with Mingle. Use OpenCode 1.x or choose another harness.",
   "error.harness_incompatible": "This harness cannot apply the settings Mingle needs. Choose another harness.",
   "error.name_required": "Give the agent a name.",
   "error.invalid_message_ids": "Select the messages again and try again.",
@@ -1361,7 +1359,6 @@ const zh: Record<MessageKey, string> = {
   "error.harness_unavailable": "所选主机上没有安装这个 harness。",
   "error.harness_prompt_unsupported": "这个大脑暂时无法接收 Agent 的角色和操作指南，请选择其他大脑。",
   "error.harness_env_unsupported": "这个大脑暂时无法接收回复聊天所需的连接设置，请选择其他大脑。",
-  "error.harness_opencode_version": "这个 OpenCode 版本暂不兼容 Mingle。请使用 OpenCode 1.x，或选择其他大脑。",
   "error.harness_incompatible": "这个大脑暂时无法应用 Mingle 所需的设置，请选择其他大脑。",
   "error.name_required": "请给 Agent 起个名字。",
   "error.invalid_message_ids": "请重新选择消息后再试。",

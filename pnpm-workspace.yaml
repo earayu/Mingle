@@ -1,10 +1,10 @@
 # OAR moves fast and is pinned to an exact version; allow it inside pnpm's release-age window.
 minimumReleaseAgeExclude:
-  - "@botiverse/oar@0.120.0"
+  - "@botiverse/oar@0.136.0"
 # Install scripts of transitive dependencies are not needed.
 allowBuilds:
   "@google/genai": false
   protobufjs: false
-# Remove the Devin ACP terminal patch once OAR ships the fix.
+# Remove the Devin ACP terminal and Grok background task patch once OAR ships the fixes.
 patchedDependencies:
-  "@botiverse/oar@0.120.0": patches/@botiverse__oar@0.120.0.patch
+  "@botiverse/oar@0.136.0": patches/@botiverse__oar@0.136.0.patch

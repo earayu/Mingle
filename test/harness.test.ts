@@ -124,7 +124,8 @@ describe("harness list", () => {
         const answer = answers[Math.min(calls++, answers.length - 1)];
         if (answer === "timeout") throw new Error("Failed to run codebuddy.cmd --help: timeout after 15000 ms");
         if (answer === "missed") return { kind: "not_found" };
-        if (answer === "refused") return { kind: "unsupported", reason: "--help failed" };
+        if (answer === "refused")
+          return { kind: "unsupported", code: "readiness_failed", via: "executable", command, reason: "--help failed" };
         return { kind: "available", via: "executable", command, version: "2.184.0" };
       },
     };
@@ -292,34 +293,67 @@ describe("account usage", () => {
   });
 });
 
-describe("opencode version gate", () => {
-  it.each(["1.19.5", "opencode v1.19.5", "1.19.5-beta.1"])("enables OpenCode %s", async (version) => {
-    const { runtime } = opencodeAt(version);
-    const list = await oarHarness({ require: () => runtime }).available();
-    expect(list.find((h) => h.id === "opencode")?.disabled).toBeUndefined();
-  });
-
-  it.each(["opencode v2.0.0", "2.1.0", "3.0.0", "development", undefined])(
-    "lists OpenCode %s as disabled but visible",
+describe("opencode", () => {
+  it.each(["1.19.5", "opencode v1.19.5", "2.4.0", "opencode v2.4.0", "2.0.30", "development", undefined])(
+    "enables OpenCode %s",
     async (version) => {
       const { runtime } = opencodeAt(version);
       const list = await oarHarness({ require: () => runtime }).available();
-      const entry = list.find((h) => h.id === "opencode");
-      expect(entry?.disabled?.code).toBe("harness_opencode_version");
-      expect(entry?.disabled?.reason).toContain("OpenCode 1.x");
+      expect(list.find((h) => h.id === "opencode")?.disabled).toBeUndefined();
     },
   );
 
-  it("blocks models and open on a disabled version before either is asked", async () => {
-    const { runtime, sessionSpy } = opencodeAt("2.0.0");
-    const listModels = vi.fn();
-    const blocked: Runtime = { ...runtime, listModels: listModels as unknown as NonNullable<Runtime["listModels"]> };
-    const harness = oarHarness({ require: () => blocked });
-    await expect(harness.models?.("opencode")).rejects.toMatchObject({ code: "harness_opencode_version" });
-    await expect(open("opencode", blocked)).rejects.toMatchObject({ code: "harness_opencode_version" });
-    await expect(open("opencode", blocked, "s-old")).rejects.toMatchObject({ code: "harness_opencode_version" });
-    expect(listModels).not.toHaveBeenCalled();
-    expect(sessionSpy).not.toHaveBeenCalled();
+  it.each(["2.4.0", "2.0.30"])("opens %s with Mingle's prompt, env and model", async (version) => {
+    const { runtime, sessionSpy } = opencodeAt(version);
+    await oarHarness({ require: () => runtime }).open(
+      { harness: "opencode", cwd: cwd(), appendSystemPrompt: PROMPT, env: ENV, model: "m-1" },
+      events,
+    );
+    const options = sessionSpy.mock.calls[0]?.[1];
+    expect(options?.appendSystemPrompt).toBe(PROMPT);
+    expect(options?.env).toEqual(ENV);
+    expect(options?.model).toBe("m-1");
+  });
+
+  it("carries the guide in the first message on a 2.x that takes no appended prompt", async () => {
+    const sent: string[] = [];
+    const { runtime, sessionSpy } = opencodeAt(
+      "2.0.10",
+      async () =>
+        ({
+          ...fakeSession(),
+          deliver: async (text: string) => {
+            sent.push(text);
+            return { landed: "prompted" };
+          },
+        }) as unknown as Session,
+    );
+    const session = await open("opencode", runtime);
+    expect(sessionSpy.mock.calls[0]?.[1]).not.toHaveProperty("appendSystemPrompt");
+    await session.deliver("hello", "i1");
+    expect(sent[0]).toContain(PROMPT.trim());
+    expect(sent[0]?.endsWith("hello")).toBe(true);
+  });
+
+  it("opens without the prompt when the harness refuses it at open", async () => {
+    const sent: string[] = [];
+    const refusal = new UnsupportedOptionError("appendSystemPrompt", "fixture refusal");
+    const sessionSpy = vi
+      .fn()
+      .mockRejectedValueOnce(refusal)
+      .mockResolvedValueOnce({
+        ...fakeSession("s-new"),
+        deliver: async (text: string) => {
+          sent.push(text);
+          return { landed: "prompted" };
+        },
+      });
+    const { runtime } = opencodeAt("2.4.0", sessionSpy);
+    const session = await open("opencode", runtime);
+    expect(session.id).toBe("s-new");
+    expect(sessionSpy.mock.calls[1]?.[1]).not.toHaveProperty("appendSystemPrompt");
+    await session.deliver("hello", "i1");
+    expect(sent[0]).toContain(PROMPT.trim());
   });
 
   it("opens 1.x with Mingle's prompt, env and model unchanged", async () => {
@@ -359,18 +393,6 @@ describe("opencode version gate", () => {
     const { runtime: down } = opencodeAt("1.19.5", failing);
     await expect(open("opencode", down, "s-old")).rejects.toBe(other);
     expect(failing).toHaveBeenCalledOnce(); // No fallback on other errors.
-  });
-
-  it("re-probes at open: a 1.x -> 2.x upgrade after listing blocks the next session", async () => {
-    let version: string | undefined = "1.19.5";
-    const base = defaultRuntimes.require("opencode");
-    const sessionSpy = vi.fn(async () => fakeSession());
-    const runtime: Runtime = { ...base, installation: async () => executable(version), session: sessionSpy };
-    const harness = oarHarness({ require: () => runtime });
-    expect((await harness.available()).find((h) => h.id === "opencode")?.disabled).toBeUndefined();
-    version = "2.0.0";
-    await expect(open("opencode", runtime)).rejects.toMatchObject({ code: "harness_opencode_version" });
-    expect(sessionSpy).not.toHaveBeenCalled();
   });
 });
 
