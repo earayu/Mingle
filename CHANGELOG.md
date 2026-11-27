@@ -3,6 +3,11 @@
 Each version's section is its release notes, and what the update window shows.
 Releases are cut as described in [docs/releasing.md](docs/releasing.md).
 
+## 0.4.14
+
+- OpenCode 2.x can now drive your agents. Mingle no longer limits OpenCode to 1.x.
+- Updated the harness layer (OAR 0.136.0): Kimi Code sessions that support it can take new messages mid-turn, OpenCode 2.x lists per-model details, Cursor uses SDK 1.4.1, and token usage and failure reporting are more accurate across harnesses.
+
 ## 0.4.13
 
 - Fixed Feishu interactive card messages from other bots or apps showing up as `[interactive card]` instead of their readable text, in both live group messages and history backfill.
