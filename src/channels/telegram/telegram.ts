@@ -176,7 +176,12 @@ export function telegramChannel(options: TelegramOptions = {}): Channel {
     async connect(credentials: Credentials, events: ChannelEvents): Promise<ChannelConnection> {
       const token = credentials.token ?? "";
       const api = client(token);
-      const me = await api.call<TgUser>("getMe");
+      const me = await api.call<TgUser>("getMe").catch((error) => {
+        // A refused token will not start working by trying again: say so, not "offline".
+        if (error instanceof TgError && error.status === 401)
+          events.onState({ kind: "error", code: "credentials_revoked" });
+        throw error;
+      });
       const bot = identity(me);
       const stop = new AbortController();
       let offset = 0;
