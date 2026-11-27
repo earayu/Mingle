@@ -1,8 +1,8 @@
 diff --git a/dist/runtimes/devin/session.js b/dist/runtimes/devin/session.js
-index f5ffe5608e8841a7f8752b69b481cf1d05ce0c0a..0ac29ed131bae1821b168059a6152b1765d4086f 100644
+index eec2057ab2dad35541b77ac541fe6666ac031019..f37145db6329677e321feed5d5e0c0ddc13b32a4 100644
 --- a/dist/runtimes/devin/session.js
 +++ b/dist/runtimes/devin/session.js
-@@ -32,6 +32,8 @@ export function supportsDevinBypass(response) {
+@@ -34,6 +34,8 @@ export function supportsDevinBypass(response) {
  }
  export const devinAcpProfile = {
      args: () => devinAcpArgs(),
@@ -12,7 +12,7 @@ index f5ffe5608e8841a7f8752b69b481cf1d05ce0c0a..0ac29ed131bae1821b168059a6152b17
      isResumeNotFound: (native) => native.code === -32_016 && asRecord(native.data)?.["cognition.ai/errorKind"] === "session_not_found",
      capabilities: { queue: { durable: false }, attribution: "opaque" },
 diff --git a/dist/runtimes/grok/tasks.js b/dist/runtimes/grok/tasks.js
-index e42b3d561aac046834523f91b60821a25ef79d40..c9e40a5acf79f754cc0dc2bed439b9e0a8154290 100644
+index b9e4d1190d8b1475af2b38eb755e2d3035cbd64e..24e8fbacd8f0a6c02006363cdb01f3ee299352f0 100644
 --- a/dist/runtimes/grok/tasks.js
 +++ b/dist/runtimes/grok/tasks.js
 @@ -1,6 +1,17 @@
@@ -34,7 +34,7 @@ index e42b3d561aac046834523f91b60821a25ef79d40..c9e40a5acf79f754cc0dc2bed439b9e0
      if (method !== "_x.ai/session_notification") {
          return [];
      }
-@@ -21,4 +32,32 @@ export function grokTaskViews(method, params) {
+@@ -23,4 +34,32 @@ export function grokTaskViews(method, params) {
      }
      return [];
  }

@@ -1451,9 +1451,9 @@ describe("agent settings", () => {
   };
 
   const blocked = {
-    harness_opencode_version: {
-      code: "harness_opencode_version",
-      reason: "This OpenCode version is not compatible with Mingle. Use OpenCode 1.x or choose another harness.",
+    harness_incompatible: {
+      code: "harness_incompatible",
+      reason: "This harness cannot apply the settings Mingle needs. Choose another harness.",
     },
   };
 
@@ -1462,10 +1462,10 @@ describe("agent settings", () => {
     const before = current.mingle.store.agents().length;
     const created = await current.admin("POST", "/v1/admin/agents", {
       name: "Bob",
-      harness: "harness_opencode_version",
+      harness: "harness_incompatible",
     });
     expect(created.status).toBe(400);
-    expect(created.json).toMatchObject({ error: "harness_opencode_version" });
+    expect(created.json).toMatchObject({ error: "harness_incompatible" });
     expect(current.mingle.store.agents()).toHaveLength(before);
   });
 
@@ -1512,10 +1512,10 @@ describe("agent settings", () => {
     const { mingle, agentId } = current;
     const before = mingle.store.agent(agentId);
     const refused = await current.admin("PATCH", `/v1/admin/agents/${agentId}`, {
-      harness: "harness_opencode_version",
+      harness: "harness_incompatible",
     });
     expect(refused.status).toBe(400);
-    expect(refused.json).toMatchObject({ error: "harness_opencode_version" });
+    expect(refused.json).toMatchObject({ error: "harness_incompatible" });
     const after = mingle.store.agent(agentId);
     expect(after?.harness).toBe(before?.harness);
     expect(after?.model).toBe(before?.model);
@@ -1525,18 +1525,18 @@ describe("agent settings", () => {
 
   it("rejects a model-only change while the current harness is disabled", async () => {
     current = await rig(async () => {}, {
-      harnessAdapter: wrappedHarness({ scripted: blocked.harness_opencode_version }),
+      harnessAdapter: wrappedHarness({ scripted: blocked.harness_incompatible }),
     });
     const { mingle, agentId } = current;
     const refused = await current.admin("PATCH", `/v1/admin/agents/${agentId}`, { model: "sonnet" });
     expect(refused.status).toBe(400);
-    expect(refused.json).toMatchObject({ error: "harness_opencode_version" });
+    expect(refused.json).toMatchObject({ error: "harness_incompatible" });
     expect(mingle.store.agent(agentId)?.model).toBeNull();
   });
 
   it("still allows name and role edits and deleting a blocked agent", async () => {
     current = await rig(async () => {}, {
-      harnessAdapter: wrappedHarness({ scripted: blocked.harness_opencode_version }),
+      harnessAdapter: wrappedHarness({ scripted: blocked.harness_incompatible }),
     });
     const { admin, agentId, mingle } = current;
     const renamed = await admin("PATCH", `/v1/admin/agents/${agentId}`, { name: "Alex 2" });
